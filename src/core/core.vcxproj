@@ -49,6 +49,20 @@
     <ClCompile Include="gpu_shadergen.cpp" />
     <ClCompile Include="gpu_sw_backend.cpp" />
     <ClCompile Include="gpu_sw_rasterizer.cpp" />
+    <ClCompile Include="gpu_sw_rasterizer_avx2.cpp">
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
+      <AdditionalOptions Condition="$(Configuration.Contains(Clang))">%(AdditionalOptions) -mavx2</AdditionalOptions>
+      <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="gpu_sw_rasterizer_neon.cpp">
+      <ExcludedFromBuild Condition="'$(Platform)'!='ARM64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="gpu_sw_rasterizer_sse4.cpp">
+      <AdditionalOptions Condition="$(Configuration.Contains(Clang))">%(AdditionalOptions) -msse4.1</AdditionalOptions>
+      <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="gpu_thread.cpp" />
     <ClCompile Include="gte.cpp" />
     <ClCompile Include="dma.cpp" />

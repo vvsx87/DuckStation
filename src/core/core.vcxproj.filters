@@ -66,6 +66,9 @@
     <ClCompile Include="cpu_newrec_compiler_aarch32.cpp" />
     <ClCompile Include="gpu_sw_rasterizer.cpp" />
     <ClCompile Include="gpu_thread.cpp" />
+    <ClCompile Include="gpu_sw_rasterizer_neon.cpp" />
+    <ClCompile Include="gpu_sw_rasterizer_sse4.cpp" />
+    <ClCompile Include="gpu_sw_rasterizer_avx2.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="types.h" />
