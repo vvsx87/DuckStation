@@ -23,9 +23,9 @@
 #include "fmt/format.h"
 #include "game_database.h"
 #include "gpu.h"
+#include "gpu/gpu_device.h"
 #include "gte.h"
 #include "host.h"
-#include "host_display.h"
 #include "host_interface_progress_callback.h"
 #include "host_settings.h"
 #include "interrupt_controller.h"
@@ -529,7 +529,7 @@ bool System::GetGameDetailsFromImage(CDImage* cdi, std::string* out_id, GameHash
       pos++;
     }
   }
-  
+
   if (out_id)
   {
     if (id.empty())
@@ -644,7 +644,7 @@ std::string System::GetExecutableNameForImage(CDImage* cdi, bool strip_subdirect
 }
 
 bool System::ReadExecutableFromImage(CDImage* cdi, std::string* out_executable_name,
-  std::vector<u8>* out_executable_data)
+                                     std::vector<u8>* out_executable_data)
 {
   ISOReader iso;
   if (!iso.Open(cdi, 1))
@@ -653,7 +653,8 @@ bool System::ReadExecutableFromImage(CDImage* cdi, std::string* out_executable_n
   return ReadExecutableFromImage(iso, out_executable_name, out_executable_data);
 }
 
-bool System::ReadExecutableFromImage(ISOReader& iso, std::string* out_executable_name, std::vector<u8>* out_executable_data)
+bool System::ReadExecutableFromImage(ISOReader& iso, std::string* out_executable_name,
+                                     std::vector<u8>* out_executable_data)
 {
   const std::string executable_path = GetExecutableNameForImage(iso, false);
   Log_DevPrintf("Executable path: '%s'", executable_path.c_str());

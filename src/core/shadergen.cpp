@@ -8,7 +8,7 @@
 #include <cstring>
 
 #ifdef WITH_OPENGL
-#include "common/gl/loader.h"
+#include "gpu/gl/loader.h"
 #endif
 
 Log_SetChannel(ShaderGen);

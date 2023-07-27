@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "common/gl/loader.h"
-#include "common/gl/program.h"
-#include "common/gl/shader_cache.h"
-#include "common/gl/stream_buffer.h"
-#include "common/gl/texture.h"
+#include "gpu/gl/loader.h"
+#include "gpu/gl/program.h"
+#include "gpu/gl/shader_cache.h"
+#include "gpu/gl/stream_buffer.h"
+#include "gpu/gl/texture.h"
 #include "gpu_hw.h"
 #include "texture_replacements.h"
 #include <array>

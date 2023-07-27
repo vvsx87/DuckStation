@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "core/host_display.h"
+#include "core/gpu_device.h"
 #include <string>
 
-class RegTestHostDisplay final : public HostDisplay
+class RegTestHostDisplay final : public GPUDevice
 {
 public:
   RegTestHostDisplay();

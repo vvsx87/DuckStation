@@ -71,7 +71,7 @@ bool RegTestHostDisplay::CreateResources()
 
 void RegTestHostDisplay::DestroyResources() {}
 
-HostDisplay::AdapterAndModeList RegTestHostDisplay::GetAdapterAndModeList()
+GPUDevice::AdapterAndModeList RegTestHostDisplay::GetAdapterAndModeList()
 {
   return {};
 }

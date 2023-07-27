@@ -10,8 +10,8 @@
 #include "common/path.h"
 #include "common/string_util.h"
 #include "controller.h"
+#include "gpu/gpu_device.h"
 #include "host.h"
-#include "host_display.h"
 #include "host_settings.h"
 #include "system.h"
 #include <algorithm>
@@ -946,7 +946,7 @@ RenderAPI Settings::GetRenderAPIForRenderer(GPURenderer renderer)
 #endif
     case GPURenderer::Software:
     default:
-      return HostDisplay::GetPreferredAPI();
+      return GPUDevice::GetPreferredAPI();
   }
 }
 

@@ -4,13 +4,13 @@
 #include "gte.h"
 #include "common/assert.h"
 #include "common/bitutils.h"
-#include "util/state_wrapper.h"
 #include "cpu_core.h"
 #include "cpu_core_private.h"
-#include "host_display.h"
+#include "gpu/gpu_device.h"
 #include "pgxp.h"
 #include "settings.h"
 #include "timing_event.h"
+#include "util/state_wrapper.h"
 #include <algorithm>
 #include <array>
 #include <numeric>

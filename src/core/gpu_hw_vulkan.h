@@ -3,8 +3,8 @@
 
 #pragma once
 #include "common/dimensional_array.h"
-#include "common/vulkan/stream_buffer.h"
-#include "common/vulkan/texture.h"
+#include "gpu/vulkan/stream_buffer.h"
+#include "gpu/vulkan/texture.h"
 #include "gpu_hw.h"
 #include "texture_replacements.h"
 #include <array>

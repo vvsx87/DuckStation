@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "frontend-common/postprocessing_shader.h"
+#include "core/gpu/postprocessing_shader.h"
 #include <QtWidgets/QDialog>
 #include <QtWidgets/QWidget>
 

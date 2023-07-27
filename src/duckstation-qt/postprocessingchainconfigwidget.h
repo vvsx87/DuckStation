@@ -3,11 +3,11 @@
 
 #pragma once
 #include "common/types.h"
+#include "core/gpu/postprocessing_chain.h"
 #include "ui_postprocessingchainconfigwidget.h"
-#include "frontend-common/postprocessing_chain.h"
 #include <QtWidgets/QWidget>
-#include <optional>
 #include <memory>
+#include <optional>
 #include <string_view>
 
 namespace FrontendCommon {

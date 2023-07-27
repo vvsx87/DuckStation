@@ -16,9 +16,9 @@
 #include "core/cpu_code_cache.h"
 #include "core/dma.h"
 #include "core/gpu.h"
+#include "core/gpu/gpu_device.h"
 #include "core/gte.h"
 #include "core/host.h"
-#include "core/host_display.h"
 #include "core/host_settings.h"
 #include "core/mdec.h"
 #include "core/pgxp.h"
@@ -55,19 +55,19 @@
 
 #ifdef _WIN32
 #include "common/windows_headers.h"
-#include "frontend-common/d3d11_host_display.h"
-#include "frontend-common/d3d12_host_display.h"
+#include "core/gpu/d3d11_gpu_device.h"
+#include "core/gpu/d3d12_gpu_device.h"
 #include <KnownFolders.h>
 #include <ShlObj.h>
 #include <mmsystem.h>
 #endif
 
 #ifdef WITH_OPENGL
-#include "frontend-common/opengl_host_display.h"
+#include "core/gpu/opengl_gpu_device.h"
 #endif
 
 #ifdef WITH_VULKAN
-#include "frontend-common/vulkan_host_display.h"
+#include "core/gpu/vulkan_gpu_device.h"
 #endif
 
 Log_SetChannel(CommonHostInterface);
@@ -139,38 +139,38 @@ void CommonHost::PumpMessagesOnCPUThread()
 #endif
 }
 
-std::unique_ptr<HostDisplay> Host::CreateDisplayForAPI(RenderAPI api)
+std::unique_ptr<GPUDevice> Host::CreateDisplayForAPI(RenderAPI api)
 {
   switch (api)
   {
 #ifdef WITH_VULKAN
     case RenderAPI::Vulkan:
-      return std::make_unique<VulkanHostDisplay>();
+      return std::make_unique<VulkanGPUDevice>();
 #endif
 
 #ifdef WITH_OPENGL
     case RenderAPI::OpenGL:
     case RenderAPI::OpenGLES:
-      return std::make_unique<OpenGLHostDisplay>();
+      return std::make_unique<OpenGLGPUDevice>();
 #endif
 
 #ifdef _WIN32
     case RenderAPI::D3D12:
-      return std::make_unique<D3D12HostDisplay>();
+      return std::make_unique<D3D12GPUDevice>();
 
     case RenderAPI::D3D11:
-      return std::make_unique<D3D11HostDisplay>();
+      return std::make_unique<D3D11GPUDevice>();
 #endif
 
     default:
 #if defined(_WIN32) && defined(_M_ARM64)
-      return std::make_unique<D3D12HostDisplay>();
+      return std::make_unique<D3D12GPUDevice>();
 #elif defined(_WIN32)
-      return std::make_unique<D3D11HostDisplay>();
+      return std::make_unique<D3D11GPUDevice>();
 #elif defined(WITH_OPENGL)
-      return std::make_unique<OpenGLHostDisplay>();
+      return std::make_unique<OpenGLGPUDevice>();
 #elif defined(WITH_VULKAN)
-      return std::make_unique<VulkanHostDisplay>();
+      return std::make_unique<VulkanGPUDevice>();
 #else
       return {};
 #endif
@@ -570,8 +570,7 @@ void CommonHost::UpdateDiscordPresence(bool rich_presence_only)
   SmallString details_string;
   if (!System::IsShutdown())
   {
-    details_string.AppendFormattedString("%s (%s)", System::GetGameTitle().c_str(),
-                                         System::GetGameSerial().c_str());
+    details_string.AppendFormattedString("%s (%s)", System::GetGameTitle().c_str(), System::GetGameSerial().c_str());
   }
   else
   {

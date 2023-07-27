@@ -12,11 +12,11 @@
 
 // For enumerating adapters.
 #ifdef _WIN32
-#include "frontend-common/d3d11_host_display.h"
-#include "frontend-common/d3d12_host_display.h"
+#include "core/gpu/d3d11_gpu_device.h"
+#include "core/gpu/d3d12_gpu_device.h"
 #endif
 #ifdef WITH_VULKAN
-#include "frontend-common/vulkan_host_display.h"
+#include "core/gpu/vulkan_gpu_device.h"
 #endif
 
 DisplaySettingsWidget::DisplaySettingsWidget(SettingsDialog* dialog, QWidget* parent)
@@ -189,23 +189,23 @@ void DisplaySettingsWidget::setupAdditionalUi()
 
 void DisplaySettingsWidget::populateGPUAdaptersAndResolutions()
 {
-  HostDisplay::AdapterAndModeList aml;
+  GPUDevice::AdapterAndModeList aml;
   bool thread_supported = false;
   bool threaded_presentation_supported = false;
   switch (static_cast<GPURenderer>(m_ui.renderer->currentIndex()))
   {
 #ifdef _WIN32
     case GPURenderer::HardwareD3D11:
-      aml = D3D11HostDisplay::StaticGetAdapterAndModeList();
+      aml = D3D11GPUDevice::StaticGetAdapterAndModeList();
       break;
 
     case GPURenderer::HardwareD3D12:
-      aml = D3D12HostDisplay::StaticGetAdapterAndModeList();
+      aml = D3D12GPUDevice::StaticGetAdapterAndModeList();
       break;
 #endif
 #ifdef WITH_VULKAN
     case GPURenderer::HardwareVulkan:
-      aml = VulkanHostDisplay::StaticGetAdapterAndModeList(nullptr);
+      aml = VulkanGPUDevice::StaticGetAdapterAndModeList(nullptr);
       threaded_presentation_supported = true;
       break;
 #endif

@@ -5,8 +5,8 @@
 #include "common/assert.h"
 #include "common/log.h"
 #include "gpu.h"
+#include "gpu/gpu_device.h"
 #include "host.h"
-#include "host_display.h"
 #include "system.h"
 #include "util/state_wrapper.h"
 #include <array>

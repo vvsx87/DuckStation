@@ -29,7 +29,7 @@ class CheatManagerDialog;
 class DebuggerWindow;
 class MainWindow;
 
-class HostDisplay;
+class GPUDevice;
 namespace GameList {
 struct Entry;
 }

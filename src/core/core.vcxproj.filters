@@ -35,7 +35,6 @@
     <ClCompile Include="sio.cpp" />
     <ClCompile Include="controller.cpp" />
     <ClCompile Include="analog_controller.cpp" />
-    <ClCompile Include="host_display.cpp" />
     <ClCompile Include="timing_event.cpp" />
     <ClCompile Include="cdrom_async_reader.cpp" />
     <ClCompile Include="psf_loader.cpp" />
@@ -60,6 +59,138 @@
     <ClCompile Include="host.cpp" />
     <ClCompile Include="game_database.cpp" />
     <ClCompile Include="pcdrv.cpp" />
+    <ClCompile Include="gpu\d3d11_gpu_device.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12_gpu_device.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gpu_device.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\opengl_gpu_device.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan_gpu_device.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d11\stream_buffer.cpp">
+      <Filter>gpu\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d11\texture.cpp">
+      <Filter>gpu\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d11\shader_cache.cpp">
+      <Filter>gpu\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d11\shader_compiler.cpp">
+      <Filter>gpu\d3d11</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12\shader_cache.cpp">
+      <Filter>gpu\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12\staging_texture.cpp">
+      <Filter>gpu\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12\stream_buffer.cpp">
+      <Filter>gpu\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12\texture.cpp">
+      <Filter>gpu\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12\util.cpp">
+      <Filter>gpu\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12\context.cpp">
+      <Filter>gpu\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12\descriptor_heap_manager.cpp">
+      <Filter>gpu\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\context_egl_wayland.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\context_egl_x11.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\context_glx.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\context_wgl.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\program.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\shader_cache.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\stream_buffer.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\texture.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\x11_window.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\context.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gl\context_egl.cpp">
+      <Filter>gpu\gl</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\stream_buffer.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\swap_chain.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\texture.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\util.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\builders.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\context.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\loader.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\shader_cache.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan\shader_compiler.cpp">
+      <Filter>gpu\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\postprocessing_chain.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\postprocessing_shader.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\postprocessing_shadergen.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\imgui_impl_dx12.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\imgui_impl_opengl3.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\imgui_impl_vulkan.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\imgui_impl_dx11.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\gpu_texture.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="types.h" />
@@ -86,7 +217,6 @@
     <ClInclude Include="gpu_sw.h" />
     <ClInclude Include="gpu_hw_shadergen.h" />
     <ClInclude Include="gpu_hw_d3d11.h" />
-    <ClInclude Include="host_display.h" />
     <ClInclude Include="bios.h" />
     <ClInclude Include="cpu_recompiler_types.h" />
     <ClInclude Include="cpu_code_cache.h" />
@@ -127,5 +257,171 @@
     <ClInclude Include="game_database.h" />
     <ClInclude Include="input_types.h" />
     <ClInclude Include="pcdrv.h" />
+    <ClInclude Include="gpu\d3d11_gpu_device.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12_gpu_device.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gpu_device.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\opengl_gpu_device.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan_gpu_device.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d11\shader_compiler.h">
+      <Filter>gpu\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d11\stream_buffer.h">
+      <Filter>gpu\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d11\texture.h">
+      <Filter>gpu\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d11\shader_cache.h">
+      <Filter>gpu\d3d11</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12\shader_cache.h">
+      <Filter>gpu\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12\staging_texture.h">
+      <Filter>gpu\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12\stream_buffer.h">
+      <Filter>gpu\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12\texture.h">
+      <Filter>gpu\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12\util.h">
+      <Filter>gpu\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12\context.h">
+      <Filter>gpu\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12\descriptor_heap_manager.h">
+      <Filter>gpu\d3d12</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\context_egl_wayland.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\context_egl_x11.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\context_glx.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\context_wgl.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\loader.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\program.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\shader_cache.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\stream_buffer.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\texture.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\x11_window.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\context.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\context_agl.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gl\context_egl.h">
+      <Filter>gpu\gl</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\stream_buffer.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\swap_chain.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\texture.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\util.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\builders.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\context.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\entry_points.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\loader.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\shader_cache.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan\shader_compiler.h">
+      <Filter>gpu\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\postprocessing_chain.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\postprocessing_shader.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\postprocessing_shadergen.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\imgui_impl_dx12.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\imgui_impl_opengl3.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\imgui_impl_vulkan.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\imgui_impl_dx11.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gpu_texture.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="gpu">
+      <UniqueIdentifier>{7b18fac1-ee2b-4816-8537-eb8f32d40ada}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gpu\d3d11">
+      <UniqueIdentifier>{f5b7a4af-72c7-406f-b787-9036115c3580}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gpu\d3d12">
+      <UniqueIdentifier>{17c2f89b-5cf4-4d3a-9343-a03c1c668b85}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gpu\gl">
+      <UniqueIdentifier>{e2aeacc6-65aa-4110-bef9-5f3e1fc0470e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gpu\vulkan">
+      <UniqueIdentifier>{e4809e3b-2adc-440a-82df-044a408409b3}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="gpu\gl\context_agl.mm">
+      <Filter>gpu\gl</Filter>
+    </None>
+    <None Include="gpu\vulkan\entry_points.inl">
+      <Filter>gpu\vulkan</Filter>
+    </None>
   </ItemGroup>
 </Project>

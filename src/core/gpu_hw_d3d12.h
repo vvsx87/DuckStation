@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "common/d3d12/staging_texture.h"
-#include "common/d3d12/stream_buffer.h"
-#include "common/d3d12/texture.h"
 #include "common/dimensional_array.h"
+#include "gpu/d3d12/staging_texture.h"
+#include "gpu/d3d12/stream_buffer.h"
+#include "gpu/d3d12/texture.h"
 #include "gpu_hw.h"
 #include "texture_replacements.h"
 #include <array>

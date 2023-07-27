@@ -7,7 +7,7 @@
 #include "common/log.h"
 #include "common/make_array.h"
 #include "common/platform.h"
-#include "host_display.h"
+#include "gpu/gpu_device.h"
 #include "system.h"
 #include <algorithm>
 Log_SetChannel(GPU_SW);
@@ -895,7 +895,7 @@ void GPU_SW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32
 std::unique_ptr<GPU> GPU::CreateSoftwareRenderer()
 {
   // we need something to draw in.. but keep the current api if we have one
-  if (!g_host_display && !Host::AcquireHostDisplay(HostDisplay::GetPreferredAPI()))
+  if (!g_host_display && !Host::AcquireHostDisplay(GPUDevice::GetPreferredAPI()))
     return nullptr;
 
   std::unique_ptr<GPU_SW> gpu(std::make_unique<GPU_SW>());

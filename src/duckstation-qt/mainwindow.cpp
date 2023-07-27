@@ -10,7 +10,7 @@
 #include "common/log.h"
 #include "core/achievements.h"
 #include "core/host.h"
-#include "core/host_display.h"
+#include "core/gpu/gpu_device.h"
 #include "core/memory_card.h"
 #include "core/settings.h"
 #include "core/system.h"
@@ -429,7 +429,7 @@ void MainWindow::setDisplayFullscreen(const std::string& fullscreen_mode)
   float refresh_rate;
   bool result = false;
 
-  if (HostDisplay::ParseFullscreenMode(fullscreen_mode, &width, &height, &refresh_rate))
+  if (GPUDevice::ParseFullscreenMode(fullscreen_mode, &width, &height, &refresh_rate))
   {
     result = g_host_display->SetFullscreen(true, width, height, refresh_rate);
     if (result)

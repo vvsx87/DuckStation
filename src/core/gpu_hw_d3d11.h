@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "common/d3d11/shader_cache.h"
-#include "common/d3d11/stream_buffer.h"
-#include "common/d3d11/texture.h"
+#include "gpu/d3d11/shader_cache.h"
+#include "gpu/d3d11/stream_buffer.h"
+#include "gpu/d3d11/texture.h"
 #include "gpu_hw.h"
 #include "texture_replacements.h"
 #include <array>
@@ -123,7 +123,7 @@ private:
   ComPtr<ID3D11VertexShader> m_screen_quad_vertex_shader;
   ComPtr<ID3D11VertexShader> m_uv_quad_vertex_shader;
   ComPtr<ID3D11PixelShader> m_copy_pixel_shader;
-  std::array<std::array<ComPtr<ID3D11PixelShader>, 2>, 2> m_vram_fill_pixel_shaders;  // [wrapped][interlaced]
+  std::array<std::array<ComPtr<ID3D11PixelShader>, 2>, 2> m_vram_fill_pixel_shaders; // [wrapped][interlaced]
   ComPtr<ID3D11PixelShader> m_vram_read_pixel_shader;
   ComPtr<ID3D11PixelShader> m_vram_write_pixel_shader;
   ComPtr<ID3D11PixelShader> m_vram_copy_pixel_shader;

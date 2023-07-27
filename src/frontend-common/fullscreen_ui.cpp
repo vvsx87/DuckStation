@@ -20,8 +20,9 @@
 #include "core/controller.h"
 #include "core/cpu_core.h"
 #include "core/gpu.h"
+#include "core/gpu/gpu_device.h"
+#include "core/gpu/postprocessing_chain.h"
 #include "core/host.h"
-#include "core/host_display.h"
 #include "core/host_settings.h"
 #include "core/memory_card_image.h"
 #include "core/resources.h"
@@ -37,7 +38,6 @@
 #include "imgui_manager.h"
 #include "imgui_stdlib.h"
 #include "input_manager.h"
-#include "postprocessing_chain.h"
 #include "scmversion/scmversion.h"
 #include "util/ini_settings_interface.h"
 #include <atomic>
@@ -2355,7 +2355,7 @@ void FullscreenUI::SwitchToGameSettings(const GameList::Entry* entry)
 
 void FullscreenUI::PopulateGraphicsAdapterList()
 {
-  HostDisplay::AdapterAndModeList ml(g_host_display->GetAdapterAndModeList());
+  GPUDevice::AdapterAndModeList ml(g_host_display->GetAdapterAndModeList());
   s_graphics_adapter_list_cache = std::move(ml.adapter_names);
   s_fullscreen_mode_list_cache = std::move(ml.fullscreen_modes);
   s_fullscreen_mode_list_cache.insert(s_fullscreen_mode_list_cache.begin(), "Borderless Fullscreen");
@@ -3544,7 +3544,7 @@ void FullscreenUI::DrawDisplaySettingsPage()
                           adapter.has_value() ? (adapter->empty() ? "Default" : adapter->c_str()) :
                                                 "Use Global Setting"))
   {
-    HostDisplay::AdapterAndModeList aml(g_host_display->GetAdapterAndModeList());
+    GPUDevice::AdapterAndModeList aml(g_host_display->GetAdapterAndModeList());
 
     ImGuiFullscreen::ChoiceDialogOptions options;
     options.reserve(aml.adapter_names.size() + 2);
@@ -3588,7 +3588,7 @@ void FullscreenUI::DrawDisplaySettingsPage()
                           fsmode.has_value() ? (fsmode->empty() ? "Borderless Fullscreen" : fsmode->c_str()) :
                                                "Use Global Setting"))
   {
-    HostDisplay::AdapterAndModeList aml(g_host_display->GetAdapterAndModeList());
+    GPUDevice::AdapterAndModeList aml(g_host_display->GetAdapterAndModeList());
 
     ImGuiFullscreen::ChoiceDialogOptions options;
     options.reserve(aml.fullscreen_modes.size() + 2);
@@ -4505,9 +4505,10 @@ void FullscreenUI::DrawAdvancedSettingsPage()
   DrawFloatRangeSetting(bsi, "Display FPS Limit",
                         "Limits how many frames are displayed to the screen. These frames are still rendered.",
                         "Display", "MaxFPS", Settings::DEFAULT_DISPLAY_MAX_FPS, 0.0f, 500.0f, "%.2f FPS");
-  DrawToggleSetting(bsi, "Stretch Display Vertically",
-                    "Stretches the display to match the aspect ratio by multiplying vertically instead of horizontally.",
-                    "Display", "StretchVertically", false);
+  DrawToggleSetting(
+    bsi, "Stretch Display Vertically",
+    "Stretches the display to match the aspect ratio by multiplying vertically instead of horizontally.", "Display",
+    "StretchVertically", false);
 
   MenuHeading("PGXP Settings");
 

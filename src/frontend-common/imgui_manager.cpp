@@ -10,8 +10,8 @@
 #include "common/timer.h"
 #include "common_host.h"
 #include "core/gpu.h"
+#include "core/gpu/gpu_device.h"
 #include "core/host.h"
-#include "core/host_display.h"
 #include "core/system.h"
 #include "fmt/format.h"
 #include "fullscreen_ui.h"
@@ -569,10 +569,10 @@ void Host::AddOSDMessage(std::string message, float duration /*= 2.0f*/)
 
 void Host::AddKeyedOSDMessage(std::string key, std::string message, float duration /* = 2.0f */)
 {
-	if (!key.empty())
-		Log_InfoPrintf("OSD [%s]: %s", key.c_str(), message.c_str());
-	else
-		Log_InfoPrintf("OSD: %s", message.c_str());
+  if (!key.empty())
+    Log_InfoPrintf("OSD [%s]: %s", key.c_str(), message.c_str());
+  else
+    Log_InfoPrintf("OSD: %s", message.c_str());
 
   OSDMessage msg;
   msg.key = std::move(key);

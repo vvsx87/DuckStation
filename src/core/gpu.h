@@ -17,7 +17,7 @@
 
 class StateWrapper;
 
-class HostDisplay;
+class GPUDevice;
 class GPUTexture;
 
 class TimingEvent;

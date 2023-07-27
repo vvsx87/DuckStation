@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+#include "core/gpu/gpu_device.h"
 #include "core/host.h"
-#include "core/host_display.h"
 #include "core/host_settings.h"
 #include "core/system.h"
 #include "core/types.h"
@@ -39,7 +39,7 @@ class QTranslator;
 
 class INISettingsInterface;
 
-class HostDisplay;
+class GPUDevice;
 
 class MainWindow;
 class DisplayWidget;

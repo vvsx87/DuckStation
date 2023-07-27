@@ -9,7 +9,7 @@
 #include "common/path.h"
 #include "common/string_util.h"
 #include "core/host.h"
-#include "core/host_display.h"
+#include "core/gpu_device.h"
 #include "core/host_settings.h"
 #include "core/system.h"
 #include "frontend-common/common_host.h"
