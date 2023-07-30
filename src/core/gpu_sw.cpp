@@ -107,7 +107,8 @@ GPUTexture* GPU_SW::GetDisplayTexture(u32 width, u32 height, GPUTexture::Format 
   {
     g_host_display->ClearDisplayTexture();
     m_display_texture.reset();
-    m_display_texture = g_host_display->CreateTexture(width, height, 1, 1, 1, format, nullptr, 0, true);
+    m_display_texture =
+      g_host_display->CreateTexture(width, height, 1, 1, 1, GPUTexture::Type::Texture, format, nullptr, 0, true);
     if (!m_display_texture)
       Log_ErrorPrintf("Failed to create %ux%u %u texture", width, height, static_cast<u32>(format));
   }
@@ -264,7 +265,7 @@ void GPU_SW::CopyOut15Bit(u32 src_x, u32 src_y, u32 width, u32 height, u32 field
 
   if (!interlaced)
   {
-    if (!g_host_display->BeginTextureUpdate(texture, width, height, reinterpret_cast<void**>(&dst_ptr), &dst_stride))
+    if (!texture->Map(reinterpret_cast<void**>(&dst_ptr), &dst_stride, 0, 0, width, height))
       return;
   }
   else
@@ -312,9 +313,9 @@ void GPU_SW::CopyOut15Bit(u32 src_x, u32 src_y, u32 width, u32 height, u32 field
   }
 
   if (!interlaced)
-    g_host_display->EndTextureUpdate(texture, 0, 0, width, height);
+    texture->Unmap();
   else
-    g_host_display->UpdateTexture(texture, 0, 0, width, height, m_display_texture_buffer.data(), output_stride);
+    texture->Update(0, 0, width, height, m_display_texture_buffer.data(), output_stride);
 
   g_host_display->SetDisplayTexture(texture, 0, 0, width, height);
 }
@@ -358,7 +359,7 @@ void GPU_SW::CopyOut24Bit(u32 src_x, u32 src_y, u32 skip_x, u32 width, u32 heigh
 
   if (!interlaced)
   {
-    if (!g_host_display->BeginTextureUpdate(texture, width, height, reinterpret_cast<void**>(&dst_ptr), &dst_stride))
+    if (!texture->Map(reinterpret_cast<void**>(&dst_ptr), &dst_stride, 0, 0, width, height))
       return;
   }
   else
@@ -470,9 +471,9 @@ void GPU_SW::CopyOut24Bit(u32 src_x, u32 src_y, u32 skip_x, u32 width, u32 heigh
   }
 
   if (!interlaced)
-    g_host_display->EndTextureUpdate(texture, 0, 0, width, height);
+    texture->Unmap();
   else
-    g_host_display->UpdateTexture(texture, 0, 0, width, height, m_display_texture_buffer.data(), output_stride);
+    texture->Update(0, 0, width, height, m_display_texture_buffer.data(), output_stride);
 
   g_host_display->SetDisplayTexture(texture, 0, 0, width, height);
 }

@@ -1,8 +1,11 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
-#include "texture.h"
+#include "d3d11_texture.h"
+#include "common/assert.h"
 #include "common/log.h"
+#include "common/string_util.h"
+#include "d3d11_device.h"
 #include <array>
 Log_SetChannel(D3D11);
 
@@ -10,10 +13,10 @@ static constexpr std::array<DXGI_FORMAT, static_cast<u32>(GPUTexture::Format::Co
   {DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B5G6R5_UNORM,
    DXGI_FORMAT_B5G5R5A1_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_D16_UNORM}};
 
-D3D11::Texture::Texture() = default;
+D3D11Texture::D3D11Texture() = default;
 
-D3D11::Texture::Texture(ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderResourceView> srv,
-                        ComPtr<ID3D11RenderTargetView> rtv)
+D3D11Texture::D3D11Texture(ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderResourceView> srv,
+                           ComPtr<ID3D11RenderTargetView> rtv)
   : m_texture(std::move(texture)), m_srv(std::move(srv)), m_rtv(std::move(rtv))
 {
   const D3D11_TEXTURE2D_DESC desc = GetDesc();
@@ -26,17 +29,17 @@ D3D11::Texture::Texture(ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderReso
   m_dynamic = (desc.Usage == D3D11_USAGE_DYNAMIC);
 }
 
-D3D11::Texture::~Texture()
+D3D11Texture::~D3D11Texture()
 {
   Destroy();
 }
 
-DXGI_FORMAT D3D11::Texture::GetDXGIFormat(Format format)
+DXGI_FORMAT D3D11Texture::GetDXGIFormat(Format format)
 {
   return s_dxgi_mapping[static_cast<u8>(format)];
 }
 
-GPUTexture::Format D3D11::Texture::LookupBaseFormat(DXGI_FORMAT dformat)
+GPUTexture::Format D3D11Texture::LookupBaseFormat(DXGI_FORMAT dformat)
 {
   for (u32 i = 0; i < static_cast<u32>(s_dxgi_mapping.size()); i++)
   {
@@ -46,21 +49,73 @@ GPUTexture::Format D3D11::Texture::LookupBaseFormat(DXGI_FORMAT dformat)
   return GPUTexture::Format::Unknown;
 }
 
-D3D11_TEXTURE2D_DESC D3D11::Texture::GetDesc() const
+D3D11_TEXTURE2D_DESC D3D11Texture::GetDesc() const
 {
   D3D11_TEXTURE2D_DESC desc;
   m_texture->GetDesc(&desc);
   return desc;
 }
 
-bool D3D11::Texture::IsValid() const
+bool D3D11Texture::IsValid() const
 {
   return static_cast<bool>(m_texture);
 }
 
-bool D3D11::Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 layers, u32 levels, u32 samples,
-                            Format format, u32 bind_flags, const void* initial_data /* = nullptr */,
-                            u32 initial_data_stride /* = 0 */, bool dynamic /* = false */)
+bool D3D11Texture::Update(u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch, u32 layer /*= 0*/,
+                          u32 level /*= 0*/)
+{
+  if (m_dynamic)
+  {
+    void* map;
+    u32 map_stride;
+    if (!Map(&map, &map_stride, x, y, width, height, layer, level))
+      return false;
+
+    StringUtil::StrideMemCpy(map, map_stride, data, pitch, GetPixelSize() * width, height);
+    Unmap();
+    return true;
+  }
+
+  const CD3D11_BOX box(static_cast<LONG>(x), static_cast<LONG>(y), 0, static_cast<LONG>(x + width),
+                       static_cast<LONG>(y + height), 1);
+  const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
+
+  D3D11Device::GetD3DContext()->UpdateSubresource(m_texture.Get(), srnum, &box, data, pitch, 0);
+  return true;
+}
+
+bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer /*= 0*/,
+                       u32 level /*= 0*/)
+{
+  if (!m_dynamic || (x + width) > m_width || (y + height) > m_height || layer > m_layers || level > m_levels)
+    return false;
+
+  const bool discard = (width == m_width && height == m_height);
+  const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
+  D3D11_MAPPED_SUBRESOURCE sr;
+  HRESULT hr = D3D11Device::GetD3DContext()->Map(m_texture.Get(), srnum,
+                                                 discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE, 0, &sr);
+  if (FAILED(hr))
+  {
+    Log_ErrorPrintf("Map pixels texture failed: %08X", hr);
+    return false;
+  }
+
+  *map = static_cast<u8*>(sr.pData) + (y * sr.RowPitch) + (x * GetPixelSize());
+  *map_stride = sr.RowPitch;
+  m_mapped_subresource = srnum;
+  return true;
+}
+
+void D3D11Texture::Unmap()
+{
+  D3D11Device::GetD3DContext()->Unmap(m_texture.Get(), m_mapped_subresource);
+  m_mapped_subresource = 0;
+}
+
+bool D3D11Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type,
+                          Format format, const void* initial_data /* = nullptr */, u32 initial_data_stride /* = 0 */,
+                          bool dynamic /* = false */)
 {
   if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
       layers > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION || (layers > 1 && samples > 1))
@@ -68,6 +123,25 @@ bool D3D11::Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 lay
     Log_ErrorPrintf("Texture bounds (%ux%ux%u, %u mips, %u samples) are too large", width, height, layers, levels,
                     samples);
     return false;
+  }
+
+  u32 bind_flags = 0;
+  switch (type)
+  {
+    case Type::RenderTarget:
+      bind_flags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+      break;
+    case Type::DepthStencil:
+      bind_flags = D3D11_BIND_DEPTH_STENCIL; // | D3D11_BIND_SHADER_RESOURCE;
+      break;
+    case Type::Texture:
+      bind_flags = D3D11_BIND_SHADER_RESOURCE;
+      break;
+    case Type::RWTexture:
+      bind_flags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+      break;
+    default:
+      break;
   }
 
   CD3D11_TEXTURE2D_DESC desc(GetDXGIFormat(format), width, height, layers, levels, bind_flags,
@@ -132,7 +206,7 @@ bool D3D11::Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 lay
   return true;
 }
 
-bool D3D11::Texture::Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture)
+bool D3D11Texture::Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture)
 {
   D3D11_TEXTURE2D_DESC desc;
   texture->GetDesc(&desc);
@@ -177,7 +251,7 @@ bool D3D11::Texture::Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture
   return true;
 }
 
-void D3D11::Texture::Destroy()
+void D3D11Texture::Destroy()
 {
   m_rtv.Reset();
   m_srv.Reset();

@@ -6,7 +6,7 @@
 #include "common/window_info.h"
 #include "common/windows_headers.h"
 #include "d3d11/stream_buffer.h"
-#include "d3d11/texture.h"
+#include "d3d11_texture.h"
 #include "gpu_device.h"
 #include "postprocessing_chain.h"
 #include <d3d11.h>
@@ -17,14 +17,18 @@
 #include <vector>
 #include <wrl/client.h>
 
-class D3D11GPUDevice final : public GPUDevice
+class D3D11Device final : public GPUDevice
 {
 public:
   template<typename T>
   using ComPtr = Microsoft::WRL::ComPtr<T>;
 
-  D3D11GPUDevice();
-  ~D3D11GPUDevice();
+  ALWAYS_INLINE static D3D11Device& GetInstance() { return *static_cast<D3D11Device*>(g_host_display.get()); }
+  ALWAYS_INLINE static ID3D11Device* GetD3DDevice() { return GetInstance().m_device.Get(); }
+  ALWAYS_INLINE static ID3D11DeviceContext* GetD3DContext() { return GetInstance().m_context.Get(); }
+
+  D3D11Device();
+  ~D3D11Device();
 
   RenderAPI GetRenderAPI() const override;
   void* GetDevice() const override;
@@ -50,11 +54,8 @@ public:
   bool SetPostProcessingChain(const std::string_view& config) override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
-                                            GPUTexture::Format format, const void* data, u32 data_stride,
-                                            bool dynamic = false) override;
-  bool BeginTextureUpdate(GPUTexture* texture, u32 width, u32 height, void** out_buffer, u32* out_pitch) override;
-  void EndTextureUpdate(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height) override;
-  bool UpdateTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch) override;
+                                            GPUTexture::Type type, GPUTexture::Format format, const void* data,
+                                            u32 data_stride, bool dynamic = false) override;
   bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                        u32 out_data_stride) override;
   bool SupportsTextureFormat(GPUTexture::Format format) const override;
@@ -73,7 +74,9 @@ public:
   static AdapterAndModeList StaticGetAdapterAndModeList();
 
 protected:
-  static constexpr u32 DISPLAY_UNIFORM_BUFFER_SIZE = 16;
+  static constexpr u32 DISPLAY_UNIFORM_BUFFER_SIZE = 64;
+  static constexpr u32 IMGUI_VERTEX_BUFFER_SIZE = 4 * 1024 * 1024;
+  static constexpr u32 IMGUI_INDEX_BUFFER_SIZE = 2 * 1024 * 1024;
   static constexpr u8 NUM_TIMESTAMP_QUERIES = 3;
 
   static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
@@ -84,9 +87,8 @@ protected:
   bool CreateResources() override;
   void DestroyResources() override;
 
-  bool CreateImGuiContext() override;
-  void DestroyImGuiContext() override;
-  bool UpdateImGuiFontTexture() override;
+  bool CreateImGuiResources();
+  void DestroyImGuiResources();
 
   bool CreateSwapChain(const DXGI_MODE_DESC* fullscreen_mode);
   bool CreateSwapChainRTV();
@@ -95,7 +97,7 @@ protected:
   void RenderSoftwareCursor();
   void RenderImGui();
 
-  void RenderDisplay(s32 left, s32 top, s32 width, s32 height, D3D11::Texture* texture, s32 texture_view_x,
+  void RenderDisplay(s32 left, s32 top, s32 width, s32 height, D3D11Texture* texture, s32 texture_view_x,
                      s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter);
   void RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture_handle);
 
@@ -103,13 +105,13 @@ protected:
   {
     ComPtr<ID3D11VertexShader> vertex_shader;
     ComPtr<ID3D11PixelShader> pixel_shader;
-    D3D11::Texture output_texture;
+    D3D11Texture output_texture;
     u32 uniforms_size;
   };
 
   bool CheckPostProcessingRenderTargets(u32 target_width, u32 target_height);
   void ApplyPostProcessingChain(ID3D11RenderTargetView* final_target, s32 final_left, s32 final_top, s32 final_width,
-                                s32 final_height, D3D11::Texture* texture, s32 texture_view_x, s32 texture_view_y,
+                                s32 final_height, D3D11Texture* texture, s32 texture_view_x, s32 texture_view_y,
                                 s32 texture_view_width, s32 texture_view_height, u32 target_width, u32 target_height);
 
   bool CreateTimestampQueries();
@@ -145,8 +147,16 @@ protected:
   bool m_using_flip_model_swap_chain = true;
   bool m_using_allow_tearing = false;
 
+  D3D11Texture m_imgui_texture;
+  D3D11::StreamBuffer m_imgui_vertex_buffer;
+  D3D11::StreamBuffer m_imgui_index_buffer;
+  ComPtr<ID3D11InputLayout> m_imgui_input_layout;
+  ComPtr<ID3D11VertexShader> m_imgui_vertex_shader;
+  ComPtr<ID3D11PixelShader> m_imgui_pixel_shader;
+  ComPtr<ID3D11BlendState> m_imgui_blend_state;
+
   FrontendCommon::PostProcessingChain m_post_processing_chain;
-  D3D11::Texture m_post_processing_input_texture;
+  D3D11Texture m_post_processing_input_texture;
   std::vector<PostProcessingStage> m_post_processing_stages;
   Common::Timer m_post_processing_timer;
 

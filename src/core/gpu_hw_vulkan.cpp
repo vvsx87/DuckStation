@@ -134,11 +134,11 @@ bool GPU_HW_Vulkan::DoState(StateWrapper& sw, GPUTexture** host_texture, bool up
       {
         delete tex;
 
-        tex = static_cast<Vulkan::Texture*>(g_host_display
-                                              ->CreateTexture(m_vram_texture.GetWidth(), m_vram_texture.GetHeight(), 1,
-                                                              1, m_vram_texture.GetSamples(), GPUTexture::Format::RGBA8,
-                                                              nullptr, 0, false)
-                                              .release());
+        tex = static_cast<Vulkan::Texture*>(
+          g_host_display
+            ->CreateTexture(m_vram_texture.GetWidth(), m_vram_texture.GetHeight(), 1, 1, m_vram_texture.GetSamples(),
+                            GPUTexture::Type::RenderTarget, GPUTexture::Format::RGBA8, nullptr, 0, false)
+            .release());
         *host_texture = tex;
         if (!tex)
           return false;

@@ -24,6 +24,9 @@ public:
   static Format LookupBaseFormat(VkFormat vformat);
 
   bool IsValid() const override;
+  bool Update(u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch, u32 layer = 0, u32 level = 0) override;
+  bool Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer = 0, u32 level = 0) override;
+  void Unmap() override;
 
   /// An image is considered owned/managed if we control the memory.
   ALWAYS_INLINE bool IsOwned() const { return (m_allocation != VK_NULL_HANDLE); }

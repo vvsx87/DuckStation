@@ -90,7 +90,7 @@ bool GPU_HW_D3D11::DoState(StateWrapper& sw, GPUTexture** host_texture, bool upd
   {
     ComPtr<ID3D11Resource> resource;
 
-    D3D11::Texture* tex = static_cast<D3D11::Texture*>(*host_texture);
+    D3D11Texture* tex = static_cast<D3D11Texture*>(*host_texture);
     if (sw.IsReading())
     {
       if (tex->GetWidth() != m_vram_texture.GetWidth() || tex->GetHeight() != m_vram_texture.GetHeight() ||
@@ -108,11 +108,11 @@ bool GPU_HW_D3D11::DoState(StateWrapper& sw, GPUTexture** host_texture, bool upd
       {
         delete tex;
 
-        tex = static_cast<D3D11::Texture*>(g_host_display
-                                             ->CreateTexture(m_vram_texture.GetWidth(), m_vram_texture.GetHeight(), 1,
-                                                             1, m_vram_texture.GetSamples(), GPUTexture::Format::RGBA8,
-                                                             nullptr, 0, false)
-                                             .release());
+        tex = static_cast<D3D11Texture*>(g_host_display
+                                           ->CreateTexture(m_vram_texture.GetWidth(), m_vram_texture.GetHeight(), 1, 1,
+                                                           m_vram_texture.GetSamples(), GPUTexture::Type::RenderTarget,
+                                                           GPUTexture::Format::RGBA8, nullptr, 0, false)
+                                           .release());
         *host_texture = tex;
         if (!tex)
           return false;
@@ -243,26 +243,25 @@ bool GPU_HW_D3D11::CreateFramebuffer()
   const GPUTexture::Format texture_format = GPUTexture::Format::RGBA8;
   const GPUTexture::Format depth_format = GPUTexture::Format::D16;
 
-  if (!m_vram_texture.Create(m_device.Get(), texture_width, texture_height, 1, 1, samples, texture_format,
-                             D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET) ||
-      !m_vram_depth_texture.Create(m_device.Get(), texture_width, texture_height, 1, 1, samples, depth_format,
-                                   D3D11_BIND_DEPTH_STENCIL) ||
-      !m_vram_read_texture.Create(m_device.Get(), texture_width, texture_height, 1, 1, 1, texture_format,
-                                  D3D11_BIND_SHADER_RESOURCE) ||
+  if (!m_vram_texture.Create(m_device.Get(), texture_width, texture_height, 1, 1, samples,
+                             GPUTexture::Type::RenderTarget, texture_format) ||
+      !m_vram_depth_texture.Create(m_device.Get(), texture_width, texture_height, 1, 1, samples,
+                                   GPUTexture::Type::DepthStencil, depth_format) ||
+      !m_vram_read_texture.Create(m_device.Get(), texture_width, texture_height, 1, 1, 1, GPUTexture::Type::Texture,
+                                  texture_format) ||
       !m_display_texture.Create(
         m_device.Get(),
         ((m_downsample_mode == GPUDownsampleMode::Adaptive) ? VRAM_WIDTH : GPU_MAX_DISPLAY_WIDTH) * m_resolution_scale,
-        GPU_MAX_DISPLAY_HEIGHT * m_resolution_scale, 1, 1, 1, texture_format,
-        D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET) ||
-      !m_vram_encoding_texture.Create(m_device.Get(), VRAM_WIDTH / 2, VRAM_HEIGHT, 1, 1, 1, texture_format,
-                                      D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET))
+        GPU_MAX_DISPLAY_HEIGHT * m_resolution_scale, 1, 1, 1, GPUTexture::Type::RenderTarget, texture_format) ||
+      !m_vram_encoding_texture.Create(m_device.Get(), VRAM_WIDTH / 2, VRAM_HEIGHT, 1, 1, 1,
+                                      GPUTexture::Type::RenderTarget, texture_format))
   {
     return false;
   }
 
   const CD3D11_DEPTH_STENCIL_VIEW_DESC depth_view_desc(samples > 1 ? D3D11_DSV_DIMENSION_TEXTURE2DMS :
                                                                      D3D11_DSV_DIMENSION_TEXTURE2D,
-                                                       D3D11::Texture::GetDXGIFormat(depth_format));
+                                                       D3D11Texture::GetDXGIFormat(depth_format));
   HRESULT hr =
     m_device->CreateDepthStencilView(m_vram_depth_texture, &depth_view_desc, m_vram_depth_view.GetAddressOf());
   if (FAILED(hr))
@@ -273,10 +272,10 @@ bool GPU_HW_D3D11::CreateFramebuffer()
     const u32 levels = GetAdaptiveDownsamplingMipLevels();
 
     if (!m_downsample_texture.Create(m_device.Get(), texture_width, texture_height, 1, static_cast<u16>(levels), 1,
-                                     texture_format, D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET) ||
+                                     GPUTexture::Type::RenderTarget, texture_format) ||
         !m_downsample_weight_texture.Create(m_device.Get(), texture_width >> (levels - 1),
-                                            texture_height >> (levels - 1), 1, 1, 1, GPUTexture::Format::R8,
-                                            D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET))
+                                            texture_height >> (levels - 1), 1, 1, 1, GPUTexture::Type::RenderTarget,
+                                            GPUTexture::Format::R8))
     {
       return false;
     }
@@ -302,8 +301,8 @@ bool GPU_HW_D3D11::CreateFramebuffer()
   }
   else if (m_downsample_mode == GPUDownsampleMode::Box)
   {
-    if (!m_downsample_texture.Create(m_device.Get(), VRAM_WIDTH, VRAM_HEIGHT, 1, 1, 1, texture_format,
-                                     D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET))
+    if (!m_downsample_texture.Create(m_device.Get(), VRAM_WIDTH, VRAM_HEIGHT, 1, 1, 1, GPUTexture::Type::RenderTarget,
+                                     texture_format))
     {
       return false;
     }
@@ -735,7 +734,7 @@ bool GPU_HW_D3D11::BlitVRAMReplacementTexture(const TextureReplacementTexture* t
       m_vram_replacement_texture.GetHeight() < tex->GetHeight())
   {
     if (!m_vram_replacement_texture.Create(m_device.Get(), tex->GetWidth(), tex->GetHeight(), 1, 1, 1,
-                                           GPUTexture::Format::RGBA8, D3D11_BIND_SHADER_RESOURCE, tex->GetPixels(),
+                                           GPUTexture::Type::Texture, GPUTexture::Format::RGBA8, tex->GetPixels(),
                                            tex->GetPitch(), true))
     {
       return false;
@@ -1093,7 +1092,7 @@ void GPU_HW_D3D11::ClearDepthBuffer()
   m_last_depth_z = 1.0f;
 }
 
-void GPU_HW_D3D11::DownsampleFramebuffer(D3D11::Texture& source, u32 left, u32 top, u32 width, u32 height)
+void GPU_HW_D3D11::DownsampleFramebuffer(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height)
 {
   if (m_downsample_mode == GPUDownsampleMode::Adaptive)
     DownsampleFramebufferAdaptive(source, left, top, width, height);
@@ -1101,7 +1100,7 @@ void GPU_HW_D3D11::DownsampleFramebuffer(D3D11::Texture& source, u32 left, u32 t
     DownsampleFramebufferBoxFilter(source, left, top, width, height);
 }
 
-void GPU_HW_D3D11::DownsampleFramebufferAdaptive(D3D11::Texture& source, u32 left, u32 top, u32 width, u32 height)
+void GPU_HW_D3D11::DownsampleFramebufferAdaptive(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height)
 {
   CD3D11_BOX src_box(left, top, 0, left + width, top + height, 1);
   m_context->OMSetDepthStencilState(m_depth_disabled_state.Get(), 0);
@@ -1170,7 +1169,7 @@ void GPU_HW_D3D11::DownsampleFramebufferAdaptive(D3D11::Texture& source, u32 lef
   g_host_display->SetDisplayTexture(&m_display_texture, left, top, width, height);
 }
 
-void GPU_HW_D3D11::DownsampleFramebufferBoxFilter(D3D11::Texture& source, u32 left, u32 top, u32 width, u32 height)
+void GPU_HW_D3D11::DownsampleFramebufferBoxFilter(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height)
 {
   const u32 ds_left = left / m_resolution_scale;
   const u32 ds_top = top / m_resolution_scale;

@@ -55,7 +55,7 @@
 
 #ifdef _WIN32
 #include "common/windows_headers.h"
-#include "core/gpu/d3d11_gpu_device.h"
+#include "core/gpu/d3d11_device.h"
 #include "core/gpu/d3d12_gpu_device.h"
 #include <KnownFolders.h>
 #include <ShlObj.h>
@@ -159,14 +159,14 @@ std::unique_ptr<GPUDevice> Host::CreateDisplayForAPI(RenderAPI api)
       return std::make_unique<D3D12GPUDevice>();
 
     case RenderAPI::D3D11:
-      return std::make_unique<D3D11GPUDevice>();
+      return std::make_unique<D3D11Device>();
 #endif
 
     default:
 #if defined(_WIN32) && defined(_M_ARM64)
       return std::make_unique<D3D12GPUDevice>();
 #elif defined(_WIN32)
-      return std::make_unique<D3D11GPUDevice>();
+      return std::make_unique<D3D11Device>();
 #elif defined(WITH_OPENGL)
       return std::make_unique<OpenGLGPUDevice>();
 #elif defined(WITH_VULKAN)

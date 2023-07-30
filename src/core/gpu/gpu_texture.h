@@ -18,6 +18,15 @@ public:
     MAX_SAMPLES = 255,
   };
 
+  enum class Type : u8
+  {
+    Unknown,
+    RenderTarget,
+    DepthStencil,
+    Texture,
+    RWTexture,
+  };
+
   enum class Format : u8
   {
     Unknown,
@@ -38,7 +47,8 @@ public:
   ALWAYS_INLINE u32 GetLayers() const { return m_layers; }
   ALWAYS_INLINE u32 GetLevels() const { return m_levels; }
   ALWAYS_INLINE u32 GetSamples() const { return m_samples; }
-  ALWAYS_INLINE GPUTexture::Format GetFormat() const { return m_format; }
+  ALWAYS_INLINE Type GetType() const { return m_type; }
+  ALWAYS_INLINE Format GetFormat() const { return m_format; }
 
   ALWAYS_INLINE bool IsTextureArray() const { return m_layers > 1; }
   ALWAYS_INLINE bool IsMultisampled() const { return m_samples > 1; }
@@ -47,14 +57,19 @@ public:
   ALWAYS_INLINE u32 GetMipWidth(u32 level) const { return std::max<u32>(m_width >> level, 1u); }
   ALWAYS_INLINE u32 GetMipHeight(u32 level) const { return std::max<u32>(m_height >> level, 1u); }
 
-  virtual bool IsValid() const = 0;
-
   static u32 GetPixelSize(GPUTexture::Format format);
   static bool IsDepthFormat(GPUTexture::Format format);
 
   static bool ConvertTextureDataToRGBA8(u32 width, u32 height, std::vector<u32>& texture_data, u32& texture_data_stride,
                                         GPUTexture::Format format);
   static void FlipTextureDataRGBA8(u32 width, u32 height, std::vector<u32>& texture_data, u32 texture_data_stride);
+
+  virtual bool IsValid() const = 0;
+
+  virtual bool Update(u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch, u32 layer = 0,
+                      u32 level = 0) = 0;
+  virtual bool Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer = 0, u32 level = 0) = 0;
+  virtual void Unmap() = 0;
 
 protected:
   GPUTexture();
@@ -67,5 +82,13 @@ protected:
   u8 m_layers = 0;
   u8 m_levels = 0;
   u8 m_samples = 0;
+  Type m_type = Type::Unknown;
   Format m_format = Format::Unknown;
+
+//   u16 m_map_x = 0;
+//   u16 m_map_y = 0;
+//   u16 m_map_width = 0;
+//   u16 m_map_height = 0;
+//   u8 m_map_layer = 0;
+//   u8 m_map_level = 0;
 };

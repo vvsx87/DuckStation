@@ -110,18 +110,9 @@ bool ImGuiManager::Initialize()
 
   AssertMsg(!FullscreenUI::IsInitialized(), "Fullscreen UI is not initialized on ImGui init");
 
-  if (!g_host_display->CreateImGuiContext())
-  {
-    Panic("Failed to create ImGui device context");
-    g_host_display->DestroyImGuiContext();
-    ImGui::DestroyContext();
-    return false;
-  }
-
   if (!AddImGuiFonts(false) || !g_host_display->UpdateImGuiFontTexture())
   {
     Panic("Failed to create ImGui font text");
-    g_host_display->DestroyImGuiContext();
     ImGui::DestroyContext();
     return false;
   }
@@ -137,8 +128,6 @@ void ImGuiManager::Shutdown()
 {
   FullscreenUI::Shutdown();
 
-  if (g_host_display)
-    g_host_display->DestroyImGuiContext();
   if (ImGui::GetCurrentContext())
     ImGui::DestroyContext();
 

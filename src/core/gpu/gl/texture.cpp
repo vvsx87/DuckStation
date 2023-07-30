@@ -39,6 +39,25 @@ const std::tuple<GLenum, GLenum, GLenum>& GL::Texture::GetPixelFormatMapping(GPU
     return mapping_gles2[static_cast<u32>(format)];
 }
 
+bool GL::Texture::Update(u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch, u32 layer /*= 0*/,
+                         u32 level /*= 0*/)
+{
+  UnreachableCode();
+  return false;
+}
+
+bool GL::Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer /*= 0*/,
+                      u32 level /*= 0*/)
+{
+  UnreachableCode();
+  return false;
+}
+
+void GL::Texture::Unmap()
+{
+  UnreachableCode();
+}
+
 GL::Texture::Texture() = default;
 
 GL::Texture::Texture(Texture&& moved) : m_id(moved.m_id), m_fbo_id(moved.m_fbo_id)

@@ -48,7 +48,8 @@ void* OpenGLGPUDevice::GetContext() const
 }
 
 std::unique_ptr<GPUTexture> OpenGLGPUDevice::CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
-                                                           GPUTexture::Format format, const void* data, u32 data_stride,
+                                                           GPUTexture::Type type, GPUTexture::Format format,
+                                                           const void* data, u32 data_stride,
                                                            bool dynamic /* = false */)
 {
   std::unique_ptr<GL::Texture> tex(std::make_unique<GL::Texture>());
@@ -58,6 +59,7 @@ std::unique_ptr<GPUTexture> OpenGLGPUDevice::CreateTexture(u32 width, u32 height
   return tex;
 }
 
+#if 0
 bool OpenGLGPUDevice::BeginTextureUpdate(GPUTexture* texture, u32 width, u32 height, void** out_buffer, u32* out_pitch)
 {
   const u32 pixel_size = texture->GetPixelSize();
@@ -171,6 +173,8 @@ bool OpenGLGPUDevice::UpdateTexture(GPUTexture* texture, u32 x, u32 y, u32 width
 
   return true;
 }
+
+#endif
 
 bool OpenGLGPUDevice::DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                                       u32 out_data_stride)
@@ -432,7 +436,7 @@ void OpenGLGPUDevice::DestroySurface()
   if (!m_gl_context->ChangeSurface(m_window_info))
     Log_ErrorPrintf("Failed to switch to surfaceless");
 }
-
+#if 0
 bool OpenGLGPUDevice::CreateImGuiContext()
 {
   return ImGui_ImplOpenGL3_Init(GetGLSLVersionString());
@@ -448,6 +452,7 @@ bool OpenGLGPUDevice::UpdateImGuiFontTexture()
   ImGui_ImplOpenGL3_DestroyFontsTexture();
   return ImGui_ImplOpenGL3_CreateFontsTexture();
 }
+#endif
 
 bool OpenGLGPUDevice::CreateResources()
 {

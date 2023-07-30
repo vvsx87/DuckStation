@@ -10,9 +10,7 @@
 #include "d3d12/context.h"
 #include "d3d12/shader_cache.h"
 #include "d3d12/util.h"
-#include "display_ps.hlsl.h"
-#include "display_ps_alpha.hlsl.h"
-#include "display_vs.hlsl.h"
+#include "d3d_shaders.h"
 #include "imgui.h"
 #include "imgui_impl_dx12.h"
 #include "postprocessing_shadergen.h"
@@ -61,8 +59,8 @@ bool D3D12GPUDevice::HasSurface() const
 }
 
 std::unique_ptr<GPUTexture> D3D12GPUDevice::CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
-                                                          GPUTexture::Format format, const void* data, u32 data_stride,
-                                                          bool dynamic /* = false */)
+                                                          GPUTexture::Type type, GPUTexture::Format format,
+                                                          const void* data, u32 data_stride, bool dynamic /* = false */)
 {
   const DXGI_FORMAT dformat = D3D12::Texture::GetDXGIFormat(format);
   if (dformat == DXGI_FORMAT_UNKNOWN)
@@ -81,6 +79,7 @@ std::unique_ptr<GPUTexture> D3D12GPUDevice::CreateTexture(u32 width, u32 height,
   return tex;
 }
 
+#if 0
 bool D3D12GPUDevice::BeginTextureUpdate(GPUTexture* texture, u32 width, u32 height, void** out_buffer, u32* out_pitch)
 {
   return static_cast<D3D12::Texture*>(texture)->BeginStreamUpdate(0, 0, width, height, out_buffer, out_pitch);
@@ -96,6 +95,7 @@ bool D3D12GPUDevice::UpdateTexture(GPUTexture* texture, u32 x, u32 y, u32 width,
 {
   return GPUDevice::UpdateTexture(texture, x, y, width, height, data, pitch);
 }
+#endif
 
 bool D3D12GPUDevice::DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                                      u32 out_data_stride)
@@ -563,6 +563,7 @@ void D3D12GPUDevice::DestroyResources()
   m_display_root_signature.Reset();
 }
 
+#if 0
 bool D3D12GPUDevice::CreateImGuiContext()
 {
   ImGui::GetIO().DisplaySize.x = static_cast<float>(m_window_info.surface_width);
@@ -582,6 +583,7 @@ bool D3D12GPUDevice::UpdateImGuiFontTexture()
 {
   return ImGui_ImplDX12_CreateFontsTexture();
 }
+#endif
 
 bool D3D12GPUDevice::Render(bool skip_present)
 {

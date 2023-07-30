@@ -43,11 +43,8 @@ public:
   bool SetPostProcessingChain(const std::string_view& config) override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
-                                            GPUTexture::Format format, const void* data, u32 data_stride,
-                                            bool dynamic = false) override;
-  bool BeginTextureUpdate(GPUTexture* texture, u32 width, u32 height, void** out_buffer, u32* out_pitch) override;
-  void EndTextureUpdate(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height) override;
-  bool UpdateTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch) override;
+                                            GPUTexture::Type type, GPUTexture::Format format, const void* data,
+                                            u32 data_stride, bool dynamic = false) override;
   bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                        u32 out_data_stride) override;
   bool SupportsTextureFormat(GPUTexture::Format format) const override;
@@ -76,10 +73,6 @@ protected:
 
   bool CreateResources() override;
   void DestroyResources() override;
-
-  bool CreateImGuiContext() override;
-  void DestroyImGuiContext() override;
-  bool UpdateImGuiFontTexture() override;
 
   void SetSwapInterval();
 

@@ -140,7 +140,7 @@ void VulkanGPUDevice::DestroySurface()
   m_swap_chain.reset();
 }
 
-std::unique_ptr<GPUTexture> VulkanGPUDevice::CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
+std::unique_ptr<GPUTexture> VulkanGPUDevice::CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples, GPUTexture::Type type,
                                                            GPUTexture::Format format, const void* data, u32 data_stride,
                                                            bool dynamic /* = false */)
 {
@@ -179,6 +179,7 @@ std::unique_ptr<GPUTexture> VulkanGPUDevice::CreateTexture(u32 width, u32 height
   return texture;
 }
 
+#if 0
 bool VulkanGPUDevice::BeginTextureUpdate(GPUTexture* texture, u32 width, u32 height, void** out_buffer, u32* out_pitch)
 {
   return static_cast<Vulkan::Texture*>(texture)->BeginUpdate(width, height, out_buffer, out_pitch);
@@ -194,6 +195,7 @@ bool VulkanGPUDevice::UpdateTexture(GPUTexture* texture, u32 x, u32 y, u32 width
 {
   return static_cast<Vulkan::Texture*>(texture)->Update(x, y, width, height, 0, 0, data, pitch);
 }
+#endif
 
 bool VulkanGPUDevice::SupportsTextureFormat(GPUTexture::Format format) const
 {
@@ -565,6 +567,7 @@ void VulkanGPUDevice::DestroyResources()
   Vulkan::Util::SafeDestroySampler(m_linear_sampler);
 }
 
+#if 0
 bool VulkanGPUDevice::CreateImGuiContext()
 {
   const VkRenderPass render_pass =
@@ -589,6 +592,7 @@ bool VulkanGPUDevice::UpdateImGuiFontTexture()
   g_vulkan_context->ExecuteCommandBuffer(true);
   return ImGui_ImplVulkan_CreateFontsTexture();
 }
+#endif
 
 bool VulkanGPUDevice::MakeCurrent()
 {

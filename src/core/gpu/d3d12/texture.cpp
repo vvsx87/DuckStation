@@ -98,6 +98,25 @@ bool D3D12::Texture::IsValid() const
   return static_cast<bool>(m_resource);
 }
 
+bool D3D12::Texture::Update(u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch, u32 layer /*= 0*/,
+                         u32 level /*= 0*/)
+{
+  UnreachableCode();
+  return false;
+}
+
+bool D3D12::Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer /*= 0*/,
+                      u32 level /*= 0*/)
+{
+  UnreachableCode();
+  return false;
+}
+
+void D3D12::Texture::Unmap()
+{
+  UnreachableCode();
+}
+
 bool D3D12::Texture::Create(u32 width, u32 height, u32 layers, u32 levels, u32 samples, DXGI_FORMAT format,
                             DXGI_FORMAT srv_format, DXGI_FORMAT rtv_format, DXGI_FORMAT dsv_format,
                             D3D12_RESOURCE_FLAGS flags)

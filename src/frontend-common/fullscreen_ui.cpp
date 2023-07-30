@@ -4858,15 +4858,15 @@ void FullscreenUI::PopulateSaveStateScreenshot(SaveStateListEntry* li, const Ext
   li->preview_texture.reset();
   if (ssi && !ssi->screenshot_data.empty())
   {
-    li->preview_texture =
-      g_host_display->CreateTexture(ssi->screenshot_width, ssi->screenshot_height, 1, 1, 1, GPUTexture::Format::RGBA8,
-                                    ssi->screenshot_data.data(), sizeof(u32) * ssi->screenshot_width, false);
+    li->preview_texture = g_host_display->CreateTexture(
+      ssi->screenshot_width, ssi->screenshot_height, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8,
+      ssi->screenshot_data.data(), sizeof(u32) * ssi->screenshot_width, false);
   }
   else
   {
-    li->preview_texture =
-      g_host_display->CreateTexture(PLACEHOLDER_ICON_WIDTH, PLACEHOLDER_ICON_HEIGHT, 1, 1, 1, GPUTexture::Format::RGBA8,
-                                    PLACEHOLDER_ICON_DATA, sizeof(u32) * PLACEHOLDER_ICON_WIDTH, false);
+    li->preview_texture = g_host_display->CreateTexture(
+      PLACEHOLDER_ICON_WIDTH, PLACEHOLDER_ICON_HEIGHT, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8,
+      PLACEHOLDER_ICON_DATA, sizeof(u32) * PLACEHOLDER_ICON_WIDTH, false);
   }
 
   if (!li->preview_texture)

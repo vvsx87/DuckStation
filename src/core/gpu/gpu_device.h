@@ -90,13 +90,8 @@ public:
 
   /// Creates an abstracted RGBA8 texture. If dynamic, the texture can be updated with UpdateTexture() below.
   virtual std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
-                                                    GPUTexture::Format format, const void* data, u32 data_stride,
-                                                    bool dynamic = false) = 0;
-  virtual bool BeginTextureUpdate(GPUTexture* texture, u32 width, u32 height, void** out_buffer, u32* out_pitch) = 0;
-  virtual void EndTextureUpdate(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height) = 0;
-
-  virtual bool UpdateTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch);
-
+                                                    GPUTexture::Type type, GPUTexture::Format format, const void* data,
+                                                    u32 data_stride, bool dynamic = false) = 0;
   virtual bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                                u32 out_data_stride) = 0;
 
@@ -110,11 +105,7 @@ public:
   ALWAYS_INLINE bool IsVsyncEnabled() const { return m_vsync_enabled; }
   virtual void SetVSync(bool enabled) = 0;
 
-  /// ImGui context management, usually called by derived classes.
-  virtual bool CreateImGuiContext() = 0;
-  virtual void DestroyImGuiContext() = 0;
-  virtual bool UpdateImGuiFontTexture() = 0;
-
+  bool UpdateImGuiFontTexture();
   bool UsesLowerLeftOrigin() const;
   void SetDisplayMaxFPS(float max_fps);
   bool ShouldSkipDisplayingFrame();
@@ -242,6 +233,8 @@ protected:
   s32 m_display_texture_view_y = 0;
   s32 m_display_texture_view_width = 0;
   s32 m_display_texture_view_height = 0;
+
+  std::unique_ptr<GPUTexture> m_imgui_font_texture;
 
   std::unique_ptr<GPUTexture> m_cursor_texture;
   float m_cursor_texture_scale = 1.0f;

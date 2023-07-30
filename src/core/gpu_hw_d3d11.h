@@ -4,7 +4,7 @@
 #pragma once
 #include "gpu/d3d11/shader_cache.h"
 #include "gpu/d3d11/stream_buffer.h"
-#include "gpu/d3d11/texture.h"
+#include "gpu/d3d11_texture.h"
 #include "gpu_hw.h"
 #include "texture_replacements.h"
 #include <array>
@@ -76,20 +76,20 @@ private:
 
   bool BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u32 dst_x, u32 dst_y, u32 width, u32 height);
 
-  void DownsampleFramebuffer(D3D11::Texture& source, u32 left, u32 top, u32 width, u32 height);
-  void DownsampleFramebufferAdaptive(D3D11::Texture& source, u32 left, u32 top, u32 width, u32 height);
-  void DownsampleFramebufferBoxFilter(D3D11::Texture& source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebuffer(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebufferAdaptive(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebufferBoxFilter(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height);
 
   ComPtr<ID3D11Device> m_device;
   ComPtr<ID3D11DeviceContext> m_context;
 
   // downsample texture - used for readbacks at >1xIR.
-  D3D11::Texture m_vram_texture;
-  D3D11::Texture m_vram_depth_texture;
+  D3D11Texture m_vram_texture;
+  D3D11Texture m_vram_depth_texture;
   ComPtr<ID3D11DepthStencilView> m_vram_depth_view;
-  D3D11::Texture m_vram_read_texture;
-  D3D11::Texture m_vram_encoding_texture;
-  D3D11::Texture m_display_texture;
+  D3D11Texture m_vram_read_texture;
+  D3D11Texture m_vram_encoding_texture;
+  D3D11Texture m_display_texture;
 
   D3D11::StreamBuffer m_vertex_stream_buffer;
 
@@ -130,14 +130,14 @@ private:
   ComPtr<ID3D11PixelShader> m_vram_update_depth_pixel_shader;
   std::array<std::array<ComPtr<ID3D11PixelShader>, 3>, 2> m_display_pixel_shaders; // [depth_24][interlaced]
 
-  D3D11::Texture m_vram_replacement_texture;
+  D3D11Texture m_vram_replacement_texture;
 
   // downsampling
   ComPtr<ID3D11PixelShader> m_downsample_first_pass_pixel_shader;
   ComPtr<ID3D11PixelShader> m_downsample_mid_pass_pixel_shader;
   ComPtr<ID3D11PixelShader> m_downsample_blur_pass_pixel_shader;
   ComPtr<ID3D11PixelShader> m_downsample_composite_pixel_shader;
-  D3D11::Texture m_downsample_texture;
-  D3D11::Texture m_downsample_weight_texture;
+  D3D11Texture m_downsample_texture;
+  D3D11Texture m_downsample_weight_texture;
   std::vector<std::pair<ComPtr<ID3D11ShaderResourceView>, ComPtr<ID3D11RenderTargetView>>> m_downsample_mip_views;
 };

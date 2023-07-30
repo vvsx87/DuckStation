@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "gpu_device.h"
@@ -9,6 +9,7 @@
 #include "common/log.h"
 #include "common/string_util.h"
 #include "common/timer.h"
+#include "imgui.h"
 #include "stb_image.h"
 #include "stb_image_resize.h"
 #include "stb_image_write.h"
@@ -35,18 +36,7 @@ RenderAPI GPUDevice::GetPreferredAPI()
 void GPUDevice::DestroyResources()
 {
   m_cursor_texture.reset();
-}
-
-bool GPUDevice::UpdateTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch)
-{
-  void* map_ptr;
-  u32 map_pitch;
-  if (!BeginTextureUpdate(texture, width, height, &map_ptr, &map_pitch))
-    return false;
-
-  StringUtil::StrideMemCpy(map_ptr, map_pitch, data, pitch, std::min(pitch, map_pitch), height);
-  EndTextureUpdate(texture, x, y, width, height);
-  return true;
+  m_imgui_font_texture.reset();
 }
 
 bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u32* height, float* refresh_rate)
@@ -98,6 +88,34 @@ bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u3
 std::string GPUDevice::GetFullscreenModeString(u32 width, u32 height, float refresh_rate)
 {
   return StringUtil::StdStringFromFormat("%u x %u @ %f hz", width, height, refresh_rate);
+}
+
+bool GPUDevice::UpdateImGuiFontTexture()
+{
+  ImGuiIO& io = ImGui::GetIO();
+
+  unsigned char* pixels;
+  int width, height;
+  io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+
+  const u32 pitch = sizeof(u32) * width;
+
+  if (m_imgui_font_texture && m_imgui_font_texture->GetWidth() == static_cast<u32>(width) &&
+      m_imgui_font_texture->GetHeight() == static_cast<u32>(height) &&
+      m_imgui_font_texture->Update(0, 0, static_cast<u32>(width), static_cast<u32>(height), pixels, pitch))
+  {
+    io.Fonts->SetTexID(m_imgui_font_texture.get());
+    return true;
+  }
+
+  std::unique_ptr<GPUTexture> new_font =
+    CreateTexture(width, height, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8, pixels, pitch);
+  if (!new_font)
+    return false;
+
+  m_imgui_font_texture = std::move(new_font);
+  io.Fonts->SetTexID(m_imgui_font_texture.get());
+  return true;
 }
 
 bool GPUDevice::UsesLowerLeftOrigin() const
@@ -173,7 +191,7 @@ void GPUDevice::SetSoftwareCursor(std::unique_ptr<GPUTexture> texture, float sca
 bool GPUDevice::SetSoftwareCursor(const void* pixels, u32 width, u32 height, u32 stride, float scale /*= 1.0f*/)
 {
   std::unique_ptr<GPUTexture> tex =
-    CreateTexture(width, height, 1, 1, 1, GPUTexture::Format::RGBA8, pixels, stride, false);
+    CreateTexture(width, height, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8, pixels, stride, false);
   if (!tex)
     return false;
 
@@ -199,8 +217,8 @@ bool GPUDevice::SetSoftwareCursor(const char* path, float scale /*= 1.0f*/)
   }
 
   std::unique_ptr<GPUTexture> tex =
-    CreateTexture(static_cast<u32>(width), static_cast<u32>(height), 1, 1, 1, GPUTexture::Format::RGBA8, pixel_data,
-                  sizeof(u32) * static_cast<u32>(width), false);
+    CreateTexture(static_cast<u32>(width), static_cast<u32>(height), 1, 1, 1, GPUTexture::Type::Texture,
+                  GPUTexture::Format::RGBA8, pixel_data, sizeof(u32) * static_cast<u32>(width), false);
   stbi_image_free(pixel_data);
   if (!tex)
     return false;
