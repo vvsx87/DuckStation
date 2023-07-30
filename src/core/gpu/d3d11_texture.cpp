@@ -16,8 +16,8 @@ static constexpr std::array<DXGI_FORMAT, static_cast<u32>(GPUTexture::Format::Co
 D3D11Texture::D3D11Texture() = default;
 
 D3D11Texture::D3D11Texture(ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderResourceView> srv,
-                           ComPtr<ID3D11RenderTargetView> rtv)
-  : m_texture(std::move(texture)), m_srv(std::move(srv)), m_rtv(std::move(rtv))
+                           ComPtr<ID3D11View> rtv)
+  : m_texture(std::move(texture)), m_srv(std::move(srv)), m_rtv_dsv(std::move(rtv))
 {
   const D3D11_TEXTURE2D_DESC desc = GetDesc();
   m_width = static_cast<u16>(desc.Width);
@@ -179,23 +179,41 @@ bool D3D11Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 layer
     }
   }
 
-  ComPtr<ID3D11RenderTargetView> rtv;
+  ComPtr<ID3D11View> rtv_dsv;
   if (bind_flags & D3D11_BIND_RENDER_TARGET)
   {
     const D3D11_RTV_DIMENSION rtv_dimension =
       (desc.SampleDesc.Count > 1) ? D3D11_RTV_DIMENSION_TEXTURE2DMS : D3D11_RTV_DIMENSION_TEXTURE2D;
     const CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(rtv_dimension, desc.Format, 0, 0, desc.ArraySize);
+    ComPtr<ID3D11RenderTargetView> rtv;
     const HRESULT hr = device->CreateRenderTargetView(texture.Get(), &rtv_desc, rtv.GetAddressOf());
     if (FAILED(hr))
     {
       Log_ErrorPrintf("Create RTV for texture failed: 0x%08X", hr);
       return false;
     }
+
+    rtv_dsv = std::move(rtv);
+  }
+  else if (bind_flags & D3D11_BIND_DEPTH_STENCIL)
+  {
+    const D3D11_DSV_DIMENSION dsv_dimension =
+      (desc.SampleDesc.Count > 1) ? D3D11_DSV_DIMENSION_TEXTURE2DMS : D3D11_DSV_DIMENSION_TEXTURE2D;
+    const CD3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc(dsv_dimension, desc.Format, 0, 0, desc.ArraySize);
+    ComPtr<ID3D11DepthStencilView> dsv;
+    const HRESULT hr = device->CreateDepthStencilView(texture.Get(), &dsv_desc, dsv.GetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_ErrorPrintf("Create DSV for texture failed: 0x%08X", hr);
+      return false;
+    }
+
+    rtv_dsv = std::move(dsv);
   }
 
   m_texture = std::move(texture);
   m_srv = std::move(srv);
-  m_rtv = std::move(rtv);
+  m_rtv_dsv = std::move(rtv_dsv);
   m_width = static_cast<u16>(width);
   m_height = static_cast<u16>(height);
   m_layers = static_cast<u8>(layers);
@@ -225,23 +243,41 @@ bool D3D11Texture::Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture)
     }
   }
 
-  ComPtr<ID3D11RenderTargetView> rtv;
+  ComPtr<ID3D11View> rtv_dsv;
   if (desc.BindFlags & D3D11_BIND_RENDER_TARGET)
   {
     const D3D11_RTV_DIMENSION rtv_dimension =
       (desc.SampleDesc.Count > 1) ? D3D11_RTV_DIMENSION_TEXTURE2DMS : D3D11_RTV_DIMENSION_TEXTURE2D;
     const CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(rtv_dimension, desc.Format, 0, 0, desc.ArraySize);
-    const HRESULT hr = device->CreateRenderTargetView(texture.Get(), &rtv_desc, rtv.ReleaseAndGetAddressOf());
+    ComPtr<ID3D11RenderTargetView> rtv;
+    const HRESULT hr = device->CreateRenderTargetView(texture.Get(), &rtv_desc, rtv.GetAddressOf());
     if (FAILED(hr))
     {
       Log_ErrorPrintf("Create RTV for adopted texture failed: 0x%08X", hr);
       return false;
     }
+
+    rtv_dsv = std::move(rtv);
+  }
+  else if (desc.BindFlags & D3D11_BIND_DEPTH_STENCIL)
+  {
+    const D3D11_DSV_DIMENSION dsv_dimension =
+      (desc.SampleDesc.Count > 1) ? D3D11_DSV_DIMENSION_TEXTURE2DMS : D3D11_DSV_DIMENSION_TEXTURE2D;
+    const CD3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc(dsv_dimension, desc.Format, 0, 0, desc.ArraySize);
+    ComPtr<ID3D11DepthStencilView> dsv;
+    const HRESULT hr = device->CreateDepthStencilView(texture.Get(), &dsv_desc, dsv.GetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_ErrorPrintf("Create DSV for adopted texture failed: 0x%08X", hr);
+      return false;
+    }
+
+    rtv_dsv = std::move(dsv);
   }
 
   m_texture = std::move(texture);
   m_srv = std::move(srv);
-  m_rtv = std::move(rtv);
+  m_rtv_dsv = std::move(rtv_dsv);
   m_width = static_cast<u16>(desc.Width);
   m_height = static_cast<u16>(desc.Height);
   m_layers = static_cast<u8>(desc.ArraySize);
@@ -253,7 +289,7 @@ bool D3D11Texture::Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture)
 
 void D3D11Texture::Destroy()
 {
-  m_rtv.Reset();
+  m_rtv_dsv.Reset();
   m_srv.Reset();
   m_texture.Reset();
   m_dynamic = false;

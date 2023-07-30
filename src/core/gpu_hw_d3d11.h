@@ -26,7 +26,6 @@ public:
 
   bool Initialize() override;
   void Reset(bool clear_vram) override;
-  bool DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display) override;
 
   void ResetGraphicsAPIState() override;
   void RestoreGraphicsAPIState() override;
@@ -39,7 +38,6 @@ protected:
   void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color) override;
   void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask) override;
   void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height) override;
-  void UpdateVRAMReadTexture() override;
   void UpdateDepthBufferFromMaskBit() override;
   void ClearDepthBuffer() override;
   void SetScissorFromDrawingArea() override;
@@ -55,10 +53,28 @@ private:
     MAX_UNIFORM_BUFFER_SIZE = 64
   };
 
+  ALWAYS_INLINE D3D11Texture* GetVRAMTexture() const { return static_cast<D3D11Texture*>(m_vram_texture.get()); }
+  ALWAYS_INLINE D3D11Texture* GetVRAMDepthTexture() const
+  {
+    return static_cast<D3D11Texture*>(m_vram_depth_texture.get());
+  }
+  ALWAYS_INLINE D3D11Texture* GetVRAMReadTexture() const
+  {
+    return static_cast<D3D11Texture*>(m_vram_read_texture.get());
+  }
+  ALWAYS_INLINE D3D11Texture* GetVRAMEncodingTexture() const
+  {
+    return static_cast<D3D11Texture*>(m_vram_encoding_texture.get());
+  }
+  ALWAYS_INLINE D3D11Texture* GetDisplayTexture() const
+  {
+    return static_cast<D3D11Texture*>(m_display_texture.get());
+  }
+
   void SetCapabilities();
-  bool CreateFramebuffer();
+  bool CreateFramebuffer() override;
   void ClearFramebuffer();
-  void DestroyFramebuffer();
+  void DestroyFramebuffer() override;
 
   bool CreateVertexBuffer();
   bool CreateUniformBuffer();
@@ -76,20 +92,12 @@ private:
 
   bool BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u32 dst_x, u32 dst_y, u32 width, u32 height);
 
-  void DownsampleFramebuffer(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height);
-  void DownsampleFramebufferAdaptive(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height);
-  void DownsampleFramebufferBoxFilter(D3D11Texture& source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebuffer(const D3D11Texture* source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebufferAdaptive(const D3D11Texture* source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebufferBoxFilter(const D3D11Texture* source, u32 left, u32 top, u32 width, u32 height);
 
   ComPtr<ID3D11Device> m_device;
   ComPtr<ID3D11DeviceContext> m_context;
-
-  // downsample texture - used for readbacks at >1xIR.
-  D3D11Texture m_vram_texture;
-  D3D11Texture m_vram_depth_texture;
-  ComPtr<ID3D11DepthStencilView> m_vram_depth_view;
-  D3D11Texture m_vram_read_texture;
-  D3D11Texture m_vram_encoding_texture;
-  D3D11Texture m_display_texture;
 
   D3D11::StreamBuffer m_vertex_stream_buffer;
 

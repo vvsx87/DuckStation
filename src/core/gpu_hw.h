@@ -200,7 +200,9 @@ protected:
 
   void UpdateHWSettings(bool* framebuffer_changed, bool* shaders_changed);
 
-  virtual void UpdateVRAMReadTexture();
+  virtual bool CreateFramebuffer();
+  virtual void DestroyFramebuffer();
+  void UpdateVRAMReadTexture();
   virtual void UpdateDepthBufferFromMaskBit() = 0;
   virtual void ClearDepthBuffer() = 0;
   virtual void SetScissorFromDrawingArea() = 0;
@@ -355,7 +357,14 @@ protected:
   SmoothingUBOData GetSmoothingUBO(u32 level, u32 left, u32 top, u32 width, u32 height, u32 tex_width,
                                    u32 tex_height) const;
 
+  std::unique_ptr<GPUTexture> m_vram_texture;
+  std::unique_ptr<GPUTexture> m_vram_depth_texture;
+  std::unique_ptr<GPUTexture> m_vram_depth_view;
+  std::unique_ptr<GPUTexture> m_vram_read_texture;
+  std::unique_ptr<GPUTexture> m_vram_encoding_texture;
+  std::unique_ptr<GPUTexture> m_display_texture;
   HeapArray<u16, VRAM_WIDTH * VRAM_HEIGHT> m_vram_shadow;
+
   std::unique_ptr<GPU_SW_Backend> m_sw_renderer;
 
   BatchVertex* m_batch_start_vertex_ptr = nullptr;

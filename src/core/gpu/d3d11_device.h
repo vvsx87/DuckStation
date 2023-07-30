@@ -54,11 +54,16 @@ public:
   bool SetPostProcessingChain(const std::string_view& config) override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
-                                            GPUTexture::Type type, GPUTexture::Format format, const void* data,
-                                            u32 data_stride, bool dynamic = false) override;
+                                            GPUTexture::Type type, GPUTexture::Format format,
+                                            const void* data = nullptr, u32 data_stride = 0,
+                                            bool dynamic = false) override;
   bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                        u32 out_data_stride) override;
   bool SupportsTextureFormat(GPUTexture::Format format) const override;
+  void CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
+                         u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
+  void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
+                            u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
 
   bool GetHostRefreshRate(float* refresh_rate) override;
 

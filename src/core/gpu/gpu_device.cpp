@@ -39,6 +39,21 @@ void GPUDevice::DestroyResources()
   m_imgui_font_texture.reset();
 }
 
+void GPUDevice::CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
+                                  u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
+                                     GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
+                                     u32 height)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
 bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u32* height, float* refresh_rate)
 {
   if (!mode.empty())

@@ -89,49 +89,7 @@ void GPU_HW_OpenGL::Reset(bool clear_vram)
     ClearFramebuffer();
 }
 
-bool GPU_HW_OpenGL::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display)
-{
-  if (host_texture)
-  {
-    GPUTexture* tex = *host_texture;
-    if (sw.IsReading())
-    {
-      if (tex->GetWidth() != m_vram_texture.GetWidth() || tex->GetHeight() != m_vram_texture.GetHeight() ||
-          tex->GetSamples() != m_vram_texture.GetSamples())
-      {
-        return false;
-      }
-
-      CopyFramebufferForState(m_vram_texture.GetGLTarget(), static_cast<GL::Texture*>(tex)->GetGLId(), 0, 0, 0,
-                              m_vram_texture.GetGLId(), m_vram_fbo_id, 0, 0, m_vram_texture.GetWidth(),
-                              m_vram_texture.GetHeight());
-    }
-    else
-    {
-      if (!tex || tex->GetWidth() != m_vram_texture.GetWidth() || tex->GetHeight() != m_vram_texture.GetHeight() ||
-          tex->GetSamples() != m_vram_texture.GetSamples())
-      {
-        delete tex;
-
-        tex =
-          g_host_display
-            ->CreateTexture(m_vram_texture.GetWidth(), m_vram_texture.GetHeight(), 1, 1, m_vram_texture.GetSamples(),
-                            GPUTexture::Type::RenderTarget, GPUTexture::Format::RGBA8, nullptr, 0, false)
-            .release();
-        *host_texture = tex;
-        if (!tex)
-          return false;
-      }
-
-      CopyFramebufferForState(m_vram_texture.GetGLTarget(), m_vram_texture.GetGLId(), m_vram_fbo_id, 0, 0,
-                              static_cast<GL::Texture*>(tex)->GetGLId(), 0, 0, 0, m_vram_texture.GetWidth(),
-                              m_vram_texture.GetHeight());
-    }
-  }
-
-  return GPU_HW::DoState(sw, host_texture, update_display);
-}
-
+#if 0
 void GPU_HW_OpenGL::CopyFramebufferForState(GLenum target, GLuint src_texture, u32 src_fbo, u32 src_x, u32 src_y,
                                             GLuint dst_texture, u32 dst_fbo, u32 dst_x, u32 dst_y, u32 width,
                                             u32 height)
@@ -190,6 +148,7 @@ void GPU_HW_OpenGL::CopyFramebufferForState(GLenum target, GLuint src_texture, u
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_vram_fbo_id);
   }
 }
+#endif
 
 void GPU_HW_OpenGL::ResetGraphicsAPIState()
 {
@@ -1209,6 +1168,7 @@ void GPU_HW_OpenGL::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 wid
   IncludeVRAMDirtyRectangle(dst_bounds);
 }
 
+#if 0
 void GPU_HW_OpenGL::UpdateVRAMReadTexture()
 {
   const auto scaled_rect = m_vram_dirty_rect * m_resolution_scale;
@@ -1245,6 +1205,7 @@ void GPU_HW_OpenGL::UpdateVRAMReadTexture()
 
   GPU_HW::UpdateVRAMReadTexture();
 }
+#endif
 
 void GPU_HW_OpenGL::UpdateDepthBufferFromMaskBit()
 {

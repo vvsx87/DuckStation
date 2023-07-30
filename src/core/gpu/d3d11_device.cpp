@@ -132,6 +132,46 @@ bool D3D11Device::SupportsTextureFormat(GPUTexture::Format format) const
   return (SUCCEEDED(m_device->CheckFormatSupport(dfmt, &support)) && ((support & required) == required));
 }
 
+void D3D11Device::CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
+                                    GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
+                                    u32 height)
+{
+  DebugAssert(src_level < src->GetLevels() && src_layer < src->GetLayers());
+  DebugAssert((src_x + width) <= src->GetMipWidth(src_level));
+  DebugAssert((src_y + height) <= src->GetMipWidth(src_level));
+  DebugAssert(dst_level < dst->GetLevels() && dst_layer < dst->GetLayers());
+  DebugAssert((dst_x + width) <= dst->GetMipWidth(dst_level));
+  DebugAssert((dst_y + height) <= dst->GetMipWidth(dst_level));
+
+  const CD3D11_BOX src_box(static_cast<LONG>(src_x), static_cast<LONG>(src_y), 0, static_cast<LONG>(src_x + width),
+                           static_cast<LONG>(src_y + height), 1);
+  m_context->CopySubresourceRegion(static_cast<D3D11Texture*>(dst)->GetD3DTexture(),
+                                   D3D11CalcSubresource(dst_level, dst_layer, dst->GetLevels()), dst_x, dst_y, 0,
+                                   static_cast<D3D11Texture*>(src)->GetD3DTexture(),
+                                   D3D11CalcSubresource(src_level, src_layer, src->GetLevels()), &src_box);
+}
+
+void D3D11Device::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
+                                       GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
+                                       u32 height)
+{
+  DebugAssert(src_level < src->GetLevels() && src_layer < src->GetLayers());
+  DebugAssert((src_x + width) <= src->GetMipWidth(src_level));
+  DebugAssert((src_y + height) <= src->GetMipWidth(src_level));
+  DebugAssert(dst_level < dst->GetLevels() && dst_layer < dst->GetLayers());
+  DebugAssert((dst_x + width) <= dst->GetMipWidth(dst_level));
+  DebugAssert((dst_y + height) <= dst->GetMipWidth(dst_level));
+  DebugAssert(!dst->IsMultisampled() && src->IsMultisampled());
+
+  // DX11 can't resolve partial rects.
+  Assert(src_x == dst_x && src_y == dst_y);
+
+  m_context->ResolveSubresource(
+    static_cast<D3D11Texture*>(dst)->GetD3DTexture(), D3D11CalcSubresource(dst_level, dst_layer, dst->GetLevels()),
+    static_cast<D3D11Texture*>(src)->GetD3DTexture(), D3D11CalcSubresource(src_level, src_layer, src->GetLevels()),
+    static_cast<D3D11Texture*>(dst)->GetDXGIFormat());
+}
+
 bool D3D11Device::GetHostRefreshRate(float* refresh_rate)
 {
   if (m_swap_chain && IsFullscreen())
@@ -751,9 +791,7 @@ bool D3D11Device::Render(bool skip_present)
 {
   if (skip_present || !m_swap_chain)
   {
-    if (ImGui::GetCurrentContext())
-      ImGui::Render();
-
+    ImGui::Render();
     return false;
   }
 
@@ -771,8 +809,7 @@ bool D3D11Device::Render(bool skip_present)
                            static_cast<float>(m_window_info.surface_height), 0.0f, 1.0f);
   m_context->RSSetViewports(1, &vp);
 
-  if (ImGui::GetCurrentContext())
-    RenderImGui();
+  RenderImGui();
 
   RenderSoftwareCursor();
 

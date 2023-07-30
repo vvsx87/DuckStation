@@ -90,10 +90,16 @@ public:
 
   /// Creates an abstracted RGBA8 texture. If dynamic, the texture can be updated with UpdateTexture() below.
   virtual std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
-                                                    GPUTexture::Type type, GPUTexture::Format format, const void* data,
-                                                    u32 data_stride, bool dynamic = false) = 0;
+                                                    GPUTexture::Type type, GPUTexture::Format format,
+                                                    const void* data = nullptr, u32 data_stride = 0,
+                                                    bool dynamic = false) = 0;
   virtual bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                                u32 out_data_stride) = 0;
+  virtual void CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
+                                 u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height);
+  virtual void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
+                                    GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
+                                    u32 height);
 
   /// Returns false if the window was completely occluded.
   virtual bool Render(bool skip_present) = 0;

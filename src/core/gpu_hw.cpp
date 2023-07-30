@@ -133,6 +133,42 @@ bool GPU_HW::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_di
   if (!GPU::DoState(sw, host_texture, update_display))
     return false;
 
+  if (host_texture)
+  {
+    GPUTexture* tex = *host_texture;
+    if (sw.IsReading())
+    {
+      if (tex->GetWidth() != m_vram_texture->GetWidth() || tex->GetHeight() != m_vram_texture->GetHeight() ||
+          tex->GetSamples() != m_vram_texture->GetSamples())
+      {
+        return false;
+      }
+
+      g_host_display->CopyTextureRegion(m_vram_texture.get(), 0, 0, 0, 0, tex, 0, 0, 0, 0, tex->GetWidth(),
+                                        tex->GetHeight());
+    }
+    else
+    {
+      if (!tex || tex->GetWidth() != m_vram_texture->GetWidth() || tex->GetHeight() != m_vram_texture->GetHeight() ||
+          tex->GetSamples() != m_vram_texture->GetSamples())
+      {
+        delete tex;
+
+        tex =
+          g_host_display
+            ->CreateTexture(m_vram_texture->GetWidth(), m_vram_texture->GetHeight(), 1, 1, m_vram_texture->GetSamples(),
+                            GPUTexture::Type::RenderTarget, GPUTexture::Format::RGBA8, nullptr, 0, false)
+            .release();
+        *host_texture = tex;
+        if (!tex)
+          return false;
+      }
+
+      g_host_display->CopyTextureRegion(tex, 0, 0, 0, 0, m_vram_texture.get(), 0, 0, 0, 0, tex->GetWidth(),
+                                        tex->GetHeight());
+    }
+  }
+
   // invalidate the whole VRAM read texture when loading state
   if (sw.IsReading())
   {
@@ -303,8 +339,64 @@ void GPU_HW::PrintSettingsToLog()
   Log_InfoPrintf("Using software renderer for readbacks: %s", m_sw_renderer ? "YES" : "NO");
 }
 
+bool GPU_HW::CreateFramebuffer()
+{
+  DestroyFramebuffer();
+
+  // scale vram size to internal resolution
+  const u32 texture_width = VRAM_WIDTH * m_resolution_scale;
+  const u32 texture_height = VRAM_HEIGHT * m_resolution_scale;
+  const u8 samples = static_cast<u8>(m_multisamples);
+  const GPUTexture::Format texture_format = GPUTexture::Format::RGBA8;
+  const GPUTexture::Format depth_format = GPUTexture::Format::D16;
+
+  if (!(m_vram_texture = g_host_display->CreateTexture(texture_width, texture_height, 1, 1, samples,
+                                                       GPUTexture::Type::RenderTarget, texture_format)) ||
+      !(m_vram_depth_texture = g_host_display->CreateTexture(texture_width, texture_height, 1, 1, samples,
+                                                             GPUTexture::Type::DepthStencil, depth_format)) ||
+      !(m_vram_read_texture = g_host_display->CreateTexture(texture_width, texture_height, 1, 1, 1,
+                                                            GPUTexture::Type::Texture, texture_format)) ||
+      !(m_display_texture = g_host_display->CreateTexture(
+          ((m_downsample_mode == GPUDownsampleMode::Adaptive) ? VRAM_WIDTH : GPU_MAX_DISPLAY_WIDTH) *
+            m_resolution_scale,
+          GPU_MAX_DISPLAY_HEIGHT * m_resolution_scale, 1, 1, 1, GPUTexture::Type::RenderTarget, texture_format)) ||
+      !(m_vram_encoding_texture = g_host_display->CreateTexture(VRAM_WIDTH / 2, VRAM_HEIGHT, 1, 1, 1,
+                                                                GPUTexture::Type::RenderTarget, texture_format)))
+  {
+    return false;
+  }
+
+  Log_InfoPrintf("Created HW framebuffer of %ux%u", texture_width, texture_height);
+  return true;
+}
+
+void GPU_HW::DestroyFramebuffer()
+{
+  m_vram_read_texture.reset();
+  m_vram_depth_view.reset();
+  m_vram_depth_texture.reset();
+  m_vram_texture.reset();
+  m_vram_encoding_texture.reset();
+  m_display_texture.reset();
+}
+
 void GPU_HW::UpdateVRAMReadTexture()
 {
+  const auto scaled_rect = m_vram_dirty_rect * m_resolution_scale;
+
+  if (m_vram_texture->IsMultisampled())
+  {
+    g_host_display->ResolveTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+                                         m_vram_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+                                         scaled_rect.GetWidth(), scaled_rect.GetHeight());
+  }
+  else
+  {
+    g_host_display->CopyTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+                                      m_vram_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+                                      scaled_rect.GetWidth(), scaled_rect.GetHeight());
+  }
+
   m_renderer_stats.num_vram_read_texture_updates++;
   ClearVRAMDirtyRectangle();
 }
