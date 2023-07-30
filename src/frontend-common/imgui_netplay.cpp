@@ -77,6 +77,12 @@ void Host::OnNetplayMessage(std::string message)
                                                         Common::Timer::ConvertSecondsToValue(NETPLAY_MESSAGE_DURATION));
 }
 
+void Host::ClearNetplayMessages()
+{
+  while (s_netplay_messages.size() > 0)
+    s_netplay_messages.pop_front();
+}
+
 void ImGuiManager::RenderNetplayOverlays()
 {
   DrawNetplayMessages();
@@ -135,7 +141,12 @@ void ImGuiManager::DrawNetplayStats()
   // We'll probably want to draw a graph too..
 
   LargeString text;
-  text.AppendFmtString("Ping: {}", Netplay::GetPing());
+  text.AppendFmtString("Ping: {}\n", Netplay::GetPing());
+
+  // temporary show the hostcode here for now
+  auto hostcode = Netplay::GetHostCode();
+  if (!hostcode.empty())
+    text.AppendFmtString("Host Code: {}", hostcode);
 
   const float scale = ImGuiManager::GetGlobalScale();
   const float shadow_offset = 1.0f * scale;

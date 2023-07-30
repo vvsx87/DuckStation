@@ -14,6 +14,11 @@
 #include "host_settings.h"
 #include "netplay_packets.h"
 #include "pad.h"
+#include "rapidjson/document.h"
+#include "rapidjson/error/en.h"
+#include "rapidjson/pointer.h"
+#include "rapidjson/stringbuffer.h"
+#include "rapidjson/writer.h"
 #include "save_state_version.h"
 #include "settings.h"
 #include "spu.h"
@@ -47,9 +52,12 @@ struct Input
 };
 
 // TODO: Might be a bit generous... should we move this to config?
-static constexpr float MAX_CONNECT_TIME = 15.0f;
+static constexpr float MAX_CONNECT_TIME = 30.0f;
 static constexpr float MAX_CLOSE_TIME = 3.0f;
 static constexpr u32 MAX_CONNECT_RETRIES = 4;
+// TODO: traversal info. maybe should also be in a config
+static constexpr u16 TRAVERSAL_PORT = 37373;
+static constexpr const char* TRAVERSAL_IP = "127.0.0.1";
 
 static bool NpAdvFrameCb(void* ctx, int flags);
 static bool NpSaveFrameCb(void* ctx, unsigned char** buffer, int* len, int* checksum, int frame);
@@ -101,6 +109,7 @@ static void HandleMessageFromNewPeer(ENetPeer* peer, const ENetPacket* pkt);
 static void HandleControlMessage(s32 player_id, const ENetPacket* pkt);
 static void HandleConnectResponseMessage(s32 player_id, const ENetPacket* pkt);
 static void HandleJoinResponseMessage(s32 player_id, const ENetPacket* pkt);
+static void HandlePreResetMessage(s32 player_id, const ENetPacket* pkt);
 static void HandleResetMessage(s32 player_id, const ENetPacket* pkt);
 static void HandleResetCompleteMessage(s32 player_id, const ENetPacket* pkt);
 static void HandleResumeSessionMessage(s32 player_id, const ENetPacket* pkt);
@@ -110,10 +119,17 @@ static void HandleDropPlayerMessage(s32 player_id, const ENetPacket* pkt);
 static void HandleCloseSessionMessage(s32 player_id, const ENetPacket* pkt);
 static void HandleChatMessage(s32 player_id, const ENetPacket* pkt);
 
+// Nat Traversal
+static void HandleTraversalMessage(ENetPeer* peer, const ENetPacket* pkt);
+static bool SendTraversalRequest(const rapidjson::Document& request);
+static void SendTraversalHostRegisterRequest();
+static void SendTraversalHostLookupRequest();
+static void SendTraversalPingRequest();
+
 // GGPO session.
 static void CreateGGPOSession();
 static void DestroyGGPOSession();
-static bool Start(bool is_hosting, std::string nickname, const std::string& remote_addr, s32 port, s32 ldelay);
+static bool Start(bool is_hosting, std::string nickname, const std::string& remote_addr, s32 port, s32 ldelay, bool traversal);
 static void CloseSession();
 
 // Host functions.
@@ -121,6 +137,7 @@ static void HandlePeerConnectionAsHost(ENetPeer* peer);
 static void HandlePeerConnectionAsNonHost(ENetPeer* peer, s32 claimed_player_id);
 static void HandlePeerDisconnectionAsHost(s32 player_id);
 static void HandlePeerDisconnectionAsNonHost(s32 player_id);
+static void PreReset();
 static void Reset();
 static void UpdateResetState();
 static void UpdateConnectingState();
@@ -146,6 +163,7 @@ static void GenerateChecksumForFrame(int* checksum, int frame, unsigned char* bu
 
 static MemorySettingsInterface s_settings_overlay;
 static SessionState s_state;
+static bool send_desync_notifications = true;
 
 /// Enet
 struct Peer
@@ -170,7 +188,12 @@ static std::array<Peer, MAX_SPECTATORS> s_spectators;
 static std::bitset<MAX_SPECTATORS> s_reset_spectators;
 static s32 s_num_spectators = 0;
 static s32 s_spectating_failed_count = 0;
-static bool s_local_spectating;
+static bool s_local_spectating = false;
+
+// Nat Traversal
+static ENetPeer* s_traversal_peer;
+static ENetAddress s_traversal_address;
+static std::string s_traversal_host_code;
 
 /// GGPO
 static std::string s_local_nickname;
@@ -293,7 +316,7 @@ static const T* CheckReceivedPacket(s32 player_id, const ENetPacket* pkt)
 
 // Netplay Impl
 
-bool Netplay::Start(bool is_hosting, std::string nickname, const std::string& remote_addr, s32 port, s32 ldelay)
+bool Netplay::Start(bool is_hosting, std::string nickname, const std::string& remote_addr, s32 port, s32 ldelay, bool traversal)
 {
   if (IsActive())
   {
@@ -343,7 +366,7 @@ bool Netplay::Start(bool is_hosting, std::string nickname, const std::string& re
   ENetAddress server_address;
   server_address.host = ENET_HOST_ANY;
   server_address.port = is_hosting ? static_cast<u16>(port) : ENET_PORT_ANY;
-  s_enet_host = enet_host_create(&server_address, MAX_PLAYERS + MAX_SPECTATORS - 1, NUM_ENET_CHANNELS, 0, 0);
+  s_enet_host = enet_host_create(&server_address, MAX_PLAYERS + MAX_SPECTATORS, NUM_ENET_CHANNELS, 0, 0);
   if (!s_enet_host)
   {
     Log_ErrorPrintf("Failed to create enet host.");
@@ -356,6 +379,24 @@ bool Netplay::Start(bool is_hosting, std::string nickname, const std::string& re
   s_reset_cookie = 0;
   s_reset_players.reset();
   s_reset_spectators.reset();
+
+  if (traversal)
+  {
+    // connect to traversal server if the option is selected
+    s_traversal_address.port = TRAVERSAL_PORT;
+    if (enet_address_set_host(&s_traversal_address, TRAVERSAL_IP))
+    {
+      Log_InfoPrint("Failed to set traversal server address");
+      return false;
+    }
+
+    s_traversal_peer = enet_host_connect(s_enet_host, &s_traversal_address, 1, 0);
+    if (!s_traversal_peer)
+    {
+      Log_InfoPrint("Failed to setup traversal server peer");
+      return false;
+    }
+  }
 
   // If we're the host, we can just continue on our merry way, the others will join later.
   if (is_hosting)
@@ -379,19 +420,23 @@ bool Netplay::Start(bool is_hosting, std::string nickname, const std::string& re
   s_player_id = -1;
 
   // Connect to host.
-  s_host_address.port = static_cast<u16>(port);
-  if (enet_address_set_host(&s_host_address, remote_addr.c_str()) != 0)
+  // when using traversal skip this step and do it later when host is known.
+  if (!traversal)
   {
-    Log_ErrorPrintf("Failed to parse host: '%s'", remote_addr.c_str());
-    return false;
-  }
+    s_host_address.port = static_cast<u16>(port);
+    if (enet_address_set_host(&s_host_address, remote_addr.c_str()) != 0)
+    {
+      Log_ErrorPrintf("Failed to parse host: '%s'", remote_addr.c_str());
+      return false;
+    }
 
-  s_peers[s_host_player_id].peer =
-    enet_host_connect(s_enet_host, &s_host_address, NUM_ENET_CHANNELS, static_cast<u32>(s_player_id));
-  if (!s_peers[s_host_player_id].peer)
-  {
-    Log_ErrorPrintf("Failed to start connection to host.");
-    return false;
+    s_peers[s_host_player_id].peer =
+      enet_host_connect(s_enet_host, &s_host_address, NUM_ENET_CHANNELS, static_cast<u32>(s_player_id));
+    if (!s_peers[s_host_player_id].peer)
+    {
+      Log_ErrorPrintf("Failed to start connection to host.");
+      return false;
+    }
   }
 
   // Wait until we're connected to the main host. They'll send us back state to load and a full player list.
@@ -425,6 +470,8 @@ void Netplay::CloseSession()
   // Shut down the VM too, if we're not the host.
   if (!was_host)
     System::ShutdownSystem(false);
+
+  s_local_spectating = false;
 }
 
 bool Netplay::IsActive()
@@ -449,6 +496,9 @@ void Netplay::CloseSessionWithError(const std::string_view& message)
 {
   Host::ReportErrorAsync(Host::TranslateString("Netplay", "Netplay Error"), message);
   s_state = SessionState::ClosingSession;
+
+  if (s_peers[s_host_player_id].peer)
+    enet_peer_disconnect_now(s_peers[s_host_player_id].peer, 0);
 }
 
 void Netplay::RequestCloseSession(CloseSessionMessage::Reason reason)
@@ -463,7 +513,7 @@ void Netplay::RequestCloseSession(CloseSessionMessage::Reason reason)
     for (s32 i = 0; i < MAX_SPECTATORS; i++)
     {
       if (s_spectators[i].peer)
-        enet_peer_disconnect(s_spectators[i].peer, 0);
+        enet_peer_disconnect_now(s_spectators[i].peer, 0);
     }
   }
 
@@ -476,9 +526,13 @@ void Netplay::RequestCloseSession(CloseSessionMessage::Reason reason)
       if (IsHost())
         enet_peer_disconnect_later(s_peers[i].peer, 0);
       else
-        enet_peer_disconnect(s_peers[i].peer, 0);
+        enet_peer_disconnect_now(s_peers[i].peer, 0);
     }
   }
+
+  // close connection with traversal server if active
+  if (s_traversal_peer)
+    enet_peer_disconnect_now(s_traversal_peer, 0);
 
   // but wait for them to actually drop
   s_state = SessionState::ClosingSession;
@@ -506,7 +560,10 @@ void Netplay::RequestCloseSession(CloseSessionMessage::Reason reason)
 
           const s32 spectator_slot = GetSpectatorSlotForPeer(event.peer);
           if (spectator_slot >= 0)
+          {
             s_spectators[spectator_slot].peer = nullptr;
+            return;
+          }
         }
         break;
 
@@ -570,6 +627,8 @@ void Netplay::ShutdownEnetHost()
     s_spectators[i] = {};
   }
 
+  s_traversal_peer = nullptr;
+
   enet_host_destroy(s_enet_host);
   s_enet_host = nullptr;
 }
@@ -589,6 +648,19 @@ void Netplay::HandleEnetEvent(const ENetEvent* event)
   {
     case ENET_EVENT_TYPE_CONNECT:
     {
+      // handle traversal peer
+      if (event->peer == s_traversal_peer)
+      {
+        Log_InfoPrintf("Traversal server connected: %s", PeerAddressString(event->peer).c_str());
+       
+        if (IsHost())
+          SendTraversalHostRegisterRequest();
+        else
+          SendTraversalHostLookupRequest();
+
+        return;
+      }
+
       if (IsHost())
         HandlePeerConnectionAsHost(event->peer);
       else
@@ -600,6 +672,15 @@ void Netplay::HandleEnetEvent(const ENetEvent* event)
 
     case ENET_EVENT_TYPE_DISCONNECT:
     {
+      // handle traversal peer
+      if (event->peer == s_traversal_peer)
+      {
+        Log_InfoPrint("Traversal server disconnected");
+        enet_peer_disconnect_now(event->peer, 0);
+        s_traversal_peer = nullptr;
+        return;
+      }
+
       const s32 spectator_slot = GetSpectatorSlotForPeer(event->peer);
       const s32 player_id = GetPlayerIdForPeer(event->peer);
 
@@ -635,6 +716,12 @@ void Netplay::HandleEnetEvent(const ENetEvent* event)
 
     case ENET_EVENT_TYPE_RECEIVE:
     {
+      if (event->peer == s_traversal_peer && event->channelID == ENET_CHANNEL_CONTROL)
+      {
+        HandleTraversalMessage(event->peer, event->packet);
+        return;
+      }
+
       s32 player_id = GetPlayerIdForPeer(event->peer);
       const s32 spectator_slot = GetSpectatorSlotForPeer(event->peer);
 
@@ -692,6 +779,10 @@ void Netplay::PollEnet(Common::Timer::Value until_time)
 
     // make sure s_enet_host exists
     Assert(s_enet_host);
+
+    // might need resending
+    if (s_ggpo)
+      ggpo_network_idle(s_ggpo);
 
     const int res = enet_host_service(s_enet_host, &event, enet_timeout);
     if (res > 0)
@@ -765,11 +856,10 @@ std::string_view Netplay::GetNicknameForPlayer(s32 player_id)
 }
 
 void Netplay::CreateGGPOSession()
-{
-  /*
-  TODO: since saving every frame during rollback loses us time to do actual gamestate iterations it might be better to
-  hijack the update / save / load cycle to only save every confirmed frame only saving when actually needed.
-  */
+{ 
+  // TODO: since saving every frame during rollback loses us time to do actual gamestate iterations it might be better to
+  // hijack the update / save / load cycle to only save every confirmed frame only saving when actually needed.
+ 
   GGPOSessionCallbacks cb = {};
   cb.advance_frame = NpAdvFrameCb;
   cb.save_game_state = NpSaveFrameCb;
@@ -785,7 +875,7 @@ void Netplay::CreateGGPOSession()
 
   ggpo_start_session(&s_ggpo, &cb, s_num_players, sizeof(Netplay::Input), MAX_ROLLBACK_FRAMES);
 
-  // if you are the host be sure to add the needed spectators to the session before the players 
+  // if you are the host be sure to add the needed spectators to the session before the players
   // this way we prevent the session finishing to synchronize before adding the spectators.
   if (IsHost())
   {
@@ -831,6 +921,7 @@ void Netplay::CreateGGPOSession()
       result = ggpo_add_player(s_ggpo, &player, &s_peers[i].ggpo_handle);
     }
 
+    Log_InfoPrintf("Adding player: %d", i);
     // It's a new session, this should always succeed...
     Assert(GGPO_SUCCEEDED(result));
   }
@@ -872,6 +963,10 @@ void Netplay::HandleControlMessage(s32 player_id, const ENetPacket* pkt)
 
     case ControlMessage::JoinResponse:
       HandleJoinResponseMessage(player_id, pkt);
+      break;
+
+    case ControlMessage::PreReset:
+      HandlePreResetMessage(player_id, pkt);
       break;
 
     case ControlMessage::Reset:
@@ -1033,6 +1128,9 @@ void Netplay::SendConnectRequest()
 
 bool Netplay::IsSpectator(const ENetPeer* peer)
 {
+  if (!peer)
+    return false;
+
   for (s32 i = 0; i < MAX_SPECTATORS; i++)
   {
     if (s_spectators[i].peer == peer)
@@ -1064,16 +1162,20 @@ s32 Netplay::GetSpectatorSlotForPeer(const ENetPeer* peer)
 void Netplay::DropSpectator(s32 slot_id, DropPlayerReason reason)
 {
   Assert(IsHost());
-  DebugAssert(s_spectators[slot_id].peer);
   Log_InfoPrintf("Dropping Spectator %d: %s", slot_id, s_spectators[slot_id].nickname.c_str());
 
   Host::OnNetplayMessage(
     fmt::format(Host::TranslateString("Netplay", "Spectator {} left the session: {}").GetCharArray(), slot_id,
                 s_spectators[slot_id].nickname, DropPlayerReasonToString(reason)));
 
-  enet_peer_disconnect_now(s_spectators[slot_id].peer, 0);
+  if (s_spectators[slot_id].peer)
+    enet_peer_disconnect_now(s_spectators[slot_id].peer, 0);
+
   s_spectators[slot_id] = {};
   s_num_spectators--;
+
+  if (s_num_spectators == 0 && s_num_players == 1)
+    Reset();
 }
 
 void Netplay::UpdateConnectingState()
@@ -1086,7 +1188,8 @@ void Netplay::UpdateConnectingState()
 
   // MAX_CONNECT_RETRIES peer to host connection attempts
   // dividing by MAX_CONNECT_RETRIES + 1 because the last attempt will never happen.
-  if (s_last_host_connection_attempt.GetTimeSeconds() >= MAX_CONNECT_TIME / (MAX_CONNECT_RETRIES + 1) &&
+  if (s_peers[s_host_player_id].peer &&
+      s_last_host_connection_attempt.GetTimeSeconds() >= MAX_CONNECT_TIME / (MAX_CONNECT_RETRIES + 1) &&
       s_peers[s_host_player_id].peer->state != ENetPeerState::ENET_PEER_STATE_CONNECTED)
   {
     // we want to do this because the peer might have initiated a connection
@@ -1199,6 +1302,116 @@ void Netplay::HandleMessageFromNewPeer(ENetPeer* peer, const ENetPacket* pkt)
   NotifyPlayerJoined(new_player_id);
 }
 
+void Netplay::HandleTraversalMessage(ENetPeer* peer, const ENetPacket* pkt)
+{
+  rapidjson::Document doc;
+  char* data = reinterpret_cast<char*>(pkt->data);
+
+  bool err = doc.Parse<0>(data).HasParseError();
+  if (err || !doc.HasMember("msg_type"))
+  {
+    Log_ErrorPrintf("Failed to parse traversal server message");
+    return;
+  }
+
+  auto msg_type = std::string(rapidjson::Pointer("/msg_type").Get(doc)->GetString());
+  Log_VerbosePrintf("Received message from traversal server %s", msg_type.c_str());
+
+  if (msg_type == "PingResponse")
+  {
+    SendTraversalPingRequest();
+    return;
+  }
+
+  if (msg_type == "HostRegisterResponse")
+  {
+    // TODO: show host code somewhere to share
+    if (!doc.HasMember("host_code"))
+    {
+      Log_ErrorPrintf("Failed to retrieve host code from HostRegisterResponse");
+      return;
+    }
+
+    s_traversal_host_code = rapidjson::Pointer("/host_code").Get(doc)->GetString();
+    Host::OnNetplayMessage("Host code has been copied to clipboard");
+    Host::CopyTextToClipboard(s_traversal_host_code);
+
+    Log_VerbosePrintf("Host code: %s", s_traversal_host_code.c_str());
+    return;
+  }
+
+  if (msg_type == "HostLookupResponse")
+  {
+    if (!doc.HasMember("success") || !rapidjson::Pointer("/success").Get(doc)->GetBool())
+    {
+      Log_ErrorPrintf("No host found with host code: %s", s_traversal_host_code.c_str());
+      return;
+    }
+
+    if (!doc.HasMember("host_info"))
+    {
+      Log_ErrorPrintf("Failed to retrieve host code from HostLookupResponse");
+      return;
+    }
+
+    auto host_addr = std::string_view(rapidjson::Pointer("/host_info").Get(doc)->GetString());
+    auto info = StringUtil::SplitNewString(host_addr, ':');
+
+    std::string_view host_ip = info[0];
+    u16 host_port = static_cast<u16>(std::stoi(info[1].data()));
+
+    s_host_address.port = host_port;
+    if (enet_address_set_host(&s_host_address, host_ip.data()) != 0)
+    {
+      Log_ErrorPrintf("Failed to parse host: '%s'", host_ip.data());
+      return;
+    }
+
+    s_peers[s_host_player_id].peer =
+      enet_host_connect(s_enet_host, &s_host_address, NUM_ENET_CHANNELS, static_cast<u32>(s_player_id));
+    if (!s_peers[s_host_player_id].peer)
+    {
+      Log_ErrorPrintf("Failed to start connection to host.");
+      return;
+    }
+
+    return;
+  }
+
+  if (msg_type == "ClientLookupResponse")
+  {
+    // try to connect to the given client using the information supplied.
+    if (!doc.HasMember("client_info"))
+    {
+      Log_ErrorPrintf("Failed to retrieve client code from ClientLookupResponse");
+      return;
+    }
+
+    auto client_addr = std::string_view(rapidjson::Pointer("/client_info").Get(doc)->GetString());
+    auto info = StringUtil::SplitNewString(client_addr, ':');
+
+    std::string_view client_ip = info[0];
+    u16 client_port = static_cast<u16>(std::stoi(info[1].data()));
+
+    ENetAddress client_address;
+
+    client_address.port = client_port;
+    if (enet_address_set_host(&client_address, client_ip.data()) != 0)
+    {
+      Log_ErrorPrintf("Failed to parse client: '%s'", client_ip.data());
+      return;
+    }
+
+    if (!enet_host_connect(s_enet_host, &client_address, NUM_ENET_CHANNELS, 0))
+    {
+      Log_ErrorPrintf("Failed to start connection to client.");
+      return;
+    }
+
+    return;
+  }
+}
+
 void Netplay::HandlePeerConnectionAsNonHost(ENetPeer* peer, s32 claimed_player_id)
 {
   if (s_state == SessionState::Connecting)
@@ -1267,6 +1480,29 @@ void Netplay::HandleJoinResponseMessage(s32 player_id, const ENetPacket* pkt)
   s_reset_start_time.Reset();
 }
 
+void Netplay::HandlePreResetMessage(s32 player_id, const ENetPacket* pkt)
+{
+  if (player_id != s_host_player_id)
+  {
+    // This shouldn't ever happen, unless someone's being cheeky.
+    Log_ErrorPrintf("Dropping Pre-reset from non-host player %d", player_id);
+    return;
+  }
+
+  if (s_state != SessionState::Resetting)
+  {
+    // Destroy session to stop sending ggpo packets
+    DestroyGGPOSession();
+    // Setup a fake resetting situation,
+    // the real reset message will come and override this one.
+    s_num_players = 0;
+    s_state = SessionState::Resetting;
+    s_reset_players.reset();
+    s_reset_spectators.reset();
+    s_reset_start_time.Reset();
+  }
+}
+
 void Netplay::HandlePeerDisconnectionAsHost(s32 player_id)
 {
   Log_InfoPrintf("Player %d disconnected from host, reclaiming their slot", player_id);
@@ -1287,8 +1523,21 @@ void Netplay::HandlePeerDisconnectionAsNonHost(s32 player_id)
   RequestReset(ResetRequestMessage::Reason::ConnectionLost, player_id);
 }
 
+void Netplay::PreReset()
+{
+  Assert(IsHost());
+
+  Log_VerbosePrintf("Pre-Resetting...");
+
+  SendControlPacketToAll(NewControlPacket<PreResetMessage>(), true);
+}
+
 void Netplay::Reset()
 {
+  // In high latency situations it smart to send a pre-reset message before sending the reset message.
+  // To prepare them and not timeout.
+  PreReset();
+
   Assert(IsHost());
 
   Log_VerbosePrintf("Resetting...");
@@ -1526,7 +1775,7 @@ void Netplay::HandleResumeSessionMessage(s32 player_id, const ENetPacket* pkt)
 
 void Netplay::UpdateResetState()
 {
-  const s32 num_players = (s_local_spectating ? 1 : s_num_players);
+  const s32 num_players = (s_local_spectating && s_num_players > 1 ? 1 : s_num_players);
   if (IsHost())
   {
     if (static_cast<s32>(s_reset_players.count()) == num_players &&
@@ -1556,7 +1805,7 @@ void Netplay::UpdateResetState()
 
       for (s32 i = 0; i < MAX_SPECTATORS; i++)
       {
-        if (s_reset_spectators.test(i))
+        if (!IsSpectator(s_spectators[i].peer) || s_reset_spectators.test(i))
           continue;
 
         // we'll check if we're done again next loop
@@ -1586,24 +1835,21 @@ void Netplay::UpdateResetState()
         pkt->cookie = s_reset_cookie;
         SendControlPacket(s_host_player_id, pkt);
       }
-
-      // cancel ourselves if we didn't get another synchronization request from the host
-      if (s_reset_start_time.GetTimeSeconds() >= (MAX_CONNECT_TIME * 2.0f))
-      {
-        CloseSessionWithError(Host::TranslateStdString("Netplay", "Failed to connect within timeout"));
-        return;
-      }
+    }
+    // cancel ourselves if we didn't get another synchronization request from the host
+    if (s_reset_start_time.GetTimeSeconds() >= (MAX_CONNECT_TIME * 2.0f))
+    {
+      CloseSessionWithError(Host::TranslateStdString("Netplay", "Failed to connect within timeout"));
+      return;
     }
   }
-
-  // Log_InfoPrintf("p:%d/s:%d", num_players, s_num_spectators);
 
   const s32 min_progress = IsHost() ? static_cast<int>(s_reset_players.count() + s_reset_spectators.count()) :
                                       static_cast<int>(s_reset_players.count());
   const s32 max_progress = IsHost() ? s_num_players + s_num_spectators : num_players;
 
   PollEnet(Common::Timer::GetCurrentValue() + Common::Timer::ConvertMillisecondsToValue(16));
-  Host::DisplayLoadingScreen("Netplay synchronizing", 0, min_progress, max_progress);
+  Host::DisplayLoadingScreen("Netplay synchronizing", 0, max_progress, min_progress);
   Host::PumpMessagesOnCPUThread();
 }
 
@@ -1724,6 +1970,60 @@ void Netplay::HandleChatMessage(s32 player_id, const ENetPacket* pkt)
     return;
 
   ShowChatMessage(player_id, msg->GetMessage());
+}
+
+bool Netplay::SendTraversalRequest(const rapidjson::Document& request)
+{
+  if (!s_traversal_peer)
+    return false;
+
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer writer(buffer);
+
+  request.Accept(writer);
+  auto data = buffer.GetString();
+  auto len = buffer.GetLength();
+
+  if (!data || len == 0)
+    return false;
+
+  auto packet = enet_packet_create(data, len, ENET_PACKET_FLAG_RELIABLE);
+  auto err = enet_peer_send(s_traversal_peer, ENET_CHANNEL_CONTROL, packet);
+  if (err != 0)
+  {
+    Log_ErrorPrintf("Traversal send error: %d", err);
+    return false;
+  }
+
+  return true;
+}
+
+void Netplay::SendTraversalHostRegisterRequest()
+{
+  rapidjson::Document request;
+  rapidjson::Pointer("/msg_type").Set(request, "HostRegisterRequest");
+
+  if (!SendTraversalRequest(request))
+    Log_InfoPrint("Failed to send HostRegisterRequest to the traversal server");
+}
+
+void Netplay::SendTraversalHostLookupRequest()
+{
+  rapidjson::Document request;
+  rapidjson::Pointer("/msg_type").Set(request, "HostLookupRequest");
+  rapidjson::Pointer("/host_code").Set(request, s_traversal_host_code.c_str());
+
+  if (!SendTraversalRequest(request))
+    Log_InfoPrint("Failed to send HostLookupRequest to the traversal server");
+}
+
+void Netplay::SendTraversalPingRequest()
+{
+  rapidjson::Document request;
+  rapidjson::Pointer("/msg_type").Set(request, "PingRequest");
+
+  if (!SendTraversalRequest(request))
+    Log_InfoPrint("Failed to send PingRequest to the traversal server");
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1874,10 +2174,18 @@ void Netplay::UpdateThrottlePeriod()
     Common::Timer::ConvertSecondsToValue(1.0 / (static_cast<double>(System::GetThrottleFrequency()) * s_target_speed));
 }
 
+void Netplay::ToggleDesyncNotifications()
+{
+  bool was_enabled = send_desync_notifications;
+  send_desync_notifications = send_desync_notifications ? false : true;
+  if (was_enabled)
+    Host::ClearNetplayMessages();
+}
+
 void Netplay::HandleTimeSyncEvent(float frame_delta, int update_interval)
 {
   // only activate timesync if its worth correcting.
-  if (std::abs(frame_delta) < 1.0f)
+  if (std::abs(frame_delta) < 1.75f)
     return;
   // Distribute the frame difference over the next N * 0.75 frames.
   // only part of the interval time is used since we want to come back to normal speed.
@@ -1975,8 +2283,8 @@ void Netplay::RunFrame()
     if (s_local_spectating && result != GGPO_OK)
     {
       s_spectating_failed_count++;
-      // after 5 seconds and still not spectating close since you are stuck.
-      if (s_spectating_failed_count >= 300)
+      // after 15 seconds and still not spectating? you should close since you are stuck.
+      if (s_spectating_failed_count > 900)
         CloseSessionWithError("Failed to sync spectator with host. Please try again.");
     }
 
@@ -1985,6 +2293,7 @@ void Netplay::RunFrame()
       // enable again when rolling back done
       SPU::SetAudioOutputMuted(false);
       NetplayAdvanceFrame(inputs, disconnect_flags);
+      s_spectating_failed_count = 0;
     }
   }
 }
@@ -2020,8 +2329,9 @@ void Netplay::SendChatMessage(const std::string_view& msg)
 
   auto pkt = NewControlPacket<ChatMessage>(sizeof(ChatMessage) + static_cast<u32>(msg.length()));
   std::memcpy(pkt.pkt->data + sizeof(ChatMessage), msg.data(), msg.length());
-  // TODO: turn chat on for spectators? it's kind of weird to handle. probably has to go through the host and be relayed to the players.
-  SendControlPacketToAll(pkt, false); 
+  // TODO: turn chat on for spectators? it's kind of weird to handle. probably has to go through the host and be relayed
+  // to the players.
+  SendControlPacketToAll(pkt, false);
 
   // add own netplay message locally to netplay messages
   ShowChatMessage(s_player_id, msg);
@@ -2049,6 +2359,11 @@ u32 Netplay::GetMaxPrediction()
   return MAX_ROLLBACK_FRAMES;
 }
 
+std::string_view Netplay::GetHostCode()
+{
+  return s_traversal_host_code;
+}
+
 void Netplay::SetInputs(Netplay::Input inputs[2])
 {
   for (u32 i = 0; i < 2; i++)
@@ -2060,7 +2375,7 @@ void Netplay::SetInputs(Netplay::Input inputs[2])
   }
 }
 
-bool Netplay::CreateSession(std::string nickname, s32 port, s32 max_players, std::string password, int inputdelay)
+bool Netplay::CreateSession(std::string nickname, s32 port, s32 max_players, std::string password, int inputdelay, bool traversal)
 {
   s_local_session_password = std::move(password);
 
@@ -2068,7 +2383,7 @@ bool Netplay::CreateSession(std::string nickname, s32 port, s32 max_players, std
   // to have the same data, and we don't want to trash their local memcards. We should therefore load
   // the memory cards for this game (based on game/global settings), and copy that to the temp card.
 
-  if (!Netplay::Start(true, std::move(nickname), std::string(), port, inputdelay))
+  if (!Netplay::Start(true, std::move(nickname), std::string(), port, inputdelay, traversal))
   {
     CloseSession();
     return false;
@@ -2083,12 +2398,14 @@ bool Netplay::CreateSession(std::string nickname, s32 port, s32 max_players, std
 }
 
 bool Netplay::JoinSession(std::string nickname, const std::string& hostname, s32 port, std::string password,
-                          bool spectating, int inputdelay)
+                          bool spectating, int inputdelay, bool traversal, const std::string& hostcode)
 {
   s_local_session_password = std::move(password);
   s_local_spectating = spectating;
 
-  if (!Netplay::Start(false, std::move(nickname), hostname, port, inputdelay))
+  s_traversal_host_code = hostcode;
+
+  if (!Netplay::Start(false, std::move(nickname), hostname, port, inputdelay, traversal))
   {
     CloseSession();
     return false;
@@ -2255,6 +2572,9 @@ bool Netplay::NpOnEventCb(void* ctx, GGPOEvent* ev)
       HandleTimeSyncEvent(ev->u.timesync.frames_ahead, ev->u.timesync.timeSyncPeriodInFrames);
       break;
     case GGPOEventCode::GGPO_EVENTCODE_DESYNC:
+      if (!send_desync_notifications)
+        break;
+
       Host::OnNetplayMessage(fmt::format("Desync Detected: Current Frame: {}, Desync Frame: {}, Diff: {}, L:{}, R:{}",
                                          CurrentFrame(), ev->u.desync.nFrameOfDesync,
                                          CurrentFrame() - ev->u.desync.nFrameOfDesync, ev->u.desync.ourCheckSum,
