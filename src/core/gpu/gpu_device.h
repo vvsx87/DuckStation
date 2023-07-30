@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+#include "gpu_pipeline.h"
+#include "gpu_shader.h"
+#include "gpu_texture.h"
+
 #include "common/rectangle.h"
 #include "common/types.h"
 #include "common/window_info.h"
-#include "gpu_texture.h"
+
+#include "gsl/span"
+
 #include <memory>
 #include <string>
 #include <string_view>
@@ -100,6 +106,12 @@ public:
   virtual void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
                                     GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
                                     u32 height);
+
+  /// Shader abstraction.
+  virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data);
+  virtual std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShader::Stage stage, const std::string_view& source,
+                                                            std::vector<u8>* out_binary = nullptr);
+  virtual std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config);
 
   /// Returns false if the window was completely occluded.
   virtual bool Render(bool skip_present) = 0;

@@ -8,14 +8,19 @@
 #include "d3d11/stream_buffer.h"
 #include "d3d11_texture.h"
 #include "gpu_device.h"
+#include "gpu_pipeline.h"
 #include "postprocessing_chain.h"
 #include <d3d11.h>
 #include <dxgi.h>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 #include <wrl/client.h>
+
+class D3D11Pipeline;
+class D3D11Shader;
 
 class D3D11Device final : public GPUDevice
 {
@@ -65,6 +70,11 @@ public:
   void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
                             u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
 
+  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data) override;
+  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShader::Stage stage, const std::string_view& source,
+                                                    std::vector<u8>* out_binary = nullptr) override;
+  std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config) override;
+
   bool GetHostRefreshRate(float* refresh_rate) override;
 
   bool SetGPUTimingEnabled(bool enabled) override;
@@ -78,7 +88,12 @@ public:
 
   static AdapterAndModeList StaticGetAdapterAndModeList();
 
-protected:
+private:
+  using RasterizationStateMap = std::unordered_map<u8, ComPtr<ID3D11RasterizerState>>;
+  using DepthStateMap = std::unordered_map<u8, ComPtr<ID3D11DepthStencilState>>;
+  using BlendStateMap = std::unordered_map<u32, ComPtr<ID3D11BlendState>>;
+  using InputLayoutMap = std::unordered_map<GPUPipeline::InputLayout, ComPtr<ID3D11InputLayout>, GPUPipeline::InputLayoutHash>;
+
   static constexpr u32 DISPLAY_UNIFORM_BUFFER_SIZE = 64;
   static constexpr u32 IMGUI_VERTEX_BUFFER_SIZE = 4 * 1024 * 1024;
   static constexpr u32 IMGUI_INDEX_BUFFER_SIZE = 2 * 1024 * 1024;
@@ -97,6 +112,11 @@ protected:
 
   bool CreateSwapChain(const DXGI_MODE_DESC* fullscreen_mode);
   bool CreateSwapChainRTV();
+
+  ComPtr<ID3D11RasterizerState> GetRasterizationState(const GPUPipeline::RasterizationState& rs);
+  ComPtr<ID3D11DepthStencilState> GetDepthState(const GPUPipeline::DepthState& ds);
+  ComPtr<ID3D11BlendState> GetBlendState(const GPUPipeline::BlendState& bs);
+  ComPtr<ID3D11InputLayout> GetInputLayout(const GPUPipeline::InputLayout& il, const D3D11Shader* vs);
 
   void RenderDisplay();
   void RenderSoftwareCursor();
@@ -141,6 +161,11 @@ protected:
   ComPtr<ID3D11SamplerState> m_point_sampler;
   ComPtr<ID3D11SamplerState> m_linear_sampler;
   ComPtr<ID3D11SamplerState> m_border_sampler;
+
+  RasterizationStateMap m_rasterization_states;
+  DepthStateMap m_depth_states;
+  BlendStateMap m_blend_states;
+  InputLayoutMap m_input_layouts;
 
   D3D11::StreamBuffer m_display_uniform_buffer;
   ComPtr<ID3D11Texture2D> m_readback_staging_texture;

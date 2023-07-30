@@ -6,6 +6,7 @@
 #include "common/align.h"
 #include "common/assert.h"
 #include "common/file_system.h"
+#include "common/hash_combine.h"
 #include "common/log.h"
 #include "common/string_util.h"
 #include "common/timer.h"
@@ -21,6 +22,75 @@
 Log_SetChannel(GPUDevice);
 
 std::unique_ptr<GPUDevice> g_host_display;
+
+size_t GPUPipeline::InputLayoutHash::operator()(const InputLayout& il) const
+{
+  std::size_t h = 0;
+  hash_combine(h, il.vertex_attributes.size(), il.vertex_stride);
+
+  for (const VertexAttribute& va : il.vertex_attributes)
+    hash_combine(h, va.key);
+
+  return h;
+}
+
+bool GPUPipeline::InputLayout::operator==(const InputLayout& rhs) const
+{
+  return (vertex_stride == rhs.vertex_stride && vertex_attributes.size() == rhs.vertex_attributes.size() &&
+          std::memcmp(vertex_attributes.data(), rhs.vertex_attributes.data(),
+                      sizeof(VertexAttribute) * rhs.vertex_attributes.size()) == 0);
+}
+
+bool GPUPipeline::InputLayout::operator!=(const InputLayout& rhs) const
+{
+  return (vertex_stride != rhs.vertex_stride ||
+          vertex_attributes.size() != rhs.vertex_attributes.size() &&
+            std::memcmp(vertex_attributes.data(), rhs.vertex_attributes.data(),
+                        sizeof(VertexAttribute) * rhs.vertex_attributes.size()) != 0);
+}
+
+GPUPipeline::RasterizationState GPUPipeline::RasterizationState::GetNoCullState()
+{
+  RasterizationState ret = {};
+  ret.cull_mode = CullMode::None;
+  return ret;
+}
+
+GPUPipeline::DepthState GPUPipeline::DepthState::GetNoTestsState()
+{
+  DepthState ret = {};
+  ret.depth_test = DepthFunc::Always;
+  return ret;
+}
+
+GPUPipeline::DepthState GPUPipeline::DepthState::GetAlwaysWriteState()
+{
+  DepthState ret = {};
+  ret.depth_test = DepthFunc::Always;
+  ret.depth_write = true;
+  return ret;
+}
+
+GPUPipeline::BlendState GPUPipeline::BlendState::GetNoBlendingState()
+{
+  BlendState ret = {};
+  ret.write_mask = 0xf;
+  return ret;
+}
+
+GPUPipeline::BlendState GPUPipeline::BlendState::GetAlphaBlendingState()
+{
+  BlendState ret = {};
+  ret.enable = true;
+  ret.src_blend = BlendFunc::SrcAlpha;
+  ret.dst_blend = BlendFunc::InvSrcAlpha;
+  ret.blend_op = BlendOp::Add;
+  ret.src_alpha_blend = BlendFunc::One;
+  ret.dst_alpha_blend = BlendFunc::Zero;
+  ret.alpha_blend_op = BlendOp::Add;
+  ret.write_mask = 0xf;
+  return ret;
+}
 
 GPUDevice::~GPUDevice() = default;
 
@@ -52,6 +122,28 @@ void GPUDevice::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 
 {
   // TODO: REMOVE ME
   UnreachableCode();
+}
+
+std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return {};
+}
+
+std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromSource(GPUShader::Stage stage, const std::string_view& source,
+                                                             std::vector<u8>* out_binary /* = nullptr */)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return {};
+}
+
+std::unique_ptr<GPUPipeline> GPUDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return {};
 }
 
 bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u32* height, float* refresh_rate)
