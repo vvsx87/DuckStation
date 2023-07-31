@@ -21,6 +21,10 @@
 #include <vector>
 Log_SetChannel(GPUDevice);
 
+// FIXME
+#include "common/windows_headers.h"
+#include "d3d_shaders.h"
+
 std::unique_ptr<GPUDevice> g_host_display;
 
 size_t GPUPipeline::InputLayoutHash::operator()(const InputLayout& il) const
@@ -103,10 +107,180 @@ RenderAPI GPUDevice::GetPreferredAPI()
 #endif
 }
 
+bool GPUDevice::CreateResources()
+{
+  GPUSampler::Config config = {};
+  config.address_u = GPUSampler::AddressMode::ClampToEdge;
+  config.address_v = GPUSampler::AddressMode::ClampToEdge;
+  config.address_w = GPUSampler::AddressMode::ClampToEdge;
+  config.min_filter = GPUSampler::Filter::Nearest;
+  config.mag_filter = GPUSampler::Filter::Nearest;
+  if (!(m_point_sampler = CreateSampler(config)))
+    return false;
+
+  config.min_filter = GPUSampler::Filter::Linear;
+  config.mag_filter = GPUSampler::Filter::Linear;
+  if (!(m_linear_sampler = CreateSampler(config)))
+    return false;
+
+  if (!CreateImGuiResources())
+    return false;
+
+  return true;
+}
+
 void GPUDevice::DestroyResources()
 {
+  DestroyImGuiResources();
+
   m_cursor_texture.reset();
+  m_linear_sampler.reset();
+  m_point_sampler.reset();
+}
+
+bool GPUDevice::CreateImGuiResources()
+{
+  std::unique_ptr<GPUShader> imgui_vs = CreateShaderFromBinary(GPUShader::Stage::Vertex, s_imgui_vs_bytecode);
+  std::unique_ptr<GPUShader> imgui_ps = CreateShaderFromBinary(GPUShader::Stage::Pixel, s_imgui_ps_bytecode);
+  if (!imgui_vs || !imgui_ps)
+  {
+    Log_ErrorPrintf("Failed to create ImGui shaders.");
+    return false;
+  }
+
+  static constexpr GPUPipeline::VertexAttribute attributes[] = {
+    GPUPipeline::VertexAttribute::Make(GPUPipeline::VertexAttribute::Semantic::Position, 0,
+                                       GPUPipeline::VertexAttribute::Type::Float, 2, offsetof(ImDrawVert, pos)),
+    GPUPipeline::VertexAttribute::Make(GPUPipeline::VertexAttribute::Semantic::Texcoord, 0,
+                                       GPUPipeline::VertexAttribute::Type::Float, 2, offsetof(ImDrawVert, uv)),
+    GPUPipeline::VertexAttribute::Make(GPUPipeline::VertexAttribute::Semantic::Color, 0,
+                                       GPUPipeline::VertexAttribute::Type::UNorm8, 4, offsetof(ImDrawVert, col)),
+  };
+
+  GPUPipeline::GraphicsConfig config;
+  config.layout = GPUPipeline::Layout::SingleTexture;
+  config.primitive = GPUPipeline::Primitive::Triangles;
+  config.input_layout.vertex_attributes = attributes;
+  config.input_layout.vertex_stride = sizeof(ImDrawVert);
+  config.vertex_shader = imgui_vs.get();
+  config.pixel_shader = imgui_ps.get();
+  config.rasterization = GPUPipeline::RasterizationState::GetNoCullState();
+  config.depth = GPUPipeline::DepthState::GetNoTestsState();
+  config.blend = GPUPipeline::BlendState::GetAlphaBlendingState();
+  config.color_format = GPUTexture::Format::RGBA8; // FIXME m_window_info.surface_format;
+  config.depth_format = GPUTexture::Format::Unknown;
+  config.samples = 1;
+  config.per_sample_shading = false;
+
+  m_imgui_pipeline = CreatePipeline(config);
+  if (!m_imgui_pipeline)
+  {
+    Log_ErrorPrintf("Failed to compile ImGui pipeline.");
+    return false;
+  }
+
+  return true;
+}
+
+void GPUDevice::DestroyImGuiResources()
+{
   m_imgui_font_texture.reset();
+}
+
+void GPUDevice::MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space, u32* map_base_vertex)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::UnmapVertexBuffer(u32 used_vertex_count)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::MapIndexBuffer(u32 index_count, u16** map_ptr, u32* map_space, u32* map_base_index)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::UnmapIndexBuffer(u32 used_index_count)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::UploadVertexBuffer(const void* vertices, u32 vertex_size, u32 vertex_count, u32* base_vertex)
+{
+  void* map;
+  u32 space;
+  MapVertexBuffer(vertex_size, vertex_count, &map, &space, base_vertex);
+  std::memcpy(map, vertices, vertex_size * vertex_count);
+  UnmapVertexBuffer(vertex_count);
+}
+
+void GPUDevice::UploadIndexBuffer(const u16* indices, u32 index_count, u32* base_index)
+{
+  u16* map;
+  u32 space;
+  MapIndexBuffer(index_count, &map, &space, base_index);
+  std::memcpy(map, indices, sizeof(u16) * index_count);
+  UnmapIndexBuffer(index_count);
+}
+
+void GPUDevice::PushUniformBuffer(const void* data, u32 data_size)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::SetFramebuffer(GPUFramebuffer* fb)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::SetPipeline(GPUPipeline* pipeline)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::SetViewport(u32 x, u32 y, u32 width, u32 height)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::SetScissor(u32 x, u32 y, u32 width, u32 height)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::SetViewportAndScissor(u32 x, u32 y, u32 width, u32 height)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::Draw(u32 base_vertex, u32 vertex_count)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::DrawIndexed(u32 base_index, u32 index_count, u32 base_vertex)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
 }
 
 void GPUDevice::CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
@@ -140,6 +314,21 @@ std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromSource(GPUShader::Stage st
 }
 
 std::unique_ptr<GPUPipeline> GPUDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return {};
+}
+
+std::unique_ptr<GPUSampler> GPUDevice::CreateSampler(const GPUSampler::Config& config)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return {};
+}
+
+std::unique_ptr<GPUFramebuffer> GPUDevice::CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level, GPUTexture* ds,
+                                                             u32 ds_layer, u32 ds_level)
 {
   // TODO: REMOVE ME
   UnreachableCode();

@@ -19,12 +19,6 @@ add_library(frontend-common
   imgui_overlays.cpp
   imgui_overlays.h
   platform_misc.h
-  postprocessing_chain.cpp
-  postprocessing_chain.h
-  postprocessing_shader.cpp
-  postprocessing_shader.h
-  postprocessing_shadergen.cpp
-  postprocessing_shadergen.h
 )
 
 target_link_libraries(frontend-common PUBLIC core common imgui tinyxml2 rapidjson scmversion)
@@ -39,16 +33,8 @@ endif()
 
 if(WIN32)
   target_sources(frontend-common PRIVATE
-    d3d11_host_display.cpp
-    d3d11_host_display.h
-    d3d12_host_display.cpp
-    d3d12_host_display.h
     dinput_source.cpp
     dinput_source.h
-    imgui_impl_dx11.cpp
-    imgui_impl_dx11.h
-    imgui_impl_dx12.cpp
-    imgui_impl_dx12.h
     win32_raw_input_source.cpp
     win32_raw_input_source.h
     xaudio2_audio_stream.cpp
@@ -57,25 +43,6 @@ if(WIN32)
     xinput_source.h
   )
   target_link_libraries(frontend-common PRIVATE d3d11.lib dxgi.lib)
-endif()
-
-if(ENABLE_OPENGL)
-  target_sources(frontend-common PRIVATE
-    opengl_host_display.cpp
-    opengl_host_display.h
-    imgui_impl_opengl3.cpp
-    imgui_impl_opengl3.h
-  )
-  target_link_libraries(frontend-common PRIVATE glad)
-endif()
-
-if(ENABLE_VULKAN)
-  target_sources(frontend-common PRIVATE
-    imgui_impl_vulkan.cpp
-    imgui_impl_vulkan.h
-    vulkan_host_display.cpp
-    vulkan_host_display.h
-  )
 endif()
 
 if(WIN32)

@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "gpu_pipeline.h"
-#include "gpu_shader.h"
+
 #include "gpu_texture.h"
 
+#include "common/bitfield.h"
 #include "common/rectangle.h"
 #include "common/types.h"
 #include "common/window_info.h"
@@ -28,7 +28,307 @@ enum class RenderAPI : u32
   OpenGLES
 };
 
-// Interface to the frontend's renderer.
+class GPUFramebuffer
+{
+public:
+  GPUFramebuffer() = default;
+  virtual ~GPUFramebuffer() = default;
+
+  virtual void SetDebugName(const std::string_view& name) = 0;
+};
+
+class GPUSampler
+{
+public:
+  enum class Filter
+  {
+    Nearest,
+    Linear,
+
+    MaxCount
+  };
+
+  enum class AddressMode
+  {
+    Repeat,
+    ClampToEdge,
+    ClampToBorder,
+
+    MaxCount
+  };
+
+  struct Config
+  {
+    BitField<u64, Filter, 0, 1> min_filter;
+    BitField<u64, Filter, 1, 1> mag_filter;
+    BitField<u64, Filter, 2, 1> mip_filter;
+    BitField<u64, AddressMode, 3, 2> address_u;
+    BitField<u64, AddressMode, 5, 2> address_v;
+    BitField<u64, AddressMode, 7, 2> address_w;
+    BitField<u64, u8, 9, 5> anisotropy;
+    BitField<u64, u8, 14, 4> min_lod;
+    BitField<u64, u8, 18, 4> max_lod;
+    BitField<u64, u32, 32, 32> border_color;
+    u64 key;
+  };
+
+  GPUSampler() = default;
+  virtual ~GPUSampler() = default;
+
+  virtual void SetDebugName(const std::string_view& name) = 0;
+};
+
+class GPUShader
+{
+public:
+  enum class Stage
+  {
+    Vertex,
+    Pixel,
+    Compute
+  };
+
+  GPUShader(Stage stage) : m_stage(stage) {}
+  virtual ~GPUShader() = default;
+
+  ALWAYS_INLINE Stage GetStage() const { return m_stage; }
+
+  virtual void SetDebugName(const std::string_view& name) = 0;
+
+protected:
+  Stage m_stage;
+};
+
+class GPUPipeline
+{
+public:
+  enum class Layout : u8
+  {
+    // 128 byte UBO via push constants, 1 texture.
+    SingleTexture,
+
+    MaxCount
+  };
+
+  enum class Primitive : u8
+  {
+    Points,
+    Lines,
+    Triangles,
+    TriangleStrips,
+
+    MaxCount
+  };
+
+  union VertexAttribute
+  {
+    enum class Semantic : u8
+    {
+      Position,
+      Texcoord,
+      Color,
+
+      MaxCount
+    };
+
+    enum class Type : u8
+    {
+      Float,
+      UInt8,
+      SInt8,
+      UNorm8,
+      UInt16,
+      SInt16,
+      UNorm16,
+      UInt32,
+      SInt32,
+
+      MaxCount
+    };
+
+    BitField<u32, Semantic, 0, 3> semantic;
+    BitField<u32, u8, 4, 8> semantic_index;
+    BitField<u32, Type, 12, 4> type;
+    BitField<u32, u8, 16, 3> components;
+    BitField<u32, u8, 19, 8> offset;
+    u32 key;
+
+    // clang-format off
+    ALWAYS_INLINE VertexAttribute& operator=(const VertexAttribute& rhs) { key = rhs.key; return *this; }
+    ALWAYS_INLINE bool operator==(const VertexAttribute& rhs) const { return key == rhs.key; }
+    ALWAYS_INLINE bool operator!=(const VertexAttribute& rhs) const { return key != rhs.key; }
+    ALWAYS_INLINE bool operator<(const VertexAttribute& rhs) const { return key < rhs.key; }
+    // clang-format on
+
+    static constexpr VertexAttribute Make(Semantic semantic, u8 semantic_index, Type type, u8 components, u8 offset)
+    {
+      VertexAttribute ret = {};
+#if 0
+      ret.semantic = semantic;
+      ret.semantic_index = semantic_index;
+      ret.type = type;
+      ret.components = components;
+      ret.offset = offset;
+#else
+      // Nasty :/ can't access an inactive element of a union here..
+      ret.key = (static_cast<u32>(semantic) & 0x7) | ((static_cast<u32>(semantic_index) & 0xff) << 4) |
+                ((static_cast<u32>(type) & 0xf) << 12) | ((static_cast<u32>(components) & 0x7) << 16) |
+                ((static_cast<u32>(offset) & 0xff) << 19);
+#endif
+      return ret;
+    }
+  };
+
+  struct InputLayout
+  {
+    gsl::span<const VertexAttribute> vertex_attributes;
+    u32 vertex_stride;
+
+    bool operator==(const InputLayout& rhs) const;
+    bool operator!=(const InputLayout& rhs) const;
+  };
+
+  struct InputLayoutHash
+  {
+    size_t operator()(const InputLayout& il) const;
+  };
+
+  enum class CullMode : u8
+  {
+    None,
+    Front,
+    Back,
+
+    MaxCount
+  };
+
+  enum class DepthFunc : u8
+  {
+    Never,
+    Always,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Equal,
+
+    MaxCount
+  };
+
+  enum class BlendFunc : u8
+  {
+    Zero,
+    One,
+    SrcColor,
+    InvSrcColor,
+    DstColor,
+    InvDstColor,
+    SrcAlpha,
+    InvSrcAlpha,
+    SrcAlpha1,
+    InvSrcAlpha1,
+    DstAlpha,
+    InvDstAlpha,
+
+    MaxCount
+  };
+
+  enum class BlendOp : u8
+  {
+    Add,
+    Subtract,
+    ReverseSubtract,
+    Min,
+    Max,
+
+    MaxCount
+  };
+
+  union RasterizationState
+  {
+    BitField<u8, CullMode, 0, 2> cull_mode;
+    u8 key;
+
+    // clang-format off
+    ALWAYS_INLINE RasterizationState& operator=(const RasterizationState& rhs) { key = rhs.key; return *this; }
+    ALWAYS_INLINE bool operator==(const RasterizationState& rhs) const { return key == rhs.key; }
+    ALWAYS_INLINE bool operator!=(const RasterizationState& rhs) const { return key != rhs.key; }
+    ALWAYS_INLINE bool operator<(const RasterizationState& rhs) const { return key < rhs.key; }
+    // clang-format on
+
+    static RasterizationState GetNoCullState();
+  };
+
+  struct DepthState
+  {
+    BitField<u8, DepthFunc, 0, 3> depth_test;
+    BitField<u8, bool, 4, 1> depth_write;
+    u8 key;
+
+    // clang-format off
+    ALWAYS_INLINE DepthState& operator=(const DepthState& rhs) { key = rhs.key; return *this; }
+    ALWAYS_INLINE bool operator==(const DepthState& rhs) const { return key == rhs.key; }
+    ALWAYS_INLINE bool operator!=(const DepthState& rhs) const { return key != rhs.key; }
+    ALWAYS_INLINE bool operator<(const DepthState& rhs) const { return key < rhs.key; }
+    // clang-format on
+
+    static DepthState GetNoTestsState();
+    static DepthState GetAlwaysWriteState();
+  };
+
+  struct BlendState
+  {
+    BitField<u32, bool, 0, 1> enable;
+    BitField<u32, BlendFunc, 1, 4> src_blend;
+    BitField<u32, BlendFunc, 5, 4> src_alpha_blend;
+    BitField<u32, BlendFunc, 9, 4> dst_blend;
+    BitField<u32, BlendFunc, 13, 4> dst_alpha_blend;
+    BitField<u32, BlendOp, 17, 3> blend_op;
+    BitField<u32, BlendOp, 20, 3> alpha_blend_op;
+    BitField<u32, bool, 24, 1> write_r;
+    BitField<u32, bool, 25, 1> write_g;
+    BitField<u32, bool, 26, 1> write_b;
+    BitField<u32, bool, 27, 1> write_a;
+    BitField<u32, u8, 24, 4> write_mask;
+    u32 key;
+
+    // clang-format off
+    ALWAYS_INLINE BlendState& operator=(const BlendState& rhs) { key = rhs.key; return *this; }
+    ALWAYS_INLINE bool operator==(const BlendState& rhs) const { return key == rhs.key; }
+    ALWAYS_INLINE bool operator!=(const BlendState& rhs) const { return key != rhs.key; }
+    ALWAYS_INLINE bool operator<(const BlendState& rhs) const { return key < rhs.key; }
+    // clang-format on
+
+    static BlendState GetNoBlendingState();
+    static BlendState GetAlphaBlendingState();
+  };
+
+  struct GraphicsConfig
+  {
+    Layout layout;
+
+    Primitive primitive;
+    InputLayout input_layout;
+
+    RasterizationState rasterization;
+    DepthState depth;
+    BlendState blend;
+
+    const GPUShader* vertex_shader;
+    const GPUShader* pixel_shader;
+
+    GPUTexture::Format color_format;
+    GPUTexture::Format depth_format;
+    u32 samples;
+    bool per_sample_shading;
+  };
+
+  GPUPipeline() = default;
+  virtual ~GPUPipeline() = default;
+
+  virtual void SetDebugName(const std::string_view& name) = 0;
+};
+
 class GPUDevice
 {
 public:
@@ -86,7 +386,7 @@ public:
   virtual bool IsFullscreen() = 0;
   virtual bool SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate) = 0;
   virtual AdapterAndModeList GetAdapterAndModeList() = 0;
-  virtual bool CreateResources() = 0;
+  virtual bool CreateResources();
   virtual void DestroyResources();
 
   virtual bool SetPostProcessingChain(const std::string_view& config) = 0;
@@ -94,11 +394,37 @@ public:
   /// Call when the window size changes externally to recreate any resources.
   virtual void ResizeWindow(s32 new_window_width, s32 new_window_height) = 0;
 
+  /// Vertex/index buffer abstraction.
+  virtual void MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space, u32* map_base_vertex);
+  virtual void UnmapVertexBuffer(u32 used_vertex_count);
+  virtual void MapIndexBuffer(u32 index_count, u16** map_ptr, u32* map_space, u32* map_base_index);
+  virtual void UnmapIndexBuffer(u32 used_index_count);
+
+  void UploadVertexBuffer(const void* vertices, u32 vertex_size, u32 vertex_count, u32* base_vertex);
+  void UploadIndexBuffer(const u16* indices, u32 index_count, u32* base_index);
+
+  /// Uniform buffer abstraction.
+  virtual void PushUniformBuffer(const void* data, u32 data_size);
+
+  /// Drawing setup abstraction.
+  virtual void SetFramebuffer(GPUFramebuffer* fb);
+  virtual void SetPipeline(GPUPipeline* pipeline);
+  virtual void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler);
+  virtual void SetViewport(u32 x, u32 y, u32 width, u32 height);
+  virtual void SetScissor(u32 x, u32 y, u32 width, u32 height);
+  void SetViewportAndScissor(u32 x, u32 y, u32 width, u32 height);
+
+  // Drawing abstraction.
+  virtual void Draw(u32 base_vertex, u32 vertex_count);
+  virtual void DrawIndexed(u32 base_index, u32 index_count, u32 base_vertex);
+
   /// Creates an abstracted RGBA8 texture. If dynamic, the texture can be updated with UpdateTexture() below.
   virtual std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                                     GPUTexture::Type type, GPUTexture::Format format,
                                                     const void* data = nullptr, u32 data_stride = 0,
                                                     bool dynamic = false) = 0;
+  virtual std::unique_ptr<GPUSampler> CreateSampler(const GPUSampler::Config& config);
+
   virtual bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                                u32 out_data_stride) = 0;
   virtual void CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
@@ -106,6 +432,10 @@ public:
   virtual void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
                                     GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
                                     u32 height);
+
+  /// Framebuffer abstraction.
+  virtual std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level, GPUTexture* ds,
+                                                            u32 ds_layer, u32 ds_level);
 
   /// Shader abstraction.
   virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data);
@@ -230,7 +560,13 @@ protected:
   std::tuple<s32, s32, s32, s32> CalculateSoftwareCursorDrawRect() const;
   std::tuple<s32, s32, s32, s32> CalculateSoftwareCursorDrawRect(s32 cursor_x, s32 cursor_y) const;
 
+  bool CreateImGuiResources();
+  void DestroyImGuiResources();
+
   WindowInfo m_window_info;
+
+  std::unique_ptr<GPUSampler> m_point_sampler;
+  std::unique_ptr<GPUSampler> m_linear_sampler;
 
   u64 m_last_frame_displayed_time = 0;
 
@@ -252,6 +588,7 @@ protected:
   s32 m_display_texture_view_width = 0;
   s32 m_display_texture_view_height = 0;
 
+  std::unique_ptr<GPUPipeline> m_imgui_pipeline;
   std::unique_ptr<GPUTexture> m_imgui_font_texture;
 
   std::unique_ptr<GPUTexture> m_cursor_texture;

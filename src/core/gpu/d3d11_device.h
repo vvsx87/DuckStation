@@ -8,7 +8,6 @@
 #include "d3d11/stream_buffer.h"
 #include "d3d11_texture.h"
 #include "gpu_device.h"
-#include "gpu_pipeline.h"
 #include "postprocessing_chain.h"
 #include <d3d11.h>
 #include <dxgi.h>
@@ -19,8 +18,107 @@
 #include <vector>
 #include <wrl/client.h>
 
-class D3D11Pipeline;
-class D3D11Shader;
+class D3D11Device;
+
+class D3D11Framebuffer final : public GPUFramebuffer
+{
+  friend D3D11Device;
+
+  template<typename T>
+  using ComPtr = Microsoft::WRL::ComPtr<T>;
+
+public:
+  ~D3D11Framebuffer() override;
+
+  ALWAYS_INLINE ID3D11RenderTargetView* GetRTV() const { return m_rtv.Get(); }
+  ALWAYS_INLINE ID3D11DepthStencilView* GetDSV() const { return m_dsv.Get(); }
+
+  void SetDebugName(const std::string_view& name) override;
+
+private:
+  D3D11Framebuffer(ComPtr<ID3D11RenderTargetView> rtv, ComPtr<ID3D11DepthStencilView> dsv);
+
+  ComPtr<ID3D11RenderTargetView> m_rtv;
+  ComPtr<ID3D11DepthStencilView> m_dsv;
+};
+
+class D3D11Sampler final : public GPUSampler
+{
+  friend D3D11Device;
+
+  template<typename T>
+  using ComPtr = Microsoft::WRL::ComPtr<T>;
+
+public:
+  ~D3D11Sampler() override;
+
+  ALWAYS_INLINE ID3D11SamplerState* GetSamplerState() const { return m_ss.Get(); }
+
+  void SetDebugName(const std::string_view& name) override;
+
+private:
+  D3D11Sampler(ComPtr<ID3D11SamplerState> ss);
+
+  ComPtr<ID3D11SamplerState> m_ss;
+};
+
+class D3D11Shader final : public GPUShader
+{
+  friend D3D11Device;
+
+public:
+  ~D3D11Shader() override;
+
+  ID3D11VertexShader* GetVertexShader() const;
+  ID3D11PixelShader* GetPixelShader() const;
+  ID3D11ComputeShader* GetComputeShader() const;
+
+  ALWAYS_INLINE const std::vector<u8>& GetBytecode() const { return m_bytecode; }
+
+  void SetDebugName(const std::string_view& name) override;
+
+private:
+  D3D11Shader(Stage stage, Microsoft::WRL::ComPtr<ID3D11DeviceChild> shader, std::vector<u8> bytecode);
+
+  Microsoft::WRL::ComPtr<ID3D11DeviceChild> m_shader;
+  std::vector<u8> m_bytecode; // only for VS
+};
+
+class D3D11Pipeline final : public GPUPipeline
+{
+  friend D3D11Device;
+
+  template<typename T>
+  using ComPtr = Microsoft::WRL::ComPtr<T>;
+
+public:
+  ~D3D11Pipeline() override;
+
+  void SetDebugName(const std::string_view& name) override;
+
+  ALWAYS_INLINE ID3D11RasterizerState* GetRasterizerState() const { return m_rs.Get(); }
+  ALWAYS_INLINE ID3D11DepthStencilState* GetDepthStencilState() const { return m_ds.Get(); }
+  ALWAYS_INLINE ID3D11BlendState* GetBlendState() const { return m_bs.Get(); }
+  ALWAYS_INLINE ID3D11InputLayout* GetInputLayout() const { return m_il.Get(); }
+  ALWAYS_INLINE ID3D11VertexShader* GetVertexShader() const { return m_vs.Get(); }
+  ALWAYS_INLINE ID3D11PixelShader* GetPixelShader() const { return m_ps.Get(); }
+  ALWAYS_INLINE D3D11_PRIMITIVE_TOPOLOGY GetPrimitiveTopology() const { return m_topology; }
+
+  void Bind(ID3D11DeviceContext* context);
+
+private:
+  D3D11Pipeline(ComPtr<ID3D11RasterizerState> rs, ComPtr<ID3D11DepthStencilState> ds, ComPtr<ID3D11BlendState> bs,
+                ComPtr<ID3D11InputLayout> il, ComPtr<ID3D11VertexShader> vs, ComPtr<ID3D11PixelShader> ps,
+                D3D11_PRIMITIVE_TOPOLOGY topology);
+
+  ComPtr<ID3D11RasterizerState> m_rs;
+  ComPtr<ID3D11DepthStencilState> m_ds;
+  ComPtr<ID3D11BlendState> m_bs;
+  ComPtr<ID3D11InputLayout> m_il;
+  ComPtr<ID3D11VertexShader> m_vs;
+  ComPtr<ID3D11PixelShader> m_ps;
+  D3D11_PRIMITIVE_TOPOLOGY m_topology;
+};
 
 class D3D11Device final : public GPUDevice
 {
@@ -62,6 +160,8 @@ public:
                                             GPUTexture::Type type, GPUTexture::Format format,
                                             const void* data = nullptr, u32 data_stride = 0,
                                             bool dynamic = false) override;
+  std::unique_ptr<GPUSampler> CreateSampler(const GPUSampler::Config& config) override;
+
   bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                        u32 out_data_stride) override;
   bool SupportsTextureFormat(GPUTexture::Format format) const override;
@@ -69,6 +169,9 @@ public:
                          u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
   void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
                             u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
+
+  std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level, GPUTexture* ds,
+                                                    u32 ds_layer, u32 ds_level) override;
 
   std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data) override;
   std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShader::Stage stage, const std::string_view& source,
@@ -92,7 +195,8 @@ private:
   using RasterizationStateMap = std::unordered_map<u8, ComPtr<ID3D11RasterizerState>>;
   using DepthStateMap = std::unordered_map<u8, ComPtr<ID3D11DepthStencilState>>;
   using BlendStateMap = std::unordered_map<u32, ComPtr<ID3D11BlendState>>;
-  using InputLayoutMap = std::unordered_map<GPUPipeline::InputLayout, ComPtr<ID3D11InputLayout>, GPUPipeline::InputLayoutHash>;
+  using InputLayoutMap =
+    std::unordered_map<GPUPipeline::InputLayout, ComPtr<ID3D11InputLayout>, GPUPipeline::InputLayoutHash>;
 
   static constexpr u32 DISPLAY_UNIFORM_BUFFER_SIZE = 64;
   static constexpr u32 IMGUI_VERTEX_BUFFER_SIZE = 4 * 1024 * 1024;

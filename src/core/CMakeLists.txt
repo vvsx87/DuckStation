@@ -54,8 +54,6 @@ add_library(core
     gte_types.h
     host.cpp
     host.h
-    host_display.cpp
-    host_display.h
     host_interface_progress_callback.cpp
     host_interface_progress_callback.h
     host_settings.h
@@ -122,6 +120,47 @@ target_include_directories(core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(core PUBLIC Threads::Threads common util zlib)
 target_link_libraries(core PRIVATE stb xxhash imgui rapidjson tinyxml2)
 
+target_sources(core PRIVATE
+  gpu/gpu_device.cpp
+  gpu/gpu_device.h
+  gpu/gpu_pipeline.h
+  gpu/gpu_shader.h
+  gpu/gpu_texture.cpp
+  gpu/gpu_texture.h
+  gpu/postprocessing_chain.cpp
+  gpu/postprocessing_chain.h
+  gpu/postprocessing_shader.cpp
+  gpu/postprocessing_shader.h
+  gpu/postprocessing_shadergen.cpp
+  gpu/postprocessing_shadergen.h
+)
+
+if(WIN32)
+  target_sources(core PRIVATE
+    d3d12/context.cpp
+    d3d12/context.h
+    d3d12/descriptor_heap_manager.cpp
+    d3d12/descriptor_heap_manager.h
+    d3d12/shader_cache.cpp
+    d3d12/shader_cache.h
+    d3d12/staging_texture.cpp
+    d3d12/staging_texture.h
+    d3d12/stream_buffer.cpp
+    d3d12/stream_buffer.h
+    d3d12/texture.cpp
+    d3d12/texture.h
+    d3d12/util.cpp
+    d3d12/util.h
+    d3d11/shader_cache.cpp
+    d3d11/shader_cache.h
+    d3d11/shader_compiler.cpp
+    d3d11/shader_compiler.h
+    d3d11/stream_buffer.cpp
+    d3d11/stream_buffer.h
+    d3d11/texture.cpp
+    d3d11/texture.h
+  )
+endif()
 if(WIN32)
   target_sources(core PRIVATE
     gpu_hw_d3d12.cpp
@@ -132,10 +171,116 @@ if(WIN32)
   target_link_libraries(core PRIVATE winmm.lib)
 endif()
 
-if(ENABLE_CUBEB)
-  target_compile_definitions(core PUBLIC "WITH_CUBEB=1")
+if(USE_X11)
+  target_sources(common PRIVATE
+      gl/x11_window.cpp
+      gl/x11_window.h
+  )
+  target_compile_definitions(common PRIVATE "-DUSE_X11=1")
+  target_include_directories(common PRIVATE "${X11_INCLUDE_DIR}" "${X11_Xrandr_INCLUDE_PATH}")
+  target_link_libraries(common PRIVATE "${X11_LIBRARIES}" "${X11_Xrandr_LIB}")
 endif()
 
+if(USE_WAYLAND)
+  target_compile_definitions(common PRIVATE "-DUSE_WAYLAND=1")
+elseif(SUPPORTS_WAYLAND)
+  message(WARNING "Wayland support for renderers is disabled.\nDuckStation will FAIL to start on Wayland.")
+endif()
+
+if(USE_DRMKMS)
+  target_sources(common PRIVATE
+    drm_display.cpp
+    drm_display.h
+  )
+  target_link_libraries(common PUBLIC Libdrm::Libdrm)
+endif()
+
+if(ENABLE_OPENGL)
+  target_sources(common PRIVATE
+    gpu/gl/context.cpp
+    gpu/gl/context.h
+    gpu/gl/program.cpp
+    gpu/gl/program.h
+    gpu/gl/shader_cache.cpp
+    gpu/gl/shader_cache.h
+    gpu/gl/stream_buffer.cpp
+    gpu/gl/stream_buffer.h
+    gpu/gl/texture.cpp
+    gpu/gl/texture.h
+  )
+  target_compile_definitions(common PUBLIC "WITH_OPENGL=1")
+  target_link_libraries(common PRIVATE glad)
+
+  if(WIN32)
+    target_sources(common PRIVATE
+      gl/context_wgl.cpp
+      gl/context_wgl.h
+    )
+  endif()
+
+  if(USE_EGL)
+    target_sources(common PRIVATE
+      gl/context_egl.cpp
+      gl/context_egl.h
+    )
+    target_compile_definitions(common PRIVATE "-DUSE_EGL=1")
+
+    if(USE_X11)
+      target_sources(common PRIVATE
+        gl/context_egl_x11.cpp
+        gl/context_egl_x11.h
+      )
+
+      # We set EGL_NO_X11 because otherwise X comes in with its macros and breaks
+      # a bunch of files from compiling, if we include the EGL headers. This just
+      # makes the data types opaque, we can still use it with X11 if needed.
+      target_compile_definitions(common PRIVATE "-DEGL_NO_X11=1")
+    endif()
+    if(ANDROID AND USE_EGL)
+      target_sources(common PRIVATE
+        gl/context_egl_android.cpp
+        gl/context_egl_android.h
+      )
+    endif()
+    if(USE_DRMKMS)
+      target_compile_definitions(common PRIVATE "-DUSE_GBM=1")
+      target_sources(common PRIVATE
+        gl/context_egl_gbm.cpp
+        gl/context_egl_gbm.h
+      )
+      target_link_libraries(common PUBLIC GBM::GBM)
+    endif()
+    if(USE_FBDEV)
+      target_compile_definitions(common PRIVATE "-DUSE_FBDEV=1")
+      target_sources(common PRIVATE
+        gl/context_egl_fbdev.cpp
+        gl/context_egl_fbdev.h
+      )
+    endif()
+  endif()
+
+  if(USE_X11)
+    target_sources(common PRIVATE
+      gl/context_glx.cpp
+      gl/context_glx.h
+    )
+    target_compile_definitions(common PRIVATE "-DUSE_GLX=1")
+  endif()
+
+  if(USE_WAYLAND)
+    target_sources(common PRIVATE
+      gl/context_egl_wayland.cpp
+      gl/context_egl_wayland.h
+    )
+  endif()
+
+  if(APPLE)
+    target_sources(common PRIVATE
+      gpu/gl/context_agl.mm
+      gpu/gl/context_agl.h
+    )
+  endif()
+endif()
 if(ENABLE_OPENGL)
   target_sources(core PRIVATE
     gpu_hw_opengl.cpp
@@ -145,10 +290,43 @@ if(ENABLE_OPENGL)
 endif()
 
 if(ENABLE_VULKAN)
+  target_sources(common PRIVATE
+    gpu/vulkan/builders.cpp
+    gpu/vulkan/builders.h
+    gpu/vulkan/context.cpp
+    gpu/vulkan/context.h
+    gpu/vulkan/loader.h
+    gpu/vulkan/loader.cpp
+    gpu/vulkan/shader_cache.cpp
+    gpu/vulkan/shader_cache.h
+    gpu/vulkan/shader_compiler.cpp
+    gpu/vulkan/shader_compiler.h
+    gpu/vulkan/stream_buffer.cpp
+    gpu/vulkan/stream_buffer.h
+    gpu/vulkan/swap_chain.cpp
+    gpu/vulkan/swap_chain.h
+    gpu/vulkan/texture.cpp
+    gpu/vulkan/texture.h
+    gpu/vulkan/util.cpp
+    gpu/vulkan/util.h
+  )
+  target_compile_definitions(common PUBLIC "WITH_VULKAN=1")
+  target_link_libraries(common PRIVATE glslang)
+
+  if(APPLE)
+    # Needed for Vulkan Swap Chain.
+    target_link_libraries(common PRIVATE "objc")
+  endif()
+endif()
+if(ENABLE_VULKAN)
   target_sources(core PRIVATE
     gpu_hw_vulkan.cpp
     gpu_hw_vulkan.h
   )
+endif()
+
+if(ENABLE_CUBEB)
+  target_compile_definitions(core PUBLIC "WITH_CUBEB=1")
 endif()
 
 if(${CPU_ARCH} STREQUAL "x64")
