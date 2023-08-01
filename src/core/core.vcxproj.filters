@@ -188,6 +188,9 @@
     <ClCompile Include="gpu\d3d11_texture.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
+    <ClCompile Include="gpu\gpu_shader_cache.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="types.h" />
@@ -393,6 +396,9 @@
       <Filter>gpu</Filter>
     </ClInclude>
     <ClInclude Include="gpu\d3d_shaders.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\gpu_shader_cache.h">
       <Filter>gpu</Filter>
     </ClInclude>
   </ItemGroup>

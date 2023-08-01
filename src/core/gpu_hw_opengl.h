@@ -78,7 +78,7 @@ private:
   GL::Texture m_vram_texture;
   GL::Texture m_vram_depth_texture;
   GL::Texture m_vram_read_texture;
-  GL::Texture m_vram_encoding_texture;
+  GL::Texture m_vram_readback_texture;
   GL::Texture m_display_texture;
   GL::Texture m_vram_write_replacement_texture;
 

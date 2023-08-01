@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+#include "common/dimensional_array.h"
 #include "common/heap_array.h"
 #include "gpu.h"
 #include "gpu/gpu_device.h"
@@ -42,6 +43,7 @@ public:
   virtual void Reset(bool clear_vram) override;
   virtual bool DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display) override;
 
+  virtual void UpdateSettings() override;
   void UpdateResolutionScale() override final;
   std::tuple<u32, u32> GetEffectiveDisplayResolution(bool scaled = true) override final;
   std::tuple<u32, u32> GetFullDisplayResolution(bool scaled = true) override final;
@@ -202,14 +204,20 @@ protected:
 
   virtual bool CreateFramebuffer();
   virtual void DestroyFramebuffer();
+
+  bool CompilePipelines();
+  void DestroyPipelines();
+
   void UpdateVRAMReadTexture();
   virtual void UpdateDepthBufferFromMaskBit() = 0;
   virtual void ClearDepthBuffer() = 0;
   virtual void SetScissorFromDrawingArea() = 0;
-  virtual void MapBatchVertexPointer(u32 required_vertices) = 0;
-  virtual void UnmapBatchVertexPointer(u32 used_vertices) = 0;
+  virtual void MapBatchVertexPointer(u32 required_vertices);
+  virtual void UnmapBatchVertexPointer(u32 used_vertices);
   virtual void UploadUniformBuffer(const void* uniforms, u32 uniforms_size) = 0;
-  virtual void DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices) = 0;
+  virtual void DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices);
+  virtual void ClearDisplay();
+  virtual void UpdateDisplay();
 
   u32 CalculateResolutionScale() const;
   GPUDownsampleMode GetDownsampleMode(u32 resolution_scale) const;
@@ -361,8 +369,14 @@ protected:
   std::unique_ptr<GPUTexture> m_vram_depth_texture;
   std::unique_ptr<GPUTexture> m_vram_depth_view;
   std::unique_ptr<GPUTexture> m_vram_read_texture;
-  std::unique_ptr<GPUTexture> m_vram_encoding_texture;
+  std::unique_ptr<GPUTexture> m_vram_readback_texture;
   std::unique_ptr<GPUTexture> m_display_texture;
+
+  std::unique_ptr<GPUFramebuffer> m_vram_framebuffer;
+  std::unique_ptr<GPUFramebuffer> m_vram_update_depth_framebuffer;
+  std::unique_ptr<GPUFramebuffer> m_vram_readback_framebuffer;
+  std::unique_ptr<GPUFramebuffer> m_display_framebuffer;
+
   HeapArray<u16, VRAM_WIDTH * VRAM_HEIGHT> m_vram_shadow;
 
   std::unique_ptr<GPU_SW_Backend> m_sw_renderer;
@@ -406,12 +420,33 @@ protected:
   // Bounding box of VRAM area that the GPU has drawn into.
   Common::Rectangle<u32> m_vram_dirty_rect;
 
+  // Changed state
+  bool m_batch_ubo_dirty = true;
+
+  // [depth_test][render_mode][texture_mode][transparency_mode][dithering][interlacing]
+  DimensionalArray<std::unique_ptr<GPUPipeline>, 2, 2, 5, 9, 4, 3> m_batch_pipelines{};
+
+  // [wrapped][interlaced]
+  DimensionalArray<std::unique_ptr<GPUPipeline>, 2, 2> m_vram_fill_pipelines{};
+
+  // [depth_test]
+  std::array<std::unique_ptr<GPUPipeline>, 2> m_vram_write_pipelines{};
+  std::array<std::unique_ptr<GPUPipeline>, 2> m_vram_copy_pipelines{};
+
+  std::unique_ptr<GPUPipeline> m_vram_readback_pipeline;
+  std::unique_ptr<GPUPipeline> m_vram_update_depth_pipeline;
+
+  // [depth_24][interlace_mode]
+  DimensionalArray<std::unique_ptr<GPUPipeline>, 3, 2> m_display_pipelines{};
+
+  std::unique_ptr<GPUPipeline> m_downsample_first_pass_pipeline;
+  std::unique_ptr<GPUPipeline> m_downsample_mid_pass_pipeline;
+  std::unique_ptr<GPUPipeline> m_downsample_blur_pass_pipeline;
+  std::unique_ptr<GPUPipeline> m_downsample_composite_pass_pipeline;
+
   // Statistics
   RendererStats m_renderer_stats = {};
   RendererStats m_last_renderer_stats = {};
-
-  // Changed state
-  bool m_batch_ubo_dirty = true;
 
 private:
   enum : u32

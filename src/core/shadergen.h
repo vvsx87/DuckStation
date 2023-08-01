@@ -19,7 +19,11 @@ public:
   std::string GenerateUVQuadVertexShader();
   std::string GenerateFillFragmentShader();
   std::string GenerateCopyFragmentShader();
-  std::string GenerateSampleFragmentShader();
+  std::string GenerateDisplayVertexShader();
+  std::string GenerateDisplayFragmentShader(bool set_alpha_to_one = false);
+
+  std::string GenerateImGuiVertexShader();
+  std::string GenerateImGuiFragmentShader();
 
 protected:
   ALWAYS_INLINE bool IsVulkan() const { return (m_render_api == RenderAPI::Vulkan); }

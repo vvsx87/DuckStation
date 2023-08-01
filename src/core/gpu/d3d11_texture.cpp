@@ -94,7 +94,7 @@ bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32
   const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
   D3D11_MAPPED_SUBRESOURCE sr;
   HRESULT hr = D3D11Device::GetD3DContext()->Map(m_texture.Get(), srnum,
-                                                 discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE, 0, &sr);
+                                                 discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_READ_WRITE, 0, &sr);
   if (FAILED(hr))
   {
     Log_ErrorPrintf("Map pixels texture failed: %08X", hr);

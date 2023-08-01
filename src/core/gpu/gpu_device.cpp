@@ -3,11 +3,13 @@
 
 #include "gpu_device.h"
 #include "../settings.h"
+#include "../shadergen.h"
 #include "common/align.h"
 #include "common/assert.h"
 #include "common/file_system.h"
 #include "common/hash_combine.h"
 #include "common/log.h"
+#include "common/path.h"
 #include "common/string_util.h"
 #include "common/timer.h"
 #include "imgui.h"
@@ -23,9 +25,49 @@ Log_SetChannel(GPUDevice);
 
 // FIXME
 #include "common/windows_headers.h"
-#include "d3d_shaders.h"
+
+// TODO: default sampler mode, create a persistent descriptor set in Vulkan for textures
+// TODO: input layout => VAO in GL, buffer might change
+// TODO: one big lookup table for render passes, or dynamic rendering
 
 std::unique_ptr<GPUDevice> g_host_display;
+
+GPUFramebuffer::GPUFramebuffer(GPUTexture* rt, GPUTexture* ds, u32 width, u32 height)
+  : m_rt(rt), m_ds(ds), m_width(width), m_height(height)
+{
+}
+
+GPUFramebuffer::~GPUFramebuffer() = default;
+
+GPUSampler::GPUSampler() = default;
+
+GPUSampler::~GPUSampler() = default;
+
+GPUShader::GPUShader(GPUShaderStage stage) : m_stage(stage)
+{
+}
+
+GPUShader::~GPUShader() = default;
+
+const char* GPUShader::GetStageName(GPUShaderStage stage)
+{
+  switch (stage)
+  {
+    case GPUShaderStage::Vertex:
+      return "Vertex";
+    case GPUShaderStage::Fragment:
+      return "Fragment";
+    case GPUShaderStage::Compute:
+      return "Compute";
+    default:
+      UnreachableCode();
+      return "";
+  }
+}
+
+GPUPipeline::GPUPipeline() = default;
+
+GPUPipeline::~GPUPipeline() = default;
 
 size_t GPUPipeline::InputLayoutHash::operator()(const InputLayout& il) const
 {
@@ -96,7 +138,11 @@ GPUPipeline::BlendState GPUPipeline::BlendState::GetAlphaBlendingState()
   return ret;
 }
 
-GPUDevice::~GPUDevice() = default;
+GPUDevice::~GPUDevice()
+{
+  // TODO: move to Destroy() method
+  m_shader_cache.Close();
+}
 
 RenderAPI GPUDevice::GetPreferredAPI()
 {
@@ -107,84 +153,191 @@ RenderAPI GPUDevice::GetPreferredAPI()
 #endif
 }
 
+bool GPUDevice::SetupDevice()
+{
+  // TODO: option to disable shader cache
+  if (true)
+  {
+    const std::string basename = GetShaderCacheBaseName("shaders", g_settings.gpu_use_debug_device);
+    const std::string filename = Path::Combine(EmuFolders::Cache, basename);
+    if (!m_shader_cache.Open(filename.c_str()))
+      Log_WarningPrintf("Failed to open shader cache.");
+  }
+  else
+  {
+    Log_WarningPrintf("Shader cache is disabled.");
+  }
+
+  return true;
+}
+
 bool GPUDevice::CreateResources()
 {
-  GPUSampler::Config config = {};
-  config.address_u = GPUSampler::AddressMode::ClampToEdge;
-  config.address_v = GPUSampler::AddressMode::ClampToEdge;
-  config.address_w = GPUSampler::AddressMode::ClampToEdge;
-  config.min_filter = GPUSampler::Filter::Nearest;
-  config.mag_filter = GPUSampler::Filter::Nearest;
-  if (!(m_point_sampler = CreateSampler(config)))
+  GPUSampler::Config spconfig = {};
+  spconfig.address_u = GPUSampler::AddressMode::ClampToEdge;
+  spconfig.address_v = GPUSampler::AddressMode::ClampToEdge;
+  spconfig.address_w = GPUSampler::AddressMode::ClampToEdge;
+  spconfig.min_filter = GPUSampler::Filter::Nearest;
+  spconfig.mag_filter = GPUSampler::Filter::Nearest;
+  if (!(m_point_sampler = CreateSampler(spconfig)))
     return false;
 
-  config.min_filter = GPUSampler::Filter::Linear;
-  config.mag_filter = GPUSampler::Filter::Linear;
-  if (!(m_linear_sampler = CreateSampler(config)))
+  spconfig.min_filter = GPUSampler::Filter::Linear;
+  spconfig.mag_filter = GPUSampler::Filter::Linear;
+  if (!(m_linear_sampler = CreateSampler(spconfig)))
     return false;
 
-  if (!CreateImGuiResources())
+  spconfig.mag_filter = GPUSampler::Filter::Nearest;
+  spconfig.mag_filter = GPUSampler::Filter::Nearest;
+  spconfig.address_u = GPUSampler::AddressMode::ClampToBorder;
+  spconfig.address_v = GPUSampler::AddressMode::ClampToBorder;
+  spconfig.border_color = 0xFF000000u;
+  if (!(m_border_sampler = CreateSampler(spconfig)))
     return false;
+
+  ShaderGen shadergen(GetRenderAPI(), /*FIXME DSB*/ true);
+
+  GPUPipeline::GraphicsConfig plconfig;
+  plconfig.layout = GPUPipeline::Layout::SingleTexture;
+  plconfig.primitive = GPUPipeline::Primitive::Triangles;
+  plconfig.rasterization = GPUPipeline::RasterizationState::GetNoCullState();
+  plconfig.depth = GPUPipeline::DepthState::GetNoTestsState();
+  plconfig.blend = GPUPipeline::BlendState::GetNoBlendingState();
+  plconfig.color_format = GPUTexture::Format::RGBA8; // FIXME m_window_info.surface_format;
+  plconfig.depth_format = GPUTexture::Format::Unknown;
+  plconfig.samples = 1;
+  plconfig.per_sample_shading = false;
+
+  std::unique_ptr<GPUShader> display_vs = CreateShader(GPUShaderStage::Vertex, shadergen.GenerateDisplayVertexShader());
+  std::unique_ptr<GPUShader> display_fs =
+    CreateShader(GPUShaderStage::Fragment, shadergen.GenerateDisplayFragmentShader(true));
+  std::unique_ptr<GPUShader> cursor_fs =
+    CreateShader(GPUShaderStage::Fragment, shadergen.GenerateDisplayFragmentShader(false));
+  if (!display_vs || !display_fs || !cursor_fs)
+    return false;
+  GL_OBJECT_NAME(display_vs, "Display Vertex Shader");
+  GL_OBJECT_NAME(display_fs, "Display Fragment Shader");
+  GL_OBJECT_NAME(cursor_fs, "Cursor Fragment Shader");
+
+  plconfig.vertex_shader = display_vs.get();
+  plconfig.pixel_shader = display_fs.get();
+  if (!(m_display_pipeline = CreatePipeline(plconfig)))
+    return false;
+  GL_OBJECT_NAME(m_display_pipeline, "Display Pipeline");
+
+  plconfig.blend = GPUPipeline::BlendState::GetAlphaBlendingState();
+  plconfig.pixel_shader = cursor_fs.get();
+  if (!(m_cursor_pipeline = CreatePipeline(plconfig)))
+    return false;
+  GL_OBJECT_NAME(m_cursor_pipeline, "Cursor Pipeline");
+
+  std::unique_ptr<GPUShader> imgui_vs = CreateShader(GPUShaderStage::Vertex, shadergen.GenerateImGuiVertexShader());
+  std::unique_ptr<GPUShader> imgui_fs = CreateShader(GPUShaderStage::Fragment, shadergen.GenerateImGuiFragmentShader());
+  if (!imgui_vs || !imgui_fs)
+    return false;
+  GL_OBJECT_NAME(imgui_vs, "ImGui Vertex Shader");
+  GL_OBJECT_NAME(imgui_fs, "ImGui Fragment Shader");
+
+  static constexpr GPUPipeline::VertexAttribute imgui_attributes[] = {
+    GPUPipeline::VertexAttribute::Make(0, GPUPipeline::VertexAttribute::Type::Float, 2, offsetof(ImDrawVert, pos)),
+    GPUPipeline::VertexAttribute::Make(1, GPUPipeline::VertexAttribute::Type::Float, 2, offsetof(ImDrawVert, uv)),
+    GPUPipeline::VertexAttribute::Make(2, GPUPipeline::VertexAttribute::Type::UNorm8, 4, offsetof(ImDrawVert, col)),
+  };
+
+  plconfig.input_layout.vertex_attributes = imgui_attributes;
+  plconfig.input_layout.vertex_stride = sizeof(ImDrawVert);
+  plconfig.vertex_shader = imgui_vs.get();
+  plconfig.pixel_shader = imgui_fs.get();
+
+  m_imgui_pipeline = CreatePipeline(plconfig);
+  if (!m_imgui_pipeline)
+  {
+    Log_ErrorPrintf("Failed to compile ImGui pipeline.");
+    return false;
+  }
+  GL_OBJECT_NAME(m_imgui_pipeline, "ImGui Pipeline");
 
   return true;
 }
 
 void GPUDevice::DestroyResources()
 {
-  DestroyImGuiResources();
-
   m_cursor_texture.reset();
+
+  m_imgui_font_texture.reset();
+  m_imgui_pipeline.reset();
+
+  m_cursor_pipeline.reset();
+  m_display_pipeline.reset();
+  m_imgui_pipeline.reset();
+
   m_linear_sampler.reset();
   m_point_sampler.reset();
+
+  m_shader_cache.Close();
 }
 
-bool GPUDevice::CreateImGuiResources()
+bool GPUDevice::SetPostProcessingChain(const std::string_view& config)
 {
-  std::unique_ptr<GPUShader> imgui_vs = CreateShaderFromBinary(GPUShader::Stage::Vertex, s_imgui_vs_bytecode);
-  std::unique_ptr<GPUShader> imgui_ps = CreateShaderFromBinary(GPUShader::Stage::Pixel, s_imgui_ps_bytecode);
-  if (!imgui_vs || !imgui_ps)
-  {
-    Log_ErrorPrintf("Failed to create ImGui shaders.");
-    return false;
-  }
+  return false;
+}
 
-  static constexpr GPUPipeline::VertexAttribute attributes[] = {
-    GPUPipeline::VertexAttribute::Make(GPUPipeline::VertexAttribute::Semantic::Position, 0,
-                                       GPUPipeline::VertexAttribute::Type::Float, 2, offsetof(ImDrawVert, pos)),
-    GPUPipeline::VertexAttribute::Make(GPUPipeline::VertexAttribute::Semantic::Texcoord, 0,
-                                       GPUPipeline::VertexAttribute::Type::Float, 2, offsetof(ImDrawVert, uv)),
-    GPUPipeline::VertexAttribute::Make(GPUPipeline::VertexAttribute::Semantic::Color, 0,
-                                       GPUPipeline::VertexAttribute::Type::UNorm8, 4, offsetof(ImDrawVert, col)),
+std::string GPUDevice::GetShaderCacheBaseName(const std::string_view& type, bool debug) const
+{
+  Panic("Not implemented");
+  return {};
+}
+
+void GPUDevice::RenderImGui()
+{
+  GL_SCOPE("RenderImGui");
+
+  ImGui::Render();
+
+  const ImDrawData* draw_data = ImGui::GetDrawData();
+  if (draw_data->CmdListsCount == 0)
+    return;
+
+  SetPipeline(m_imgui_pipeline.get());
+  SetViewportAndScissor(0, 0, m_window_info.surface_width, m_window_info.surface_height);
+
+  const float L = 0.0f;
+  const float R = static_cast<float>(m_window_info.surface_width);
+  const float T = 0.0f;
+  const float B = static_cast<float>(m_window_info.surface_height);
+  const float ortho_projection[4][4] = {
+    {2.0f / (R - L), 0.0f, 0.0f, 0.0f},
+    {0.0f, 2.0f / (T - B), 0.0f, 0.0f},
+    {0.0f, 0.0f, 0.5f, 0.0f},
+    {(R + L) / (L - R), (T + B) / (B - T), 0.5f, 1.0f},
   };
+  PushUniformBuffer(ortho_projection, sizeof(ortho_projection));
 
-  GPUPipeline::GraphicsConfig config;
-  config.layout = GPUPipeline::Layout::SingleTexture;
-  config.primitive = GPUPipeline::Primitive::Triangles;
-  config.input_layout.vertex_attributes = attributes;
-  config.input_layout.vertex_stride = sizeof(ImDrawVert);
-  config.vertex_shader = imgui_vs.get();
-  config.pixel_shader = imgui_ps.get();
-  config.rasterization = GPUPipeline::RasterizationState::GetNoCullState();
-  config.depth = GPUPipeline::DepthState::GetNoTestsState();
-  config.blend = GPUPipeline::BlendState::GetAlphaBlendingState();
-  config.color_format = GPUTexture::Format::RGBA8; // FIXME m_window_info.surface_format;
-  config.depth_format = GPUTexture::Format::Unknown;
-  config.samples = 1;
-  config.per_sample_shading = false;
-
-  m_imgui_pipeline = CreatePipeline(config);
-  if (!m_imgui_pipeline)
+  // Render command lists
+  for (int n = 0; n < draw_data->CmdListsCount; n++)
   {
-    Log_ErrorPrintf("Failed to compile ImGui pipeline.");
-    return false;
+    const ImDrawList* cmd_list = draw_data->CmdLists[n];
+    static_assert(sizeof(ImDrawIdx) == sizeof(DrawIndex));
+
+    u32 base_vertex, base_index;
+    UploadVertexBuffer(cmd_list->VtxBuffer.Data, sizeof(ImDrawVert), cmd_list->VtxBuffer.Size, &base_vertex);
+    UploadIndexBuffer(cmd_list->IdxBuffer.Data, cmd_list->IdxBuffer.Size, &base_index);
+
+    for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
+    {
+      const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
+      DebugAssert(!pcmd->UserCallback);
+
+      if (pcmd->ClipRect.z <= pcmd->ClipRect.x || pcmd->ClipRect.w <= pcmd->ClipRect.x)
+        continue;
+
+      SetScissor(static_cast<s32>(pcmd->ClipRect.x), static_cast<s32>(pcmd->ClipRect.y),
+                 static_cast<s32>(pcmd->ClipRect.z - pcmd->ClipRect.x),
+                 static_cast<s32>(pcmd->ClipRect.w - pcmd->ClipRect.y));
+      SetTextureSampler(0, reinterpret_cast<GPUTexture*>(pcmd->TextureId), m_linear_sampler.get());
+      DrawIndexed(pcmd->ElemCount, base_index + pcmd->IdxOffset, base_vertex + pcmd->VtxOffset);
+    }
   }
-
-  return true;
-}
-
-void GPUDevice::DestroyImGuiResources()
-{
-  m_imgui_font_texture.reset();
 }
 
 void GPUDevice::MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space, u32* map_base_vertex)
@@ -193,13 +346,13 @@ void GPUDevice::MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_pt
   UnreachableCode();
 }
 
-void GPUDevice::UnmapVertexBuffer(u32 used_vertex_count)
+void GPUDevice::UnmapVertexBuffer(u32 vertex_size, u32 vertex_count)
 {
   // TODO: REMOVE ME
   UnreachableCode();
 }
 
-void GPUDevice::MapIndexBuffer(u32 index_count, u16** map_ptr, u32* map_space, u32* map_base_index)
+void GPUDevice::MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index)
 {
   // TODO: REMOVE ME
   UnreachableCode();
@@ -217,7 +370,7 @@ void GPUDevice::UploadVertexBuffer(const void* vertices, u32 vertex_size, u32 ve
   u32 space;
   MapVertexBuffer(vertex_size, vertex_count, &map, &space, base_vertex);
   std::memcpy(map, vertices, vertex_size * vertex_count);
-  UnmapVertexBuffer(vertex_count);
+  UnmapVertexBuffer(vertex_size, vertex_count);
 }
 
 void GPUDevice::UploadIndexBuffer(const u16* indices, u32 index_count, u32* base_index)
@@ -253,22 +406,23 @@ void GPUDevice::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sam
   UnreachableCode();
 }
 
-void GPUDevice::SetViewport(u32 x, u32 y, u32 width, u32 height)
+void GPUDevice::SetViewport(s32 x, s32 y, s32 width, s32 height)
+{
+  // TODO: REMOVE ME
+  // GL needs to invert if writing to the window framebuffer
+  UnreachableCode();
+}
+
+void GPUDevice::SetScissor(s32 x, s32 y, s32 width, s32 height)
 {
   // TODO: REMOVE ME
   UnreachableCode();
 }
 
-void GPUDevice::SetScissor(u32 x, u32 y, u32 width, u32 height)
+void GPUDevice::SetViewportAndScissor(s32 x, s32 y, s32 width, s32 height)
 {
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::SetViewportAndScissor(u32 x, u32 y, u32 width, u32 height)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
+  SetViewport(x, y, width, height);
+  SetScissor(x, y, width, height);
 }
 
 void GPUDevice::Draw(u32 base_vertex, u32 vertex_count)
@@ -298,14 +452,29 @@ void GPUDevice::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 
   UnreachableCode();
 }
 
-std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data)
+void GPUDevice::ClearRenderTarget(GPUTexture* t, u32 c)
+{
+  t->SetClearColor(c);
+}
+
+void GPUDevice::ClearDepth(GPUTexture* t, float d)
+{
+  t->SetClearDepth(d);
+}
+
+void GPUDevice::InvalidateRenderTarget(GPUTexture* t)
+{
+  t->SetState(GPUTexture::State::Invalidated);
+}
+
+std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data)
 {
   // TODO: REMOVE ME
   UnreachableCode();
   return {};
 }
 
-std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromSource(GPUShader::Stage stage, const std::string_view& source,
+std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
                                                              std::vector<u8>* out_binary /* = nullptr */)
 {
   // TODO: REMOVE ME
@@ -318,6 +487,18 @@ std::unique_ptr<GPUPipeline> GPUDevice::CreatePipeline(const GPUPipeline::Graphi
   // TODO: REMOVE ME
   UnreachableCode();
   return {};
+}
+
+void GPUDevice::PushDebugGroup(const char* fmt, ...)
+{
+}
+
+void GPUDevice::PopDebugGroup()
+{
+}
+
+void GPUDevice::InsertDebugMessage(const char* fmt, ...)
+{
 }
 
 std::unique_ptr<GPUSampler> GPUDevice::CreateSampler(const GPUSampler::Config& config)
@@ -333,6 +514,42 @@ std::unique_ptr<GPUFramebuffer> GPUDevice::CreateFramebuffer(GPUTexture* rt, u32
   // TODO: REMOVE ME
   UnreachableCode();
   return {};
+}
+
+std::unique_ptr<GPUShader> GPUDevice::CreateShader(GPUShaderStage stage, const std::string_view& source)
+{
+  std::unique_ptr<GPUShader> shader;
+  if (!m_shader_cache.IsOpen())
+  {
+    shader = CreateShaderFromSource(stage, source);
+    return shader;
+  }
+
+  const GPUShaderCache::CacheIndexKey key = m_shader_cache.GetCacheKey(stage, source, "main");
+  std::vector<u8> binary;
+  if (m_shader_cache.Lookup(key, &binary))
+  {
+    shader = CreateShaderFromBinary(stage, binary);
+    if (shader)
+      return shader;
+
+    Log_ErrorPrintf("Failed to create shader from binary (driver changed?). Clearing cache.");
+    m_shader_cache.Clear();
+  }
+
+  binary.clear();
+  shader = CreateShaderFromSource(stage, source, &binary);
+  if (!shader)
+    return shader;
+
+  // Don't insert empty shaders into the cache...
+  if (!binary.empty())
+  {
+    if (!m_shader_cache.Insert(key, binary.data(), static_cast<u32>(binary.size())))
+      m_shader_cache.Close();
+  }
+
+  return shader;
 }
 
 bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u32* height, float* refresh_rate)
@@ -457,6 +674,50 @@ void GPUDevice::ThrottlePresentation()
   Common::Timer::SleepUntil(m_last_frame_displayed_time, false);
 }
 
+void GPUDevice::ClearDisplayTexture()
+{
+  m_display_texture = nullptr;
+  m_display_texture_view_x = 0;
+  m_display_texture_view_y = 0;
+  m_display_texture_view_width = 0;
+  m_display_texture_view_height = 0;
+  m_display_changed = true;
+}
+
+void GPUDevice::SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 view_width, s32 view_height)
+{
+  DebugAssert(texture);
+  texture->MakeReadyForSampling();
+  m_display_texture = texture;
+  m_display_texture_view_x = view_x;
+  m_display_texture_view_y = view_y;
+  m_display_texture_view_width = view_width;
+  m_display_texture_view_height = view_height;
+  m_display_changed = true;
+}
+
+void GPUDevice::SetDisplayTextureRect(s32 view_x, s32 view_y, s32 view_width, s32 view_height)
+{
+  m_display_texture_view_x = view_x;
+  m_display_texture_view_y = view_y;
+  m_display_texture_view_width = view_width;
+  m_display_texture_view_height = view_height;
+  m_display_changed = true;
+}
+
+void GPUDevice::SetDisplayParameters(s32 display_width, s32 display_height, s32 active_left, s32 active_top,
+                                     s32 active_width, s32 active_height, float display_aspect_ratio)
+{
+  m_display_width = display_width;
+  m_display_height = display_height;
+  m_display_active_left = active_left;
+  m_display_active_top = active_top;
+  m_display_active_width = active_width;
+  m_display_active_height = active_height;
+  m_display_aspect_ratio = display_aspect_ratio;
+  m_display_changed = true;
+}
+
 bool GPUDevice::GetHostRefreshRate(float* refresh_rate)
 {
   if (m_window_info.surface_refresh_rate > 0.0f)
@@ -480,6 +741,9 @@ float GPUDevice::GetAndResetAccumulatedGPUTime()
 
 void GPUDevice::SetSoftwareCursor(std::unique_ptr<GPUTexture> texture, float scale /*= 1.0f*/)
 {
+  if (texture)
+    texture->MakeReadyForSampling();
+
   m_cursor_texture = std::move(texture);
   m_cursor_texture_scale = scale;
 }
@@ -533,6 +797,119 @@ void GPUDevice::ClearSoftwareCursor()
 bool GPUDevice::IsUsingLinearFiltering() const
 {
   return g_settings.display_linear_filtering;
+}
+
+bool GPUDevice::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect,
+                                 std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format)
+{
+  static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8; // TODO FIXME m_window_info.surface_format
+
+  std::unique_ptr<GPUTexture> render_texture =
+    CreateTexture(width, height, 1, 1, 1, GPUTexture::Type::RenderTarget, hdformat);
+  if (!render_texture)
+    return false;
+
+  std::unique_ptr<GPUFramebuffer> render_fb = CreateFramebuffer(render_texture.get());
+  if (!render_fb)
+    return false;
+
+  ClearRenderTarget(render_texture.get(), 0);
+  SetFramebuffer(render_fb.get());
+
+  if (HasDisplayTexture())
+  {
+#if 0
+    if (!m_post_processing_chain.IsEmpty())
+    {
+      ApplyPostProcessingChain(render_texture.GetD3DRTV(), draw_rect.left, draw_rect.top, draw_rect.GetWidth(),
+                               draw_rect.GetHeight(), static_cast<D3D11Texture*>(m_display_texture),
+                               m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
+                               m_display_texture_view_height, width, height);
+    }
+    else
+#endif
+    {
+      RenderDisplay(draw_rect.left, draw_rect.top, draw_rect.GetWidth(), draw_rect.GetHeight(), m_display_texture,
+                    m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
+                    m_display_texture_view_height, IsUsingLinearFiltering());
+    }
+  }
+
+  SetFramebuffer(nullptr);
+
+  const u32 stride = GPUTexture::GetPixelSize(hdformat) * width;
+  out_pixels->resize(width * height);
+  if (!DownloadTexture(render_texture.get(), 0, 0, width, height, out_pixels->data(), stride))
+    return false;
+
+  *out_stride = stride;
+  *out_format = hdformat;
+  return true;
+}
+
+void GPUDevice::RenderDisplay()
+{
+  const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
+
+  GL_SCOPE("RenderDisplay: %dx%d at %d,%d", left, top, width, height);
+
+#if 0
+  if (HasDisplayTexture() && !m_post_processing_chain.IsEmpty())
+  {
+    ApplyPostProcessingChain(m_swap_chain_rtv.Get(), left, top, width, height,
+                             static_cast<D3D11Texture*>(m_display_texture), m_display_texture_view_x,
+                             m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
+                             GetWindowWidth(), GetWindowHeight());
+    return;
+  }
+#endif
+
+  if (!HasDisplayTexture())
+    return;
+
+  RenderDisplay(left, top, width, height, m_display_texture, m_display_texture_view_x, m_display_texture_view_y,
+                m_display_texture_view_width, m_display_texture_view_height, IsUsingLinearFiltering());
+}
+
+void GPUDevice::RenderDisplay(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture, s32 texture_view_x,
+                              s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter)
+{
+  SetPipeline(m_display_pipeline.get());
+  SetTextureSampler(0, texture, linear_filter ? m_linear_sampler.get() : m_point_sampler.get());
+
+  const bool linear = IsUsingLinearFiltering();
+  const float position_adjust = linear ? 0.5f : 0.0f;
+  const float size_adjust = linear ? 1.0f : 0.0f;
+  const float uniforms[4] = {
+    (static_cast<float>(texture_view_x) + position_adjust) / static_cast<float>(texture->GetWidth()),
+    (static_cast<float>(texture_view_y) + position_adjust) / static_cast<float>(texture->GetHeight()),
+    (static_cast<float>(texture_view_width) - size_adjust) / static_cast<float>(texture->GetWidth()),
+    (static_cast<float>(texture_view_height) - size_adjust) / static_cast<float>(texture->GetHeight())};
+  PushUniformBuffer(uniforms, sizeof(uniforms));
+
+  SetViewportAndScissor(left, top, width, height);
+  Draw(3, 0);
+}
+
+void GPUDevice::RenderSoftwareCursor()
+{
+  if (!HasSoftwareCursor())
+    return;
+
+  const auto [left, top, width, height] = CalculateSoftwareCursorDrawRect();
+  RenderSoftwareCursor(left, top, width, height, m_cursor_texture.get());
+}
+
+void GPUDevice::RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture)
+{
+  SetPipeline(m_display_pipeline.get());
+  SetTextureSampler(0, texture, m_linear_sampler.get());
+
+  const float uniforms[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+  PushUniformBuffer(uniforms, sizeof(uniforms));
+
+  SetViewportAndScissor(left, top, width, height);
+  Draw(3, 0);
 }
 
 void GPUDevice::CalculateDrawRect(s32 window_width, s32 window_height, float* out_left, float* out_top,

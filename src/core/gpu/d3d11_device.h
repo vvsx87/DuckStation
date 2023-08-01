@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
@@ -9,7 +10,7 @@
 #include "d3d11_texture.h"
 #include "gpu_device.h"
 #include "postprocessing_chain.h"
-#include <d3d11.h>
+#include <d3d11_1.h>
 #include <dxgi.h>
 #include <memory>
 #include <string>
@@ -30,13 +31,17 @@ class D3D11Framebuffer final : public GPUFramebuffer
 public:
   ~D3D11Framebuffer() override;
 
+  ALWAYS_INLINE u32 GetNumRTVs() const { return m_rtv ? 1 : 0; }
   ALWAYS_INLINE ID3D11RenderTargetView* GetRTV() const { return m_rtv.Get(); }
+  ALWAYS_INLINE ID3D11RenderTargetView* const* GetRTVArray() const { return m_rtv.GetAddressOf(); }
   ALWAYS_INLINE ID3D11DepthStencilView* GetDSV() const { return m_dsv.Get(); }
 
   void SetDebugName(const std::string_view& name) override;
+  void CommitClear(ID3D11DeviceContext* context);
 
 private:
-  D3D11Framebuffer(ComPtr<ID3D11RenderTargetView> rtv, ComPtr<ID3D11DepthStencilView> dsv);
+  D3D11Framebuffer(GPUTexture* rt, GPUTexture* ds, u32 width, u32 height, ComPtr<ID3D11RenderTargetView> rtv,
+                   ComPtr<ID3D11DepthStencilView> dsv);
 
   ComPtr<ID3D11RenderTargetView> m_rtv;
   ComPtr<ID3D11DepthStencilView> m_dsv;
@@ -53,6 +58,7 @@ public:
   ~D3D11Sampler() override;
 
   ALWAYS_INLINE ID3D11SamplerState* GetSamplerState() const { return m_ss.Get(); }
+  ALWAYS_INLINE ID3D11SamplerState* const* GetSamplerStateArray() const { return m_ss.GetAddressOf(); }
 
   void SetDebugName(const std::string_view& name) override;
 
@@ -78,7 +84,7 @@ public:
   void SetDebugName(const std::string_view& name) override;
 
 private:
-  D3D11Shader(Stage stage, Microsoft::WRL::ComPtr<ID3D11DeviceChild> shader, std::vector<u8> bytecode);
+  D3D11Shader(GPUShaderStage stage, Microsoft::WRL::ComPtr<ID3D11DeviceChild> shader, std::vector<u8> bytecode);
 
   Microsoft::WRL::ComPtr<ID3D11DeviceChild> m_shader;
   std::vector<u8> m_bytecode; // only for VS
@@ -154,7 +160,7 @@ public:
   AdapterAndModeList GetAdapterAndModeList() override;
   void DestroySurface() override;
 
-  bool SetPostProcessingChain(const std::string_view& config) override;
+  std::string GetShaderCacheBaseName(const std::string_view& type, bool debug) const override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                             GPUTexture::Type type, GPUTexture::Format format,
@@ -170,13 +176,32 @@ public:
   void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
                             u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
 
-  std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level, GPUTexture* ds,
-                                                    u32 ds_layer, u32 ds_level) override;
+  std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt = nullptr, u32 rt_layer = 0, u32 rt_level = 0,
+                                                    GPUTexture* ds = nullptr, u32 ds_layer = 0,
+                                                    u32 ds_level = 0) override;
 
-  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data) override;
-  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShader::Stage stage, const std::string_view& source,
+  std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data) override;
+  std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
                                                     std::vector<u8>* out_binary = nullptr) override;
   std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config) override;
+
+  void PushDebugGroup(const char* fmt, ...) override;
+  void PopDebugGroup() override;
+  void InsertDebugMessage(const char* fmt, ...) override;
+
+  void MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space,
+                       u32* map_base_vertex) override;
+  void UnmapVertexBuffer(u32 vertex_size, u32 vertex_count) override;
+  void MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index) override;
+  void UnmapIndexBuffer(u32 used_index_count) override;
+  void PushUniformBuffer(const void* data, u32 data_size) override;
+  void SetFramebuffer(GPUFramebuffer* fb) override;
+  void SetPipeline(GPUPipeline* pipeline) override;
+  void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) override;
+  void SetViewport(s32 x, s32 y, s32 width, s32 height) override;
+  void SetScissor(s32 x, s32 y, s32 width, s32 height) override;
+  void Draw(u32 vertex_count, u32 base_vertex) override;
+  void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex) override;
 
   bool GetHostRefreshRate(float* refresh_rate) override;
 
@@ -186,62 +211,43 @@ public:
   void SetVSync(bool enabled) override;
 
   bool Render(bool skip_present) override;
-  bool RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect, std::vector<u32>* out_pixels,
-                        u32* out_stride, GPUTexture::Format* out_format) override;
+
+  void UnbindFramebuffer(D3D11Framebuffer* fb);
+  void UnbindPipeline(D3D11Pipeline* pl);
+  void UnbindTexture(D3D11Texture* tex);
 
   static AdapterAndModeList StaticGetAdapterAndModeList();
 
 private:
   using RasterizationStateMap = std::unordered_map<u8, ComPtr<ID3D11RasterizerState>>;
   using DepthStateMap = std::unordered_map<u8, ComPtr<ID3D11DepthStencilState>>;
-  using BlendStateMap = std::unordered_map<u32, ComPtr<ID3D11BlendState>>;
+  using BlendStateMap = std::unordered_map<u64, ComPtr<ID3D11BlendState>>;
   using InputLayoutMap =
     std::unordered_map<GPUPipeline::InputLayout, ComPtr<ID3D11InputLayout>, GPUPipeline::InputLayoutHash>;
 
-  static constexpr u32 DISPLAY_UNIFORM_BUFFER_SIZE = 64;
-  static constexpr u32 IMGUI_VERTEX_BUFFER_SIZE = 4 * 1024 * 1024;
-  static constexpr u32 IMGUI_INDEX_BUFFER_SIZE = 2 * 1024 * 1024;
+  static constexpr u32 PUSH_UNIFORM_BUFFER_SIZE = 64;
+  static constexpr u32 VERTEX_BUFFER_SIZE = 8 * 1024 * 1024;
+  static constexpr u32 INDEX_BUFFER_SIZE = 4 * 1024 * 1024;
   static constexpr u8 NUM_TIMESTAMP_QUERIES = 3;
 
   static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
 
+  void CommitClear(GPUTexture* t);
+  void PreDrawCheck();
+
   bool CheckStagingBufferSize(u32 width, u32 height, DXGI_FORMAT format);
   void DestroyStagingBuffer();
 
-  bool CreateResources() override;
-  void DestroyResources() override;
-
-  bool CreateImGuiResources();
-  void DestroyImGuiResources();
-
   bool CreateSwapChain(const DXGI_MODE_DESC* fullscreen_mode);
   bool CreateSwapChainRTV();
+
+  bool CreateBuffers();
+  void DestroyBuffers();
 
   ComPtr<ID3D11RasterizerState> GetRasterizationState(const GPUPipeline::RasterizationState& rs);
   ComPtr<ID3D11DepthStencilState> GetDepthState(const GPUPipeline::DepthState& ds);
   ComPtr<ID3D11BlendState> GetBlendState(const GPUPipeline::BlendState& bs);
   ComPtr<ID3D11InputLayout> GetInputLayout(const GPUPipeline::InputLayout& il, const D3D11Shader* vs);
-
-  void RenderDisplay();
-  void RenderSoftwareCursor();
-  void RenderImGui();
-
-  void RenderDisplay(s32 left, s32 top, s32 width, s32 height, D3D11Texture* texture, s32 texture_view_x,
-                     s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter);
-  void RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture_handle);
-
-  struct PostProcessingStage
-  {
-    ComPtr<ID3D11VertexShader> vertex_shader;
-    ComPtr<ID3D11PixelShader> pixel_shader;
-    D3D11Texture output_texture;
-    u32 uniforms_size;
-  };
-
-  bool CheckPostProcessingRenderTargets(u32 target_width, u32 target_height);
-  void ApplyPostProcessingChain(ID3D11RenderTargetView* final_target, s32 final_left, s32 final_top, s32 final_width,
-                                s32 final_height, D3D11Texture* texture, s32 texture_view_x, s32 texture_view_y,
-                                s32 texture_view_width, s32 texture_view_height, u32 target_width, u32 target_height);
 
   bool CreateTimestampQueries();
   void DestroyTimestampQueries();
@@ -250,28 +256,17 @@ private:
 
   ComPtr<ID3D11Device> m_device;
   ComPtr<ID3D11DeviceContext> m_context;
+  ComPtr<ID3DUserDefinedAnnotation> m_annotation;
 
   ComPtr<IDXGIFactory> m_dxgi_factory;
   ComPtr<IDXGISwapChain> m_swap_chain;
   ComPtr<ID3D11RenderTargetView> m_swap_chain_rtv;
-
-  ComPtr<ID3D11RasterizerState> m_display_rasterizer_state;
-  ComPtr<ID3D11DepthStencilState> m_display_depth_stencil_state;
-  ComPtr<ID3D11BlendState> m_display_blend_state;
-  ComPtr<ID3D11BlendState> m_software_cursor_blend_state;
-  ComPtr<ID3D11VertexShader> m_display_vertex_shader;
-  ComPtr<ID3D11PixelShader> m_display_pixel_shader;
-  ComPtr<ID3D11PixelShader> m_display_alpha_pixel_shader;
-  ComPtr<ID3D11SamplerState> m_point_sampler;
-  ComPtr<ID3D11SamplerState> m_linear_sampler;
-  ComPtr<ID3D11SamplerState> m_border_sampler;
 
   RasterizationStateMap m_rasterization_states;
   DepthStateMap m_depth_states;
   BlendStateMap m_blend_states;
   InputLayoutMap m_input_layouts;
 
-  D3D11::StreamBuffer m_display_uniform_buffer;
   ComPtr<ID3D11Texture2D> m_readback_staging_texture;
   DXGI_FORMAT m_readback_staging_texture_format = DXGI_FORMAT_UNKNOWN;
   u32 m_readback_staging_texture_width = 0;
@@ -281,18 +276,12 @@ private:
   bool m_using_flip_model_swap_chain = true;
   bool m_using_allow_tearing = false;
 
-  D3D11Texture m_imgui_texture;
-  D3D11::StreamBuffer m_imgui_vertex_buffer;
-  D3D11::StreamBuffer m_imgui_index_buffer;
-  ComPtr<ID3D11InputLayout> m_imgui_input_layout;
-  ComPtr<ID3D11VertexShader> m_imgui_vertex_shader;
-  ComPtr<ID3D11PixelShader> m_imgui_pixel_shader;
-  ComPtr<ID3D11BlendState> m_imgui_blend_state;
+  D3D11::StreamBuffer m_vertex_buffer;
+  D3D11::StreamBuffer m_index_buffer;
+  D3D11::StreamBuffer m_push_uniform_buffer;
 
-  FrontendCommon::PostProcessingChain m_post_processing_chain;
-  D3D11Texture m_post_processing_input_texture;
-  std::vector<PostProcessingStage> m_post_processing_stages;
-  Common::Timer m_post_processing_timer;
+  D3D11Framebuffer* m_current_framebuffer = nullptr;
+  D3D11Pipeline* m_current_pipeline = nullptr;
 
   std::array<std::array<ComPtr<ID3D11Query>, 3>, NUM_TIMESTAMP_QUERIES> m_timestamp_queries = {};
   u8 m_read_timestamp_query = 0;

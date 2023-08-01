@@ -146,3 +146,7 @@ void GPUTexture::FlipTextureDataRGBA8(u32 width, u32 height, std::vector<u32>& t
     std::memcpy(bottom_ptr, temp.data(), texture_data_stride);
   }
 }
+
+void GPUTexture::MakeReadyForSampling()
+{
+}

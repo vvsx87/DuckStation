@@ -4,6 +4,7 @@
 #pragma once
 #include "common/types.h"
 #include <algorithm>
+#include <array>
 #include <vector>
 
 class GPUTexture
@@ -39,6 +40,19 @@ public:
     Count
   };
 
+  enum class State : u8
+  {
+    Dirty,
+    Cleared,
+    Invalidated
+  };
+
+  union ClearValue
+  {
+    u32 color;
+    float depth;
+  };
+
 public:
   virtual ~GPUTexture();
 
@@ -57,6 +71,38 @@ public:
   ALWAYS_INLINE u32 GetMipWidth(u32 level) const { return std::max<u32>(m_width >> level, 1u); }
   ALWAYS_INLINE u32 GetMipHeight(u32 level) const { return std::max<u32>(m_height >> level, 1u); }
 
+  ALWAYS_INLINE State GetState() const { return m_state; }
+  ALWAYS_INLINE void SetState(State state) { m_state = state; }
+
+  ALWAYS_INLINE bool IsRenderTargetOrDepthStencil() const
+  {
+    return (m_type >= Type::RenderTarget && m_type <= Type::DepthStencil);
+  }
+  ALWAYS_INLINE bool IsRenderTarget() const { return (m_type == Type::RenderTarget); }
+  ALWAYS_INLINE bool IsDepthStencil() const { return (m_type == Type::DepthStencil); }
+  ALWAYS_INLINE bool IsTexture() const { return (m_type == Type::Texture); }
+
+  ALWAYS_INLINE u32 GetClearColor() const { return m_clear_value.color; }
+  ALWAYS_INLINE float GetClearDepth() const { return m_clear_value.depth; }
+  ALWAYS_INLINE std::array<float, 4> GetUNormClearColor() const
+  {
+    return std::array<float, 4>{static_cast<float>((m_clear_value.color) & 0xFF) / 255.0f,
+                                static_cast<float>((m_clear_value.color >> 8) & 0xFF) / 255.0f,
+                                static_cast<float>((m_clear_value.color >> 16) & 0xFF) / 255.0f,
+                                static_cast<float>((m_clear_value.color >> 24) & 0xFF) / 255.0f};
+  }
+
+  ALWAYS_INLINE void SetClearColor(u32 color)
+  {
+    m_state = State::Cleared;
+    m_clear_value.color = color;
+  }
+  ALWAYS_INLINE void SetClearDepth(float depth)
+  {
+    m_state = State::Cleared;
+    m_clear_value.depth = depth;
+  }
+
   static u32 GetPixelSize(GPUTexture::Format format);
   static bool IsDepthFormat(GPUTexture::Format format);
 
@@ -71,6 +117,9 @@ public:
   virtual bool Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer = 0, u32 level = 0) = 0;
   virtual void Unmap() = 0;
 
+  // Instructs the backend that we're finished rendering to this texture. It may transition it to a new layout.
+  virtual void MakeReadyForSampling();
+
 protected:
   GPUTexture();
   GPUTexture(u16 width, u16 height, u8 layers, u8 levels, u8 samples, Format format);
@@ -84,11 +133,7 @@ protected:
   u8 m_samples = 0;
   Type m_type = Type::Unknown;
   Format m_format = Format::Unknown;
+  State m_state = State::Dirty;
 
-//   u16 m_map_x = 0;
-//   u16 m_map_y = 0;
-//   u16 m_map_width = 0;
-//   u16 m_map_height = 0;
-//   u8 m_map_layer = 0;
-//   u8 m_map_level = 0;
+  ClearValue m_clear_value = {};
 };

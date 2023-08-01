@@ -29,11 +29,9 @@ public:
 
   void ResetGraphicsAPIState() override;
   void RestoreGraphicsAPIState() override;
-  void UpdateSettings() override;
 
 protected:
   void ClearDisplay() override;
-  void UpdateDisplay() override;
   void ReadVRAM(u32 x, u32 y, u32 width, u32 height) override;
   void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color) override;
   void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask) override;
@@ -41,10 +39,7 @@ protected:
   void UpdateDepthBufferFromMaskBit() override;
   void ClearDepthBuffer() override;
   void SetScissorFromDrawingArea() override;
-  void MapBatchVertexPointer(u32 required_vertices) override;
-  void UnmapBatchVertexPointer(u32 used_vertices) override;
   void UploadUniformBuffer(const void* data, u32 data_size) override;
-  void DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices) override;
 
 private:
   enum : u32
@@ -64,7 +59,7 @@ private:
   }
   ALWAYS_INLINE D3D11Texture* GetVRAMEncodingTexture() const
   {
-    return static_cast<D3D11Texture*>(m_vram_encoding_texture.get());
+    return static_cast<D3D11Texture*>(m_vram_readback_texture.get());
   }
   ALWAYS_INLINE D3D11Texture* GetDisplayTexture() const
   {
@@ -76,7 +71,6 @@ private:
   void ClearFramebuffer();
   void DestroyFramebuffer() override;
 
-  bool CreateVertexBuffer();
   bool CreateUniformBuffer();
   bool CreateTextureBuffer();
   bool CreateStateObjects();
@@ -99,8 +93,6 @@ private:
   ComPtr<ID3D11Device> m_device;
   ComPtr<ID3D11DeviceContext> m_context;
 
-  D3D11::StreamBuffer m_vertex_stream_buffer;
-
   D3D11::StreamBuffer m_uniform_stream_buffer;
 
   D3D11::StreamBuffer m_texture_stream_buffer;
@@ -121,12 +113,6 @@ private:
   ComPtr<ID3D11SamplerState> m_point_sampler_state;
   ComPtr<ID3D11SamplerState> m_linear_sampler_state;
   ComPtr<ID3D11SamplerState> m_trilinear_sampler_state;
-
-  std::array<ComPtr<ID3D11BlendState>, 5> m_batch_blend_states; // [transparency_mode]
-  ComPtr<ID3D11InputLayout> m_batch_input_layout;
-  std::array<ComPtr<ID3D11VertexShader>, 2> m_batch_vertex_shaders; // [textured]
-  std::array<std::array<std::array<std::array<ComPtr<ID3D11PixelShader>, 2>, 2>, 9>, 4>
-    m_batch_pixel_shaders; // [render_mode][texture_mode][dithering][interlacing]
 
   ComPtr<ID3D11VertexShader> m_screen_quad_vertex_shader;
   ComPtr<ID3D11VertexShader> m_uv_quad_vertex_shader;

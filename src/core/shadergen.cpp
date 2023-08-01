@@ -662,16 +662,74 @@ std::string ShaderGen::GenerateCopyFragmentShader()
   return ss.str();
 }
 
-std::string ShaderGen::GenerateSampleFragmentShader()
+std::string ShaderGen::GenerateDisplayVertexShader()
+{
+  std::stringstream ss;
+  WriteHeader(ss);
+  DeclareUniformBuffer(ss, {"float4 u_src_rect"}, true);
+  DeclareVertexEntryPoint(ss, {}, 0, 1, {}, true);
+  ss << R"(
+{
+  float2 pos = float2(float((v_id << 1) & 2u), float(v_id & 2u));
+  v_tex0 = u_src_rect.xy + pos * u_src_rect.zw;
+  v_pos = float4(pos * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 0.0f, 1.0f);
+  #if API_OPENGL || API_OPENGL_ES || API_VULKAN
+    v_pos.y = -v_pos.y;
+  #endif
+}
+)";
+
+  return ss.str();
+}
+
+std::string ShaderGen::GenerateDisplayFragmentShader(bool set_alpha_to_one /* = false */)
 {
   std::stringstream ss;
   WriteHeader(ss);
   DeclareTexture(ss, "samp0", 0);
   DeclareFragmentEntryPoint(ss, 0, 1, {}, false, 1);
+  ss << "{\n";
+
+  if (set_alpha_to_one)
+    ss << "o_col0 = float4(SAMPLE_TEXTURE(samp0, v_tex0).rgb, 1.0f);";
+  else
+    ss << "o_col0 = SAMPLE_TEXTURE(samp0, v_tex0);";
+
+  ss << "\n}\n";
+
+  return ss.str();
+}
+
+std::string ShaderGen::GenerateImGuiVertexShader()
+{
+  std::stringstream ss;
+  WriteHeader(ss);
+  DeclareUniformBuffer(ss, {"float4x4 ProjectionMatrix"}, true);
+  DeclareVertexEntryPoint(ss, {"float2 a_pos", "float2 a_tex0", "float4 a_col0"}, 1, 1, {}, false);
+  ss << R"(
+{
+  v_pos = mul(ProjectionMatrix, float4(a_pos, 0.f, 1.f));
+  v_col0 = a_col0;
+  v_tex0 = a_tex0;
+  #if API_OPENGL || API_OPENGL_ES || API_VULKAN
+    v_pos.y = -v_pos.y;
+  #endif
+}
+)";
+
+  return ss.str();
+}
+
+std::string ShaderGen::GenerateImGuiFragmentShader()
+{
+  std::stringstream ss;
+  WriteHeader(ss);
+  DeclareTexture(ss, "samp0", 0);
+  DeclareFragmentEntryPoint(ss, 1, 1, {}, false, 1);
 
   ss << R"(
 {
-  o_col0 = SAMPLE_TEXTURE(samp0, v_tex0);
+  o_col0 = v_col0 * SAMPLE_TEXTURE(samp0, v_tex0);
 }
 )";
 

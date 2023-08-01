@@ -5,29 +5,45 @@
 #include "../host_settings.h"
 #include "../settings.h"
 #include "../shader_cache_version.h"
+
 #include "common/assert.h"
+#include "common/file_system.h"
 #include "common/log.h"
+#include "common/path.h"
 #include "common/string_util.h"
-#include "d3d11/shader_cache.h"
-#include "d3d11/shader_compiler.h"
-#include "d3d_shaders.h"
+
 #include "imgui.h"
-#include "postprocessing_shadergen.h"
+
+#include "fmt/format.h"
+
 #include <array>
+#include <d3dcompiler.h>
 #include <dxgi1_5.h>
+
 Log_SetChannel(D3D11Device);
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
 static constexpr std::array<float, 4> s_clear_color = {};
+static unsigned s_next_bad_shader_id = 1;
+
+static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view& name)
+{
+  // WKPDID_D3DDebugObjectName
+  static constexpr GUID guid = {0x429b8c22, 0x9188, 0x4b0c, 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00};
+  const std::wstring wname = StringUtil::UTF8StringToWideString(name);
+  obj->SetPrivateData(guid, static_cast<UINT>(wname.length()) * 2u, wname.c_str());
+}
 
 D3D11Device::D3D11Device() = default;
 
 D3D11Device::~D3D11Device()
 {
+  // TODO: Make virtual Destroy() method instead due to order of shit..
   DestroyStagingBuffer();
   DestroyResources();
+  DestroyBuffers();
   DestroySurface();
   m_context.Reset();
   m_device.Reset();
@@ -94,6 +110,35 @@ bool D3D11Device::DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, 
   return true;
 }
 
+void D3D11Device::CommitClear(GPUTexture* t)
+{
+  D3D11Texture* T = static_cast<D3D11Texture*>(t);
+  if (T->GetState() == GPUTexture::State::Dirty)
+    return;
+
+  // TODO: 11.1
+  if (T->IsDepthStencil())
+  {
+    if (T->GetState() == GPUTexture::State::Invalidated)
+      ; // m_context->DiscardView(T->GetD3DDSV());
+    else
+      m_context->ClearDepthStencilView(T->GetD3DDSV(), D3D11_CLEAR_DEPTH, T->GetClearDepth(), 0);
+  }
+  else if (T->IsRenderTarget())
+  {
+    if (T->GetState() == GPUTexture::State::Invalidated)
+      ; // m_context->DiscardView(T->GetD3DRTV());
+    else
+      m_context->ClearRenderTargetView(T->GetD3DRTV(), T->GetUNormClearColor().data());
+  }
+  else
+  {
+    return;
+  }
+
+  T->SetState(GPUTexture::State::Dirty);
+}
+
 bool D3D11Device::CheckStagingBufferSize(u32 width, u32 height, DXGI_FORMAT format)
 {
   if (m_readback_staging_texture_width >= width && m_readback_staging_texture_width >= height &&
@@ -143,11 +188,27 @@ void D3D11Device::CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 d
   DebugAssert((dst_x + width) <= dst->GetMipWidth(dst_level));
   DebugAssert((dst_y + height) <= dst->GetMipWidth(dst_level));
 
+  D3D11Texture* dst11 = static_cast<D3D11Texture*>(dst);
+  D3D11Texture* src11 = static_cast<D3D11Texture*>(src);
+
+  if (src11->GetState() == GPUTexture::State::Cleared)
+  {
+    if (src11->GetWidth() == dst11->GetWidth() && src11->GetHeight() == dst11->GetHeight())
+    {
+      // pass clear through
+      dst11->m_state = src11->m_state;
+      dst11->m_clear_value = src11->m_clear_value;
+      return;
+    }
+  }
+
+  CommitClear(src11);
+  CommitClear(dst11);
+
   const CD3D11_BOX src_box(static_cast<LONG>(src_x), static_cast<LONG>(src_y), 0, static_cast<LONG>(src_x + width),
                            static_cast<LONG>(src_y + height), 1);
-  m_context->CopySubresourceRegion(static_cast<D3D11Texture*>(dst)->GetD3DTexture(),
-                                   D3D11CalcSubresource(dst_level, dst_layer, dst->GetLevels()), dst_x, dst_y, 0,
-                                   static_cast<D3D11Texture*>(src)->GetD3DTexture(),
+  m_context->CopySubresourceRegion(dst11->GetD3DTexture(), D3D11CalcSubresource(dst_level, dst_layer, dst->GetLevels()),
+                                   dst_x, dst_y, 0, src11->GetD3DTexture(),
                                    D3D11CalcSubresource(src_level, src_layer, src->GetLevels()), &src_box);
 }
 
@@ -165,6 +226,9 @@ void D3D11Device::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u3
 
   // DX11 can't resolve partial rects.
   Assert(src_x == dst_x && src_y == dst_y);
+
+  CommitClear(src);
+  CommitClear(dst);
 
   m_context->ResolveSubresource(
     static_cast<D3D11Texture*>(dst)->GetD3DTexture(), D3D11CalcSubresource(dst_level, dst_layer, dst->GetLevels()),
@@ -266,6 +330,9 @@ bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
     }
   }
 
+  if (g_settings.gpu_use_debug_device)
+    m_context.As(&m_annotation);
+
   // we need the specific factory for the device, otherwise MakeWindowAssociation() is flaky.
   ComPtr<IDXGIDevice> dxgi_device;
   if (FAILED(m_device.As(&dxgi_device)) || FAILED(dxgi_device->GetParent(IID_PPV_ARGS(dxgi_adapter.GetAddressOf()))) ||
@@ -318,7 +385,10 @@ bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
 
 bool D3D11Device::SetupDevice()
 {
-  if (!CreateResources())
+  if (!GPUDevice::SetupDevice())
+    return false;
+
+  if (!CreateBuffers() || !CreateResources())
     return false;
 
   return true;
@@ -467,6 +537,21 @@ void D3D11Device::DestroySurface()
   m_swap_chain.Reset();
 }
 
+std::string D3D11Device::GetShaderCacheBaseName(const std::string_view& type, bool debug) const
+{
+  std::string_view flname;
+  switch (m_device->GetFeatureLevel())
+  {
+      // clang-format off
+  case D3D_FEATURE_LEVEL_10_0: flname = "sm40"; break;
+  case D3D_FEATURE_LEVEL_10_1: flname = "sm41"; break;
+  case D3D_FEATURE_LEVEL_11_0: default: flname = "sm50"; break;
+      // clang-format on
+  }
+
+  return fmt::format("d3d_{}_{}{}", type, flname, debug ? "_debug" : "");
+}
+
 void D3D11Device::ResizeWindow(s32 new_window_width, s32 new_window_height)
 {
   if (!m_swap_chain)
@@ -556,238 +641,24 @@ bool D3D11Device::SetFullscreen(bool fullscreen, u32 width, u32 height, float re
   return true;
 }
 
-bool D3D11Device::CreateResources()
+bool D3D11Device::CreateBuffers()
 {
-  if (!GPUDevice::CreateResources())
-    return false;
-
-  HRESULT hr;
-
-  m_display_vertex_shader =
-    D3D11::ShaderCompiler::CreateVertexShader(m_device.Get(), s_display_vs_bytecode, sizeof(s_display_vs_bytecode));
-  m_display_pixel_shader =
-    D3D11::ShaderCompiler::CreatePixelShader(m_device.Get(), s_display_ps_bytecode, sizeof(s_display_ps_bytecode));
-  m_display_alpha_pixel_shader = D3D11::ShaderCompiler::CreatePixelShader(m_device.Get(), s_display_ps_alpha_bytecode,
-                                                                          sizeof(s_display_ps_alpha_bytecode));
-  if (!m_display_vertex_shader || !m_display_pixel_shader || !m_display_alpha_pixel_shader)
-    return false;
-
-  if (!m_display_uniform_buffer.Create(m_device.Get(), D3D11_BIND_CONSTANT_BUFFER, DISPLAY_UNIFORM_BUFFER_SIZE))
-    return false;
-
-  CD3D11_RASTERIZER_DESC rasterizer_desc = CD3D11_RASTERIZER_DESC(CD3D11_DEFAULT());
-  rasterizer_desc.CullMode = D3D11_CULL_NONE;
-  hr = m_device->CreateRasterizerState(&rasterizer_desc, m_display_rasterizer_state.GetAddressOf());
-  if (FAILED(hr))
-    return false;
-
-  CD3D11_DEPTH_STENCIL_DESC depth_stencil_desc = CD3D11_DEPTH_STENCIL_DESC(CD3D11_DEFAULT());
-  depth_stencil_desc.DepthEnable = FALSE;
-  depth_stencil_desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-  hr = m_device->CreateDepthStencilState(&depth_stencil_desc, m_display_depth_stencil_state.GetAddressOf());
-  if (FAILED(hr))
-    return false;
-
-  CD3D11_BLEND_DESC blend_desc = CD3D11_BLEND_DESC(CD3D11_DEFAULT());
-  hr = m_device->CreateBlendState(&blend_desc, m_display_blend_state.GetAddressOf());
-  if (FAILED(hr))
-    return false;
-
-  blend_desc.RenderTarget[0] = {TRUE,
-                                D3D11_BLEND_SRC_ALPHA,
-                                D3D11_BLEND_INV_SRC_ALPHA,
-                                D3D11_BLEND_OP_ADD,
-                                D3D11_BLEND_ONE,
-                                D3D11_BLEND_ZERO,
-                                D3D11_BLEND_OP_ADD,
-                                D3D11_COLOR_WRITE_ENABLE_ALL};
-  hr = m_device->CreateBlendState(&blend_desc, m_software_cursor_blend_state.GetAddressOf());
-  if (FAILED(hr))
-    return false;
-
-  CD3D11_SAMPLER_DESC sampler_desc = CD3D11_SAMPLER_DESC(CD3D11_DEFAULT());
-  sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-  hr = m_device->CreateSamplerState(&sampler_desc, m_point_sampler.GetAddressOf());
-  if (FAILED(hr))
-    return false;
-
-  sampler_desc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
-  hr = m_device->CreateSamplerState(&sampler_desc, m_linear_sampler.GetAddressOf());
-  if (FAILED(hr))
-    return false;
-
-  sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-  sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
-  sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
-  sampler_desc.BorderColor[0] = 0.0f;
-  sampler_desc.BorderColor[1] = 0.0f;
-  sampler_desc.BorderColor[2] = 0.0f;
-  sampler_desc.BorderColor[3] = 1.0f;
-  hr = m_device->CreateSamplerState(&sampler_desc, m_border_sampler.GetAddressOf());
-  if (FAILED(hr))
-    return false;
-
-  if (!CreateImGuiResources())
-    return false;
-
-  return true;
-}
-
-void D3D11Device::DestroyResources()
-{
-  GPUDevice::DestroyResources();
-
-  DestroyImGuiResources();
-
-  m_post_processing_chain.ClearStages();
-  m_post_processing_input_texture.Destroy();
-  m_post_processing_stages.clear();
-
-  m_display_uniform_buffer.Release();
-  m_border_sampler.Reset();
-  m_linear_sampler.Reset();
-  m_point_sampler.Reset();
-  m_display_alpha_pixel_shader.Reset();
-  m_display_pixel_shader.Reset();
-  m_display_vertex_shader.Reset();
-  m_display_blend_state.Reset();
-  m_display_depth_stencil_state.Reset();
-  m_display_rasterizer_state.Reset();
-}
-
-bool D3D11Device::CreateImGuiResources()
-{
-  if (!m_imgui_vertex_buffer.Create(m_device.Get(), D3D11_BIND_VERTEX_BUFFER, IMGUI_VERTEX_BUFFER_SIZE))
+  if (!m_vertex_buffer.Create(m_device.Get(), D3D11_BIND_VERTEX_BUFFER, VERTEX_BUFFER_SIZE) ||
+      !m_index_buffer.Create(m_device.Get(), D3D11_BIND_INDEX_BUFFER, INDEX_BUFFER_SIZE) ||
+      !m_push_uniform_buffer.Create(m_device.Get(), D3D11_BIND_CONSTANT_BUFFER, PUSH_UNIFORM_BUFFER_SIZE))
   {
-    Log_ErrorPrintf("Failed to create ImGui vertex buffer.");
-    return false;
-  }
-
-  if (!m_imgui_index_buffer.Create(m_device.Get(), D3D11_BIND_INDEX_BUFFER, IMGUI_INDEX_BUFFER_SIZE))
-  {
-    Log_ErrorPrintf("Failed to create ImGui index buffer.");
-    return false;
-  }
-
-  HRESULT hr;
-  D3D11_BLEND_DESC blend_desc = {};
-  blend_desc.RenderTarget[0].BlendEnable = true;
-  blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-  blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-  blend_desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-  blend_desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-  blend_desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-  blend_desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-  blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-  if (FAILED(hr = m_device->CreateBlendState(&blend_desc, m_imgui_blend_state.ReleaseAndGetAddressOf())))
-  {
-    Log_ErrorPrintf("Failed to create ImGui blend state: %08X", hr);
-    return false;
-  }
-
-  m_imgui_vertex_shader =
-    D3D11::ShaderCompiler::CreateVertexShader(m_device.Get(), s_imgui_vs_bytecode, sizeof(s_imgui_vs_bytecode));
-  m_imgui_pixel_shader =
-    D3D11::ShaderCompiler::CreatePixelShader(m_device.Get(), s_imgui_ps_bytecode, sizeof(s_imgui_ps_bytecode));
-  if (!m_imgui_vertex_shader || !m_imgui_pixel_shader)
-    return false;
-
-  static constexpr D3D11_INPUT_ELEMENT_DESC layout[] = {
-    {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, (UINT)IM_OFFSETOF(ImDrawVert, pos), D3D11_INPUT_PER_VERTEX_DATA, 0},
-    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, (UINT)IM_OFFSETOF(ImDrawVert, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
-    {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, (UINT)IM_OFFSETOF(ImDrawVert, col), D3D11_INPUT_PER_VERTEX_DATA, 0},
-  };
-  if (FAILED(hr =
-               m_device->CreateInputLayout(layout, static_cast<u32>(std::size(layout)), s_imgui_vs_bytecode,
-                                           sizeof(s_imgui_vs_bytecode), m_imgui_input_layout.ReleaseAndGetAddressOf())))
-  {
-    Log_ErrorPrintf("Failed to create ImGui input layout: %08X", hr);
+    Log_ErrorPrintf("Failed to create vertex/index/uniform buffers.");
     return false;
   }
 
   return true;
 }
 
-void D3D11Device::DestroyImGuiResources()
+void D3D11Device::DestroyBuffers()
 {
-  m_imgui_blend_state.Reset();
-  m_imgui_index_buffer.Release();
-  m_imgui_vertex_buffer.Release();
-  m_imgui_texture.Destroy();
-}
-
-void D3D11Device::RenderImGui()
-{
-  ImGui::Render();
-
-  const ImDrawData* draw_data = ImGui::GetDrawData();
-  if (draw_data->CmdListsCount == 0)
-    return;
-
-  m_context->IASetInputLayout(m_imgui_input_layout.Get());
-  m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  m_context->VSSetShader(m_imgui_vertex_shader.Get(), nullptr, 0);
-  m_context->PSSetShader(m_imgui_pixel_shader.Get(), nullptr, 0);
-  m_context->PSSetSamplers(0, 1, m_linear_sampler.GetAddressOf());
-  m_context->OMSetBlendState(m_imgui_blend_state.Get(), nullptr, 0xFFFFFFFFu);
-  m_context->OMSetDepthStencilState(m_display_depth_stencil_state.Get(), 0);
-
-  {
-    const float L = 0.0f;
-    const float R = static_cast<float>(m_window_info.surface_width);
-    const float T = 0.0f;
-    const float B = static_cast<float>(m_window_info.surface_height);
-
-    const float ortho_projection[4][4] = {
-      {2.0f / (R - L), 0.0f, 0.0f, 0.0f},
-      {0.0f, 2.0f / (T - B), 0.0f, 0.0f},
-      {0.0f, 0.0f, 0.5f, 0.0f},
-      {(R + L) / (L - R), (T + B) / (B - T), 0.5f, 1.0f},
-    };
-
-    auto res = m_display_uniform_buffer.Map(m_context.Get(), DISPLAY_UNIFORM_BUFFER_SIZE, DISPLAY_UNIFORM_BUFFER_SIZE);
-    std::memcpy(res.pointer, ortho_projection, sizeof(ortho_projection));
-    m_display_uniform_buffer.Unmap(m_context.Get(), sizeof(ortho_projection));
-    m_context->VSSetConstantBuffers(0, 1, m_display_uniform_buffer.GetD3DBufferArray());
-  }
-
-  const UINT vb_stride = sizeof(ImDrawVert);
-  const UINT vb_offset = 0;
-  static_assert(sizeof(ImDrawIdx) == sizeof(u16));
-  m_context->IASetVertexBuffers(0, 1, m_imgui_vertex_buffer.GetD3DBufferArray(), &vb_stride, &vb_offset);
-  m_context->IASetIndexBuffer(m_imgui_index_buffer.GetD3DBuffer(), DXGI_FORMAT_R16_UINT, 0);
-
-  // Render command lists
-  for (int n = 0; n < draw_data->CmdListsCount; n++)
-  {
-    const ImDrawList* cmd_list = draw_data->CmdLists[n];
-
-    const u32 vert_size = cmd_list->VtxBuffer.Size * sizeof(ImDrawVert);
-    const auto vb_map = m_imgui_vertex_buffer.Map(m_context.Get(), sizeof(ImDrawVert), vert_size);
-    std::memcpy(vb_map.pointer, cmd_list->VtxBuffer.Data, vert_size);
-    m_imgui_vertex_buffer.Unmap(m_context.Get(), vert_size);
-
-    const u32 idx_size = cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx);
-    const auto ib_map = m_imgui_index_buffer.Map(m_context.Get(), sizeof(ImDrawIdx), idx_size);
-    std::memcpy(ib_map.pointer, cmd_list->IdxBuffer.Data, idx_size);
-    m_imgui_index_buffer.Unmap(m_context.Get(), idx_size);
-
-    for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
-    {
-      const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
-      DebugAssert(!pcmd->UserCallback);
-
-      if (pcmd->ClipRect.z <= pcmd->ClipRect.x || pcmd->ClipRect.w <= pcmd->ClipRect.x)
-        continue;
-
-      const CD3D11_RECT rc(static_cast<LONG>(pcmd->ClipRect.x), static_cast<LONG>(pcmd->ClipRect.y),
-                           static_cast<LONG>(pcmd->ClipRect.z), static_cast<LONG>(pcmd->ClipRect.w));
-      m_context->RSSetScissorRects(1, &rc);
-      m_context->PSSetShaderResources(0, 1, reinterpret_cast<const D3D11Texture*>(pcmd->TextureId)->GetD3DSRVArray());
-      m_context->DrawIndexed(pcmd->ElemCount, ib_map.index_aligned + pcmd->IdxOffset,
-                             vb_map.index_aligned + pcmd->VtxOffset);
-    }
-  }
+  m_push_uniform_buffer.Release();
+  m_vertex_buffer.Release();
+  m_index_buffer.Release();
 }
 
 bool D3D11Device::Render(bool skip_present)
@@ -805,12 +676,10 @@ bool D3D11Device::Render(bool skip_present)
   if (m_vsync_enabled && m_gpu_timing_enabled)
     PopTimestampQuery();
 
-  RenderDisplay();
+  m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), s_clear_color.data());
+  m_context->OMSetRenderTargets(1, m_swap_chain_rtv.GetAddressOf(), nullptr);
 
-  // TODO: move up...
-  const CD3D11_VIEWPORT vp(0.0f, 0.0f, static_cast<float>(m_window_info.surface_width),
-                           static_cast<float>(m_window_info.surface_height), 0.0f, 1.0f);
-  m_context->RSSetViewports(1, &vp);
+  RenderDisplay();
 
   RenderImGui();
 
@@ -828,137 +697,6 @@ bool D3D11Device::Render(bool skip_present)
     KickTimestampQuery();
 
   return true;
-}
-
-bool D3D11Device::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect,
-                                   std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format)
-{
-  static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8;
-
-  D3D11Texture render_texture;
-  if (!render_texture.Create(m_device.Get(), width, height, 1, 1, 1, GPUTexture::Type::RenderTarget, hdformat))
-    return false;
-
-  static constexpr std::array<float, 4> clear_color = {};
-  m_context->ClearRenderTargetView(render_texture.GetD3DRTV(), clear_color.data());
-  m_context->OMSetRenderTargets(1, render_texture.GetD3DRTVArray(), nullptr);
-
-  if (HasDisplayTexture())
-  {
-    if (!m_post_processing_chain.IsEmpty())
-    {
-      ApplyPostProcessingChain(render_texture.GetD3DRTV(), draw_rect.left, draw_rect.top, draw_rect.GetWidth(),
-                               draw_rect.GetHeight(), static_cast<D3D11Texture*>(m_display_texture),
-                               m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
-                               m_display_texture_view_height, width, height);
-    }
-    else
-    {
-      RenderDisplay(draw_rect.left, draw_rect.top, draw_rect.GetWidth(), draw_rect.GetHeight(),
-                    static_cast<D3D11Texture*>(m_display_texture), m_display_texture_view_x, m_display_texture_view_y,
-                    m_display_texture_view_width, m_display_texture_view_height, IsUsingLinearFiltering());
-    }
-  }
-
-  m_context->OMSetRenderTargets(0, nullptr, nullptr);
-
-  const u32 stride = GPUTexture::GetPixelSize(hdformat) * width;
-  out_pixels->resize(width * height);
-  if (!DownloadTexture(&render_texture, 0, 0, width, height, out_pixels->data(), stride))
-    return false;
-
-  *out_stride = stride;
-  *out_format = hdformat;
-  return true;
-}
-
-void D3D11Device::RenderDisplay()
-{
-  const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
-
-  if (HasDisplayTexture() && !m_post_processing_chain.IsEmpty())
-  {
-    ApplyPostProcessingChain(m_swap_chain_rtv.Get(), left, top, width, height,
-                             static_cast<D3D11Texture*>(m_display_texture), m_display_texture_view_x,
-                             m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
-                             GetWindowWidth(), GetWindowHeight());
-    return;
-  }
-
-  m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), s_clear_color.data());
-  m_context->OMSetRenderTargets(1, m_swap_chain_rtv.GetAddressOf(), nullptr);
-
-  if (!HasDisplayTexture())
-    return;
-
-  RenderDisplay(left, top, width, height, static_cast<D3D11Texture*>(m_display_texture), m_display_texture_view_x,
-                m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
-                IsUsingLinearFiltering());
-}
-
-void D3D11Device::RenderDisplay(s32 left, s32 top, s32 width, s32 height, D3D11Texture* texture, s32 texture_view_x,
-                                s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter)
-{
-  m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  m_context->VSSetShader(m_display_vertex_shader.Get(), nullptr, 0);
-  m_context->PSSetShader(m_display_pixel_shader.Get(), nullptr, 0);
-  m_context->PSSetShaderResources(0, 1, texture->GetD3DSRVArray());
-  m_context->PSSetSamplers(0, 1, linear_filter ? m_linear_sampler.GetAddressOf() : m_point_sampler.GetAddressOf());
-
-  const bool linear = IsUsingLinearFiltering();
-  const float position_adjust = linear ? 0.5f : 0.0f;
-  const float size_adjust = linear ? 1.0f : 0.0f;
-  const float uniforms[4] = {
-    (static_cast<float>(texture_view_x) + position_adjust) / static_cast<float>(texture->GetWidth()),
-    (static_cast<float>(texture_view_y) + position_adjust) / static_cast<float>(texture->GetHeight()),
-    (static_cast<float>(texture_view_width) - size_adjust) / static_cast<float>(texture->GetWidth()),
-    (static_cast<float>(texture_view_height) - size_adjust) / static_cast<float>(texture->GetHeight())};
-  const auto map = m_display_uniform_buffer.Map(m_context.Get(), m_display_uniform_buffer.GetSize(), sizeof(uniforms));
-  std::memcpy(map.pointer, uniforms, sizeof(uniforms));
-  m_display_uniform_buffer.Unmap(m_context.Get(), sizeof(uniforms));
-  m_context->VSSetConstantBuffers(0, 1, m_display_uniform_buffer.GetD3DBufferArray());
-
-  const CD3D11_VIEWPORT vp(static_cast<float>(left), static_cast<float>(top), static_cast<float>(width),
-                           static_cast<float>(height));
-  m_context->RSSetViewports(1, &vp);
-  m_context->RSSetState(m_display_rasterizer_state.Get());
-  m_context->OMSetDepthStencilState(m_display_depth_stencil_state.Get(), 0);
-  m_context->OMSetBlendState(m_display_blend_state.Get(), nullptr, 0xFFFFFFFFu);
-
-  m_context->Draw(3, 0);
-}
-
-void D3D11Device::RenderSoftwareCursor()
-{
-  if (!HasSoftwareCursor())
-    return;
-
-  const auto [left, top, width, height] = CalculateSoftwareCursorDrawRect();
-  RenderSoftwareCursor(left, top, width, height, m_cursor_texture.get());
-}
-
-void D3D11Device::RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture_handle)
-{
-  m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  m_context->VSSetShader(m_display_vertex_shader.Get(), nullptr, 0);
-  m_context->PSSetShader(m_display_alpha_pixel_shader.Get(), nullptr, 0);
-  m_context->PSSetShaderResources(0, 1, static_cast<D3D11Texture*>(texture_handle)->GetD3DSRVArray());
-  m_context->PSSetSamplers(0, 1, m_linear_sampler.GetAddressOf());
-
-  const float uniforms[4] = {0.0f, 0.0f, 1.0f, 1.0f};
-  const auto map = m_display_uniform_buffer.Map(m_context.Get(), m_display_uniform_buffer.GetSize(), sizeof(uniforms));
-  std::memcpy(map.pointer, uniforms, sizeof(uniforms));
-  m_display_uniform_buffer.Unmap(m_context.Get(), sizeof(uniforms));
-  m_context->VSSetConstantBuffers(0, 1, m_display_uniform_buffer.GetD3DBufferArray());
-
-  const CD3D11_VIEWPORT vp(static_cast<float>(left), static_cast<float>(top), static_cast<float>(width),
-                           static_cast<float>(height));
-  m_context->RSSetViewports(1, &vp);
-  m_context->RSSetState(m_display_rasterizer_state.Get());
-  m_context->OMSetDepthStencilState(m_display_depth_stencil_state.Get(), 0);
-  m_context->OMSetBlendState(m_software_cursor_blend_state.Get(), nullptr, 0xFFFFFFFFu);
-
-  m_context->Draw(3, 0);
 }
 
 GPUDevice::AdapterAndModeList D3D11Device::StaticGetAdapterAndModeList()
@@ -1042,151 +780,6 @@ GPUDevice::AdapterAndModeList D3D11Device::GetAdapterAndModeList(IDXGIFactory* d
 GPUDevice::AdapterAndModeList D3D11Device::GetAdapterAndModeList()
 {
   return GetAdapterAndModeList(m_dxgi_factory.Get());
-}
-
-bool D3D11Device::SetPostProcessingChain(const std::string_view& config)
-{
-  if (config.empty())
-  {
-    m_post_processing_input_texture.Destroy();
-    m_post_processing_stages.clear();
-    m_post_processing_chain.ClearStages();
-    return true;
-  }
-
-  if (!m_post_processing_chain.CreateFromString(config))
-    return false;
-
-  m_post_processing_stages.clear();
-
-  D3D11::ShaderCache shader_cache;
-  shader_cache.Open(EmuFolders::Cache, m_device->GetFeatureLevel(), SHADER_CACHE_VERSION,
-                    g_settings.gpu_use_debug_device);
-
-  FrontendCommon::PostProcessingShaderGen shadergen(RenderAPI::D3D11, true);
-  u32 max_ubo_size = 0;
-
-  for (u32 i = 0; i < m_post_processing_chain.GetStageCount(); i++)
-  {
-    const FrontendCommon::PostProcessingShader& shader = m_post_processing_chain.GetShaderStage(i);
-    const std::string vs = shadergen.GeneratePostProcessingVertexShader(shader);
-    const std::string ps = shadergen.GeneratePostProcessingFragmentShader(shader);
-
-    PostProcessingStage stage;
-    stage.uniforms_size = shader.GetUniformsSize();
-    stage.vertex_shader = shader_cache.GetVertexShader(m_device.Get(), vs);
-    stage.pixel_shader = shader_cache.GetPixelShader(m_device.Get(), ps);
-    if (!stage.vertex_shader || !stage.pixel_shader)
-    {
-      Log_ErrorPrintf("Failed to compile one or more post-processing shaders, disabling.");
-      m_post_processing_stages.clear();
-      m_post_processing_chain.ClearStages();
-      return false;
-    }
-
-    max_ubo_size = std::max(max_ubo_size, stage.uniforms_size);
-    m_post_processing_stages.push_back(std::move(stage));
-  }
-
-  if (m_display_uniform_buffer.GetSize() < max_ubo_size &&
-      !m_display_uniform_buffer.Create(m_device.Get(), D3D11_BIND_CONSTANT_BUFFER, max_ubo_size))
-  {
-    Log_ErrorPrintf("Failed to allocate %u byte constant buffer for postprocessing", max_ubo_size);
-    m_post_processing_stages.clear();
-    m_post_processing_chain.ClearStages();
-    return false;
-  }
-
-  m_post_processing_timer.Reset();
-  return true;
-}
-
-bool D3D11Device::CheckPostProcessingRenderTargets(u32 target_width, u32 target_height)
-{
-  DebugAssert(!m_post_processing_stages.empty());
-
-  const GPUTexture::Type type = GPUTexture::Type::RenderTarget;
-  const GPUTexture::Format format = GPUTexture::Format::RGBA8;
-
-  if (m_post_processing_input_texture.GetWidth() != target_width ||
-      m_post_processing_input_texture.GetHeight() != target_height)
-  {
-    if (!m_post_processing_input_texture.Create(m_device.Get(), target_width, target_height, 1, 1, 1, type, format))
-      return false;
-  }
-
-  const u32 target_count = (static_cast<u32>(m_post_processing_stages.size()) - 1);
-  for (u32 i = 0; i < target_count; i++)
-  {
-    PostProcessingStage& pps = m_post_processing_stages[i];
-    if (pps.output_texture.GetWidth() != target_width || pps.output_texture.GetHeight() != target_height)
-    {
-      if (!pps.output_texture.Create(m_device.Get(), target_width, target_height, 1, 1, 1, type, format))
-        return false;
-    }
-  }
-
-  return true;
-}
-
-void D3D11Device::ApplyPostProcessingChain(ID3D11RenderTargetView* final_target, s32 final_left, s32 final_top,
-                                           s32 final_width, s32 final_height, D3D11Texture* texture, s32 texture_view_x,
-                                           s32 texture_view_y, s32 texture_view_width, s32 texture_view_height,
-                                           u32 target_width, u32 target_height)
-{
-  if (!CheckPostProcessingRenderTargets(target_width, target_height))
-  {
-    RenderDisplay(final_left, final_top, final_width, final_height, texture, texture_view_x, texture_view_y,
-                  texture_view_width, texture_view_height, IsUsingLinearFiltering());
-    return;
-  }
-
-  // downsample/upsample - use same viewport for remainder
-  m_context->ClearRenderTargetView(m_post_processing_input_texture.GetD3DRTV(), s_clear_color.data());
-  m_context->OMSetRenderTargets(1, m_post_processing_input_texture.GetD3DRTVArray(), nullptr);
-  RenderDisplay(final_left, final_top, final_width, final_height, texture, texture_view_x, texture_view_y,
-                texture_view_width, texture_view_height, IsUsingLinearFiltering());
-
-  const s32 orig_texture_width = texture_view_width;
-  const s32 orig_texture_height = texture_view_height;
-  texture = &m_post_processing_input_texture;
-  texture_view_x = final_left;
-  texture_view_y = final_top;
-  texture_view_width = final_width;
-  texture_view_height = final_height;
-
-  const u32 final_stage = static_cast<u32>(m_post_processing_stages.size()) - 1u;
-  for (u32 i = 0; i < static_cast<u32>(m_post_processing_stages.size()); i++)
-  {
-    PostProcessingStage& pps = m_post_processing_stages[i];
-    ID3D11RenderTargetView* rtv = (i == final_stage) ? final_target : pps.output_texture.GetD3DRTV();
-    m_context->ClearRenderTargetView(rtv, s_clear_color.data());
-    m_context->OMSetRenderTargets(1, &rtv, nullptr);
-
-    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    m_context->VSSetShader(pps.vertex_shader.Get(), nullptr, 0);
-    m_context->PSSetShader(pps.pixel_shader.Get(), nullptr, 0);
-    m_context->PSSetShaderResources(0, 1, texture->GetD3DSRVArray());
-    m_context->PSSetSamplers(0, 1, m_border_sampler.GetAddressOf());
-
-    const auto map =
-      m_display_uniform_buffer.Map(m_context.Get(), m_display_uniform_buffer.GetSize(), pps.uniforms_size);
-    m_post_processing_chain.GetShaderStage(i).FillUniformBuffer(
-      map.pointer, texture->GetWidth(), texture->GetHeight(), texture_view_x, texture_view_y, texture_view_width,
-      texture_view_height, GetWindowWidth(), GetWindowHeight(), orig_texture_width, orig_texture_height,
-      static_cast<float>(m_post_processing_timer.GetTimeSeconds()));
-    m_display_uniform_buffer.Unmap(m_context.Get(), pps.uniforms_size);
-    m_context->VSSetConstantBuffers(0, 1, m_display_uniform_buffer.GetD3DBufferArray());
-    m_context->PSSetConstantBuffers(0, 1, m_display_uniform_buffer.GetD3DBufferArray());
-
-    m_context->Draw(3, 0);
-
-    if (i != final_stage)
-      texture = &pps.output_texture;
-  }
-
-  ID3D11ShaderResourceView* null_srv = nullptr;
-  m_context->PSSetShaderResources(0, 1, &null_srv);
 }
 
 bool D3D11Device::CreateTimestampQueries()
@@ -1308,8 +901,9 @@ float D3D11Device::GetAndResetAccumulatedGPUTime()
   return value;
 }
 
-D3D11Framebuffer::D3D11Framebuffer(ComPtr<ID3D11RenderTargetView> rtv, ComPtr<ID3D11DepthStencilView> dsv)
-  : m_rtv(std::move(rtv)), m_dsv(std::move(dsv))
+D3D11Framebuffer::D3D11Framebuffer(GPUTexture* rt, GPUTexture* ds, u32 width, u32 height,
+                                   ComPtr<ID3D11RenderTargetView> rtv, ComPtr<ID3D11DepthStencilView> dsv)
+  : GPUFramebuffer(rt, ds, width, height), m_rtv(std::move(rtv)), m_dsv(std::move(dsv))
 {
 }
 
@@ -1317,7 +911,33 @@ D3D11Framebuffer::~D3D11Framebuffer() = default;
 
 void D3D11Framebuffer::SetDebugName(const std::string_view& name)
 {
-  Panic("Implement me");
+  if (m_rtv)
+    SetD3DDebugObjectName(m_rtv.Get(), name);
+  if (m_dsv)
+    SetD3DDebugObjectName(m_dsv.Get(), name);
+}
+
+void D3D11Framebuffer::CommitClear(ID3D11DeviceContext* context)
+{
+  if (UNLIKELY(m_rt && m_rt->GetState() != GPUTexture::State::Dirty))
+  {
+    if (m_rt->GetState() == GPUTexture::State::Invalidated)
+      ; // m_context->DiscardView(m_rtv.Get());
+    else
+      context->ClearRenderTargetView(m_rtv.Get(), m_rt->GetUNormClearColor().data());
+
+    m_rt->SetState(GPUTexture::State::Dirty);
+  }
+
+  if (UNLIKELY(m_ds && m_ds->GetState() != GPUTexture::State::Dirty))
+  {
+    if (m_ds->GetState() == GPUTexture::State::Invalidated)
+      ; // m_context->DiscardView(m_dsv.Get());
+    else
+      context->ClearDepthStencilView(m_dsv.Get(), D3D11_CLEAR_DEPTH, m_ds->GetClearDepth(), 0);
+
+    m_ds->SetState(GPUTexture::State::Dirty);
+  }
 }
 
 std::unique_ptr<GPUFramebuffer> D3D11Device::CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level,
@@ -1326,6 +946,13 @@ std::unique_ptr<GPUFramebuffer> D3D11Device::CreateFramebuffer(GPUTexture* rt, u
   ComPtr<ID3D11RenderTargetView> rtv;
   ComPtr<ID3D11DepthStencilView> dsv;
   HRESULT hr;
+
+  Assert(rt || ds);
+  Assert(!rt || (rt_layer < rt->GetLayers() && rt_level < rt->GetLevels()));
+  Assert(!ds || (ds_layer < ds->GetLevels() && ds_level < ds->GetLevels()));
+  Assert(!rt || !ds ||
+         (rt->GetMipWidth(rt_level) == ds->GetMipWidth(ds_level) &&
+          rt->GetMipHeight(rt_level) == ds->GetMipHeight(ds_level)));
 
   if (rt)
   {
@@ -1411,16 +1038,20 @@ std::unique_ptr<GPUFramebuffer> D3D11Device::CreateFramebuffer(GPUTexture* rt, u
     }
   }
 
-  return std::unique_ptr<GPUFramebuffer>(new D3D11Framebuffer(std::move(rtv), std::move(dsv)));
+  return std::unique_ptr<GPUFramebuffer>(
+    new D3D11Framebuffer(rt, ds, rt ? rt->GetMipWidth(rt_level) : ds->GetMipWidth(ds_level),
+                         rt ? rt->GetMipHeight(rt_level) : ds->GetMipHeight(ds_level), std::move(rtv), std::move(dsv)));
 }
 
-D3D11Sampler::D3D11Sampler(ComPtr<ID3D11SamplerState> ss) : m_ss(std::move(ss)) {}
+D3D11Sampler::D3D11Sampler(ComPtr<ID3D11SamplerState> ss) : m_ss(std::move(ss))
+{
+}
 
 D3D11Sampler::~D3D11Sampler() = default;
 
 void D3D11Sampler::SetDebugName(const std::string_view& name)
 {
-  Panic("Not implemented");
+  SetD3DDebugObjectName(m_ss.Get(), name);
 }
 
 std::unique_ptr<GPUSampler> D3D11Device::CreateSampler(const GPUSampler::Config& config)
@@ -1477,7 +1108,8 @@ std::unique_ptr<GPUSampler> D3D11Device::CreateSampler(const GPUSampler::Config&
   return std::unique_ptr<GPUSampler>(new D3D11Sampler(std::move(ss)));
 }
 
-D3D11Shader::D3D11Shader(Stage stage, Microsoft::WRL::ComPtr<ID3D11DeviceChild> shader, std::vector<u8> bytecode)
+D3D11Shader::D3D11Shader(GPUShaderStage stage, Microsoft::WRL::ComPtr<ID3D11DeviceChild> shader,
+                         std::vector<u8> bytecode)
   : GPUShader(stage), m_shader(std::move(shader)), m_bytecode(std::move(bytecode))
 {
 }
@@ -1486,45 +1118,49 @@ D3D11Shader::~D3D11Shader() = default;
 
 ID3D11VertexShader* D3D11Shader::GetVertexShader() const
 {
-  DebugAssert(m_stage == Stage::Vertex);
+  DebugAssert(m_stage == GPUShaderStage::Vertex);
   return static_cast<ID3D11VertexShader*>(m_shader.Get());
 }
 
 ID3D11PixelShader* D3D11Shader::GetPixelShader() const
 {
-  DebugAssert(m_stage == Stage::Pixel);
+  DebugAssert(m_stage == GPUShaderStage::Fragment);
   return static_cast<ID3D11PixelShader*>(m_shader.Get());
 }
 
 ID3D11ComputeShader* D3D11Shader::GetComputeShader() const
 {
-  DebugAssert(m_stage == Stage::Compute);
+  DebugAssert(m_stage == GPUShaderStage::Compute);
   return static_cast<ID3D11ComputeShader*>(m_shader.Get());
 }
 
 void D3D11Shader::SetDebugName(const std::string_view& name)
 {
-  Panic("Implement me");
+  SetD3DDebugObjectName(m_shader.Get(), name);
 }
 
-std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data)
+std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data)
 {
   ComPtr<ID3D11DeviceChild> shader;
   std::vector<u8> bytecode;
+  HRESULT hr;
   switch (stage)
   {
-    case GPUShader::Stage::Vertex:
-      shader = D3D11::ShaderCompiler::CreateVertexShader(D3D11Device::GetD3DDevice(), data.data(), data.size());
+    case GPUShaderStage::Vertex:
+      hr = m_device->CreateVertexShader(data.data(), data.size(), nullptr,
+                                        reinterpret_cast<ID3D11VertexShader**>(shader.GetAddressOf()));
       bytecode.resize(data.size());
       std::memcpy(bytecode.data(), data.data(), data.size());
       break;
 
-    case GPUShader::Stage::Pixel:
-      shader = D3D11::ShaderCompiler::CreatePixelShader(D3D11Device::GetD3DDevice(), data.data(), data.size());
+    case GPUShaderStage::Fragment:
+      hr = m_device->CreatePixelShader(data.data(), data.size(), nullptr,
+                                       reinterpret_cast<ID3D11PixelShader**>(shader.GetAddressOf()));
       break;
 
-    case GPUShader::Stage::Compute:
-      shader = D3D11::ShaderCompiler::CreateComputeShader(D3D11Device::GetD3DDevice(), data.data(), data.size());
+    case GPUShaderStage::Compute:
+      hr = m_device->CreateComputeShader(data.data(), data.size(), nullptr,
+                                         reinterpret_cast<ID3D11ComputeShader**>(shader.GetAddressOf()));
       break;
 
     default:
@@ -1538,7 +1174,7 @@ std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromBinary(GPUShader::Stage 
   return std::unique_ptr<GPUShader>(new D3D11Shader(stage, std::move(shader), std::move(bytecode)));
 }
 
-std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromSource(GPUShader::Stage stage, const std::string_view& source,
+std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
                                                                std::vector<u8>* out_binary /* = nullptr */)
 {
   // TODO: This shouldn't be dependent on build type.
@@ -1548,28 +1184,73 @@ std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromSource(GPUShader::Stage 
   constexpr bool debug = false;
 #endif
 
-  ComPtr<ID3DBlob> blob;
-  switch (stage)
+  const char* target;
+  switch (m_device->GetFeatureLevel())
   {
-    case GPUShader::Stage::Vertex:
-      blob = D3D11::ShaderCompiler::CompileShader(D3D11::ShaderCompiler::Type::Vertex, m_device->GetFeatureLevel(),
-                                                  source, debug);
-      break;
+    case D3D_FEATURE_LEVEL_10_0:
+    {
+      static constexpr std::array<const char*, 4> targets = {{"vs_4_0", "ps_4_0", "cs_4_0"}};
+      target = targets[static_cast<int>(stage)];
+    }
+    break;
 
-    case GPUShader::Stage::Pixel:
-      blob = D3D11::ShaderCompiler::CompileShader(D3D11::ShaderCompiler::Type::Pixel, m_device->GetFeatureLevel(),
-                                                  source, debug);
-      break;
+    case D3D_FEATURE_LEVEL_10_1:
+    {
+      static constexpr std::array<const char*, 4> targets = {{"vs_4_1", "ps_4_1", "cs_4_1"}};
+      target = targets[static_cast<int>(stage)];
+    }
+    break;
 
-    case GPUShader::Stage::Compute:
-      blob = D3D11::ShaderCompiler::CompileShader(D3D11::ShaderCompiler::Type::Compute, m_device->GetFeatureLevel(),
-                                                  source, debug);
-      break;
+    case D3D_FEATURE_LEVEL_11_0:
+    {
+      static constexpr std::array<const char*, 4> targets = {{"vs_5_0", "ps_5_0", "cs_5_0"}};
+      target = targets[static_cast<int>(stage)];
+    }
+    break;
 
+    case D3D_FEATURE_LEVEL_11_1:
     default:
-      UnreachableCode();
-      break;
+    {
+      static constexpr std::array<const char*, 4> targets = {{"vs_5_1", "ps_5_1", "cs_5_1"}};
+      target = targets[static_cast<int>(stage)];
+    }
+    break;
   }
+
+  static constexpr UINT flags_non_debug = D3DCOMPILE_OPTIMIZATION_LEVEL3;
+  static constexpr UINT flags_debug = D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_DEBUG;
+
+  ComPtr<ID3DBlob> blob;
+  ComPtr<ID3DBlob> error_blob;
+  const HRESULT hr =
+    D3DCompile(source.data(), source.size(), "0", nullptr, nullptr, "main", target,
+               debug ? flags_debug : flags_non_debug, 0, blob.GetAddressOf(), error_blob.GetAddressOf());
+
+  std::string error_string;
+  if (error_blob)
+  {
+    error_string.append(static_cast<const char*>(error_blob->GetBufferPointer()), error_blob->GetBufferSize());
+    error_blob.Reset();
+  }
+
+  if (FAILED(hr))
+  {
+    Log_ErrorPrintf("Failed to compile '%s':\n%s", target, error_string.c_str());
+
+    auto fp = FileSystem::OpenManagedCFile(
+      Path::Combine(EmuFolders::DataRoot, fmt::format("bad_shader_{}.txt", s_next_bad_shader_id++)).c_str(), "wb");
+    if (fp)
+    {
+      std::fwrite(source.data(), source.size(), 1, fp.get());
+      std::fprintf(fp.get(), "\n\nCompile as %s failed: %08X\n", target, hr);
+      std::fwrite(error_string.c_str(), error_string.size(), 1, fp.get());
+    }
+
+    return {};
+  }
+
+  if (!error_string.empty())
+    Log_WarningPrintf("'%s' compiled with warnings:\n%s", target, error_string.c_str());
 
   if (out_binary)
   {
@@ -1594,11 +1275,12 @@ D3D11Pipeline::~D3D11Pipeline() = default;
 
 void D3D11Pipeline::SetDebugName(const std::string_view& name)
 {
-  UnreachableCode();
+  // can't label this directly
 }
 
 void D3D11Pipeline::Bind(ID3D11DeviceContext* context)
 {
+  // TODO: constant blend factor
   context->IASetInputLayout(GetInputLayout());
   context->IASetPrimitiveTopology(GetPrimitiveTopology());
   context->RSSetState(GetRasterizerState());
@@ -1686,18 +1368,20 @@ D3D11Device::ComPtr<ID3D11BlendState> D3D11Device::GetBlendState(const GPUPipeli
   }
 
   static constexpr std::array<D3D11_BLEND, static_cast<u32>(GPUPipeline::BlendFunc::MaxCount)> blend_mapping = {{
-    D3D11_BLEND_ZERO,           // Zero
-    D3D11_BLEND_ONE,            // One
-    D3D11_BLEND_SRC_COLOR,      // SrcColor
-    D3D11_BLEND_INV_SRC_COLOR,  // InvSrcColor
-    D3D11_BLEND_DEST_COLOR,     // DstColor
-    D3D11_BLEND_INV_DEST_COLOR, // InvDstColor
-    D3D11_BLEND_SRC_ALPHA,      // SrcAlpha
-    D3D11_BLEND_INV_SRC_ALPHA,  // InvSrcAlpha
-    D3D11_BLEND_SRC1_ALPHA,     // SrcAlpha1
-    D3D11_BLEND_INV_SRC1_ALPHA, // InvSrcAlpha1
-    D3D11_BLEND_DEST_ALPHA,     // DstAlpha
-    D3D11_BLEND_INV_DEST_ALPHA, // InvDstAlpha
+    D3D11_BLEND_ZERO,             // Zero
+    D3D11_BLEND_ONE,              // One
+    D3D11_BLEND_SRC_COLOR,        // SrcColor
+    D3D11_BLEND_INV_SRC_COLOR,    // InvSrcColor
+    D3D11_BLEND_DEST_COLOR,       // DstColor
+    D3D11_BLEND_INV_DEST_COLOR,   // InvDstColor
+    D3D11_BLEND_SRC_ALPHA,        // SrcAlpha
+    D3D11_BLEND_INV_SRC_ALPHA,    // InvSrcAlpha
+    D3D11_BLEND_SRC1_ALPHA,       // SrcAlpha1
+    D3D11_BLEND_INV_SRC1_ALPHA,   // InvSrcAlpha1
+    D3D11_BLEND_DEST_ALPHA,       // DstAlpha
+    D3D11_BLEND_INV_DEST_ALPHA,   // InvDstAlpha
+    D3D11_BLEND_BLEND_FACTOR,     // ConstantColor
+    D3D11_BLEND_INV_BLEND_FACTOR, // InvConstantColor
   }};
 
   static constexpr std::array<D3D11_BLEND_OP, static_cast<u32>(GPUPipeline::BlendOp::MaxCount)> op_mapping = {{
@@ -1741,12 +1425,11 @@ D3D11Device::ComPtr<ID3D11InputLayout> D3D11Device::GetInputLayout(const GPUPipe
     return dil;
   }
 
-  static constexpr std::array<const char*, static_cast<u32>(GPUPipeline::VertexAttribute::Semantic::MaxCount)>
-    semantics = {{
-      "POSITION", // Position
-      "TEXCOORD", // Texcoord
-      "COLOR",    // Color
-    }};
+#if 0
+  static constexpr std::array<const char*, static_cast<u32>(GPUPipeline::VertexAttribute::MaxAttributes)> semantics = {
+    {"ATTR0", "ATTR1", "ATTR2", "ATTR3", "ATTR4", "ATTR5", "ATTR6", "ATTR7", "ATTR8", "ATTR9", "ATTR10", "ATTR11",
+     "ATTR12", "ATTR13", "ATTR14", "ATTR15"}};
+#endif
 
   static constexpr u32 MAX_COMPONENTS = 4;
   static constexpr const DXGI_FORMAT
@@ -1768,11 +1451,11 @@ D3D11Device::ComPtr<ID3D11InputLayout> D3D11Device::GetInputLayout(const GPUPipe
   for (size_t i = 0; i < il.vertex_attributes.size(); i++)
   {
     const GPUPipeline::VertexAttribute& va = il.vertex_attributes[i];
-    Assert(va.components > 0 && va.components < MAX_COMPONENTS);
+    Assert(va.components > 0 && va.components <= MAX_COMPONENTS);
 
     D3D11_INPUT_ELEMENT_DESC& elem = elems[i];
-    elem.SemanticName = semantics[static_cast<u8>(va.semantic.GetValue())];
-    elem.SemanticIndex = va.semantic_index;
+    elem.SemanticName = "ATTR";
+    elem.SemanticIndex = va.index;
     elem.Format = format_mapping[static_cast<u8>(va.type.GetValue())][va.components - 1];
     elem.InputSlot = 0;
     elem.AlignedByteOffset = va.offset;
@@ -1794,6 +1477,16 @@ std::unique_ptr<GPUPipeline> D3D11Device::CreatePipeline(const GPUPipeline::Grap
   ComPtr<ID3D11RasterizerState> rs = GetRasterizationState(config.rasterization);
   ComPtr<ID3D11DepthStencilState> ds = GetDepthState(config.depth);
   ComPtr<ID3D11BlendState> bs = GetBlendState(config.blend);
+  if (!rs || !ds || !bs)
+    return {};
+
+  ComPtr<ID3D11InputLayout> il;
+  if (!config.input_layout.vertex_attributes.empty())
+  {
+    il = GetInputLayout(config.input_layout, static_cast<const D3D11Shader*>(config.vertex_shader));
+    if (!il)
+      return {};
+  }
 
   static constexpr std::array<D3D11_PRIMITIVE_TOPOLOGY, static_cast<u32>(GPUPipeline::Primitive::MaxCount)> primitives =
     {{
@@ -1804,8 +1497,390 @@ std::unique_ptr<GPUPipeline> D3D11Device::CreatePipeline(const GPUPipeline::Grap
     }};
 
   return std::unique_ptr<GPUPipeline>(
-    new D3D11Pipeline(std::move(rs), std::move(ds), std::move(bs), nullptr,
+    new D3D11Pipeline(std::move(rs), std::move(ds), std::move(bs), std::move(il),
                       static_cast<const D3D11Shader*>(config.vertex_shader)->GetVertexShader(),
                       static_cast<const D3D11Shader*>(config.pixel_shader)->GetPixelShader(),
                       primitives[static_cast<u8>(config.primitive)]));
 }
+
+void D3D11Device::PushDebugGroup(const char* fmt, ...)
+{
+  if (!m_annotation)
+    return;
+
+  std::va_list ap;
+  va_start(ap, fmt);
+  std::string str(StringUtil::StdStringFromFormatV(fmt, ap));
+  va_end(ap);
+
+  m_annotation->BeginEvent(StringUtil::UTF8StringToWideString(str).c_str());
+}
+
+void D3D11Device::PopDebugGroup()
+{
+  if (!m_annotation)
+    return;
+
+  m_annotation->EndEvent();
+}
+
+void D3D11Device::InsertDebugMessage(const char* fmt, ...)
+{
+  if (!m_annotation)
+    return;
+
+  std::va_list ap;
+  va_start(ap, fmt);
+  std::string str(StringUtil::StdStringFromFormatV(fmt, ap));
+  va_end(ap);
+
+  m_annotation->SetMarker(StringUtil::UTF8StringToWideString(str).c_str());
+}
+
+void D3D11Device::MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space,
+                                  u32* map_base_vertex)
+{
+  const auto res = m_vertex_buffer.Map(m_context.Get(), vertex_size, vertex_size * vertex_count);
+  *map_ptr = res.pointer;
+  *map_space = res.space_aligned;
+  *map_base_vertex = res.index_aligned;
+}
+
+void D3D11Device::UnmapVertexBuffer(u32 vertex_size, u32 vertex_count)
+{
+  m_vertex_buffer.Unmap(m_context.Get(), vertex_size * vertex_count);
+
+  // TODO: cache - should come from pipeline
+  const UINT offset = 0;
+  m_context->IASetVertexBuffers(0, 1, m_vertex_buffer.GetD3DBufferArray(), &vertex_size, &offset);
+}
+
+void D3D11Device::MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index)
+{
+  const auto res = m_index_buffer.Map(m_context.Get(), sizeof(DrawIndex), sizeof(DrawIndex) * index_count);
+  *map_ptr = static_cast<DrawIndex*>(res.pointer);
+  *map_space = res.space_aligned;
+  *map_base_index = res.index_aligned;
+}
+
+void D3D11Device::UnmapIndexBuffer(u32 used_index_count)
+{
+  m_index_buffer.Unmap(m_context.Get(), sizeof(DrawIndex) * used_index_count);
+  m_context->IASetIndexBuffer(m_index_buffer.GetD3DBuffer(), DXGI_FORMAT_R16_UINT, 0);
+}
+
+void D3D11Device::PushUniformBuffer(const void* data, u32 data_size)
+{
+  Assert(data_size <= PUSH_UNIFORM_BUFFER_SIZE);
+
+  const auto res = m_push_uniform_buffer.Map(m_context.Get(), PUSH_UNIFORM_BUFFER_SIZE, PUSH_UNIFORM_BUFFER_SIZE);
+  std::memcpy(res.pointer, data, data_size);
+  m_push_uniform_buffer.Unmap(m_context.Get(), data_size);
+
+  m_context->VSSetConstantBuffers(0, 1, m_push_uniform_buffer.GetD3DBufferArray());
+  m_context->PSSetConstantBuffers(0, 1, m_push_uniform_buffer.GetD3DBufferArray());
+}
+
+void D3D11Device::SetFramebuffer(GPUFramebuffer* fb)
+{
+  D3D11Framebuffer* FB = static_cast<D3D11Framebuffer*>(fb);
+  m_context->OMSetRenderTargets(FB->GetNumRTVs(), FB->GetRTVArray(), FB->GetDSV());
+}
+
+void D3D11Device::UnbindFramebuffer(D3D11Framebuffer* fb)
+{
+  if (m_current_framebuffer != fb)
+    return;
+
+  m_current_framebuffer = nullptr;
+  m_context->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+void D3D11Device::SetPipeline(GPUPipeline* pipeline)
+{
+  D3D11Pipeline* PL = static_cast<D3D11Pipeline*>(pipeline);
+
+  // TODO: cache
+  PL->Bind(m_context.Get());
+}
+
+void D3D11Device::UnbindPipeline(D3D11Pipeline* pl)
+{
+  if (m_current_pipeline != pl)
+    return;
+
+  m_current_pipeline = nullptr;
+}
+
+void D3D11Device::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler)
+{
+  // TODO: cache when old rt == tex
+  D3D11Texture* T = static_cast<D3D11Texture*>(texture);
+  D3D11Sampler* S = static_cast<D3D11Sampler*>(sampler);
+  m_context->PSSetShaderResources(0, 1, T->GetD3DSRVArray());
+  m_context->PSSetSamplers(0, 1, S->GetSamplerStateArray());
+}
+
+void D3D11Device::UnbindTexture(D3D11Texture* tex)
+{
+  // TODO
+}
+
+void D3D11Device::SetViewport(s32 x, s32 y, s32 width, s32 height)
+{
+  const CD3D11_VIEWPORT vp(static_cast<float>(x), static_cast<float>(y), static_cast<float>(width),
+                           static_cast<float>(height), 0.0f, 1.0f);
+  m_context->RSSetViewports(1, &vp);
+}
+
+void D3D11Device::SetScissor(s32 x, s32 y, s32 width, s32 height)
+{
+  const CD3D11_RECT rc(x, y, x + width, y + height);
+  m_context->RSSetScissorRects(1, &rc);
+}
+
+void D3D11Device::PreDrawCheck()
+{
+  if (m_current_framebuffer)
+    m_current_framebuffer->CommitClear(m_context.Get());
+}
+
+void D3D11Device::Draw(u32 vertex_count, u32 base_vertex)
+{
+  PreDrawCheck();
+  m_context->Draw(vertex_count, base_vertex);
+}
+
+void D3D11Device::DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex)
+{
+  PreDrawCheck();
+  m_context->DrawIndexed(index_count, base_index, base_vertex);
+}
+
+#if 0
+  struct PostProcessingStage
+  {
+    ComPtr<ID3D11VertexShader> vertex_shader;
+    ComPtr<ID3D11PixelShader> pixel_shader;
+    D3D11Texture output_texture;
+    u32 uniforms_size;
+  };
+
+  bool CheckPostProcessingRenderTargets(u32 target_width, u32 target_height);
+  void ApplyPostProcessingChain(ID3D11RenderTargetView* final_target, s32 final_left, s32 final_top, s32 final_width,
+                                s32 final_height, D3D11Texture* texture, s32 texture_view_x, s32 texture_view_y,
+                                s32 texture_view_width, s32 texture_view_height, u32 target_width, u32 target_height);
+  FrontendCommon::PostProcessingChain m_post_processing_chain;
+  D3D11Texture m_post_processing_input_texture;
+  std::vector<PostProcessingStage> m_post_processing_stages;
+  Common::Timer m_post_processing_timer;
+
+  bool D3D11Device::SetPostProcessingChain(const std::string_view& config)
+{
+  if (config.empty())
+  {
+    m_post_processing_input_texture.Destroy();
+    m_post_processing_stages.clear();
+    m_post_processing_chain.ClearStages();
+    return true;
+  }
+
+  if (!m_post_processing_chain.CreateFromString(config))
+    return false;
+
+  m_post_processing_stages.clear();
+
+  D3D11::ShaderCache shader_cache;
+  shader_cache.Open(EmuFolders::Cache, m_device->GetFeatureLevel(), SHADER_CACHE_VERSION,
+                    g_settings.gpu_use_debug_device);
+
+  FrontendCommon::PostProcessingShaderGen shadergen(RenderAPI::D3D11, true);
+  u32 max_ubo_size = 0;
+
+  for (u32 i = 0; i < m_post_processing_chain.GetStageCount(); i++)
+  {
+    const FrontendCommon::PostProcessingShader& shader = m_post_processing_chain.GetShaderStage(i);
+    const std::string vs = shadergen.GeneratePostProcessingVertexShader(shader);
+    const std::string ps = shadergen.GeneratePostProcessingFragmentShader(shader);
+
+    PostProcessingStage stage;
+    stage.uniforms_size = shader.GetUniformsSize();
+    stage.vertex_shader = shader_cache.GetVertexShader(m_device.Get(), vs);
+    stage.pixel_shader = shader_cache.GetPixelShader(m_device.Get(), ps);
+    if (!stage.vertex_shader || !stage.pixel_shader)
+    {
+      Log_ErrorPrintf("Failed to compile one or more post-processing shaders, disabling.");
+      m_post_processing_stages.clear();
+      m_post_processing_chain.ClearStages();
+      return false;
+    }
+
+    max_ubo_size = std::max(max_ubo_size, stage.uniforms_size);
+    m_post_processing_stages.push_back(std::move(stage));
+  }
+
+  if (m_push_uniform_buffer.GetSize() < max_ubo_size &&
+      !m_push_uniform_buffer.Create(m_device.Get(), D3D11_BIND_CONSTANT_BUFFER, max_ubo_size))
+  {
+    Log_ErrorPrintf("Failed to allocate %u byte constant buffer for postprocessing", max_ubo_size);
+    m_post_processing_stages.clear();
+    m_post_processing_chain.ClearStages();
+    return false;
+  }
+
+  m_post_processing_timer.Reset();
+  return true;
+}
+
+bool D3D11Device::CheckPostProcessingRenderTargets(u32 target_width, u32 target_height)
+{
+  DebugAssert(!m_post_processing_stages.empty());
+
+  const GPUTexture::Type type = GPUTexture::Type::RenderTarget;
+  const GPUTexture::Format format = GPUTexture::Format::RGBA8;
+
+  if (m_post_processing_input_texture.GetWidth() != target_width ||
+      m_post_processing_input_texture.GetHeight() != target_height)
+  {
+    if (!m_post_processing_input_texture.Create(m_device.Get(), target_width, target_height, 1, 1, 1, type, format))
+      return false;
+  }
+
+  const u32 target_count = (static_cast<u32>(m_post_processing_stages.size()) - 1);
+  for (u32 i = 0; i < target_count; i++)
+  {
+    PostProcessingStage& pps = m_post_processing_stages[i];
+    if (pps.output_texture.GetWidth() != target_width || pps.output_texture.GetHeight() != target_height)
+    {
+      if (!pps.output_texture.Create(m_device.Get(), target_width, target_height, 1, 1, 1, type, format))
+        return false;
+    }
+  }
+
+  return true;
+}
+
+void D3D11Device::ApplyPostProcessingChain(ID3D11RenderTargetView* final_target, s32 final_left, s32 final_top,
+                                           s32 final_width, s32 final_height, D3D11Texture* texture, s32 texture_view_x,
+                                           s32 texture_view_y, s32 texture_view_width, s32 texture_view_height,
+                                           u32 target_width, u32 target_height)
+{
+  if (!CheckPostProcessingRenderTargets(target_width, target_height))
+  {
+    RenderDisplay(final_left, final_top, final_width, final_height, texture, texture_view_x, texture_view_y,
+                  texture_view_width, texture_view_height, IsUsingLinearFiltering());
+    return;
+  }
+
+  // downsample/upsample - use same viewport for remainder
+  m_context->ClearRenderTargetView(m_post_processing_input_texture.GetD3DRTV(), s_clear_color.data());
+  m_context->OMSetRenderTargets(1, m_post_processing_input_texture.GetD3DRTVArray(), nullptr);
+  RenderDisplay(final_left, final_top, final_width, final_height, texture, texture_view_x, texture_view_y,
+                texture_view_width, texture_view_height, IsUsingLinearFiltering());
+
+  const s32 orig_texture_width = texture_view_width;
+  const s32 orig_texture_height = texture_view_height;
+  texture = &m_post_processing_input_texture;
+  texture_view_x = final_left;
+  texture_view_y = final_top;
+  texture_view_width = final_width;
+  texture_view_height = final_height;
+
+  const u32 final_stage = static_cast<u32>(m_post_processing_stages.size()) - 1u;
+  for (u32 i = 0; i < static_cast<u32>(m_post_processing_stages.size()); i++)
+  {
+    PostProcessingStage& pps = m_post_processing_stages[i];
+    ID3D11RenderTargetView* rtv = (i == final_stage) ? final_target : pps.output_texture.GetD3DRTV();
+    m_context->ClearRenderTargetView(rtv, s_clear_color.data());
+    m_context->OMSetRenderTargets(1, &rtv, nullptr);
+
+    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_context->VSSetShader(pps.vertex_shader.Get(), nullptr, 0);
+    m_context->PSSetShader(pps.pixel_shader.Get(), nullptr, 0);
+    m_context->PSSetShaderResources(0, 1, texture->GetD3DSRVArray());
+    m_context->PSSetSamplers(0, 1, m_border_sampler.GetAddressOf());
+
+    const auto map = m_push_uniform_buffer.Map(m_context.Get(), m_push_uniform_buffer.GetSize(), pps.uniforms_size);
+    m_post_processing_chain.GetShaderStage(i).FillUniformBuffer(
+      map.pointer, texture->GetWidth(), texture->GetHeight(), texture_view_x, texture_view_y, texture_view_width,
+      texture_view_height, GetWindowWidth(), GetWindowHeight(), orig_texture_width, orig_texture_height,
+      static_cast<float>(m_post_processing_timer.GetTimeSeconds()));
+    m_push_uniform_buffer.Unmap(m_context.Get(), pps.uniforms_size);
+    m_context->VSSetConstantBuffers(0, 1, m_push_uniform_buffer.GetD3DBufferArray());
+    m_context->PSSetConstantBuffers(0, 1, m_push_uniform_buffer.GetD3DBufferArray());
+
+    m_context->Draw(3, 0);
+
+    if (i != final_stage)
+      texture = &pps.output_texture;
+  }
+
+  ID3D11ShaderResourceView* null_srv = nullptr;
+  m_context->PSSetShaderResources(0, 1, &null_srv);
+}
+void D3D11Device::RenderDisplay()
+{
+  const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
+
+  if (HasDisplayTexture() && !m_post_processing_chain.IsEmpty())
+  {
+    ApplyPostProcessingChain(m_swap_chain_rtv.Get(), left, top, width, height,
+                             static_cast<D3D11Texture*>(m_display_texture), m_display_texture_view_x,
+                             m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
+                             GetWindowWidth(), GetWindowHeight());
+    return;
+  }
+
+  m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), s_clear_color.data());
+  m_context->OMSetRenderTargets(1, m_swap_chain_rtv.GetAddressOf(), nullptr);
+
+  if (!HasDisplayTexture())
+    return;
+
+  RenderDisplay(left, top, width, height, static_cast<D3D11Texture*>(m_display_texture), m_display_texture_view_x,
+                m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
+                IsUsingLinearFiltering());
+}
+bool D3D11Device::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect,
+                                   std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format)
+{
+  static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8;
+
+  D3D11Texture render_texture;
+  if (!render_texture.Create(m_device.Get(), width, height, 1, 1, 1, GPUTexture::Type::RenderTarget, hdformat))
+    return false;
+
+  static constexpr std::array<float, 4> clear_color = {};
+  m_context->ClearRenderTargetView(render_texture.GetD3DRTV(), clear_color.data());
+  m_context->OMSetRenderTargets(1, render_texture.GetD3DRTVArray(), nullptr);
+
+  if (HasDisplayTexture())
+  {
+    if (!m_post_processing_chain.IsEmpty())
+    {
+      ApplyPostProcessingChain(render_texture.GetD3DRTV(), draw_rect.left, draw_rect.top, draw_rect.GetWidth(),
+                               draw_rect.GetHeight(), static_cast<D3D11Texture*>(m_display_texture),
+                               m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
+                               m_display_texture_view_height, width, height);
+    }
+    else
+    {
+      RenderDisplay(draw_rect.left, draw_rect.top, draw_rect.GetWidth(), draw_rect.GetHeight(),
+                    static_cast<D3D11Texture*>(m_display_texture), m_display_texture_view_x, m_display_texture_view_y,
+                    m_display_texture_view_width, m_display_texture_view_height, IsUsingLinearFiltering());
+    }
+  }
+
+  m_context->OMSetRenderTargets(0, nullptr, nullptr);
+
+  const u32 stride = GPUTexture::GetPixelSize(hdformat) * width;
+  out_pixels->resize(width * height);
+  if (!DownloadTexture(&render_texture, 0, 0, width, height, out_pixels->data(), stride))
+    return false;
+
+  *out_stride = stride;
+  *out_format = hdformat;
+  return true;
+}
+
+#endif

@@ -617,56 +617,6 @@ bool D3D12GPUDevice::Render(bool skip_present)
   return true;
 }
 
-bool D3D12GPUDevice::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect,
-                                      std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format)
-{
-  static constexpr DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
-  static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8;
-
-  D3D12::Texture render_texture;
-  if (!render_texture.Create(width, height, 1, 1, 1, format, DXGI_FORMAT_UNKNOWN, format, DXGI_FORMAT_UNKNOWN,
-                             D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ||
-      !m_readback_staging_texture.EnsureSize(width, height, format, false))
-  {
-    return false;
-  }
-
-  ID3D12GraphicsCommandList* cmdlist = g_d3d12_context->GetCommandList();
-
-  if (HasDisplayTexture() && !m_post_processing_chain.IsEmpty())
-  {
-    ApplyPostProcessingChain(cmdlist, &render_texture, draw_rect.left, draw_rect.top, draw_rect.GetWidth(),
-                             draw_rect.GetHeight(), static_cast<D3D12::Texture*>(m_display_texture),
-                             m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
-                             m_display_texture_view_height, width, height);
-  }
-  else
-  {
-    render_texture.TransitionToState(D3D12_RESOURCE_STATE_RENDER_TARGET);
-    cmdlist->ClearRenderTargetView(render_texture.GetRTVOrDSVDescriptor(), s_clear_color.data(), 0, nullptr);
-    cmdlist->OMSetRenderTargets(1, &render_texture.GetRTVOrDSVDescriptor().cpu_handle, FALSE, nullptr);
-
-    if (HasDisplayTexture())
-    {
-      RenderDisplay(cmdlist, draw_rect.left, draw_rect.top, draw_rect.GetWidth(), draw_rect.GetHeight(),
-                    static_cast<D3D12::Texture*>(m_display_texture), m_display_texture_view_x, m_display_texture_view_y,
-                    m_display_texture_view_width, m_display_texture_view_height, IsUsingLinearFiltering());
-    }
-  }
-
-  cmdlist->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
-
-  render_texture.TransitionToState(D3D12_RESOURCE_STATE_COPY_SOURCE);
-  m_readback_staging_texture.CopyFromTexture(render_texture, 0, 0, 0, 0, 0, width, height);
-
-  const u32 stride = sizeof(u32) * width;
-  out_pixels->resize(width * height);
-  *out_stride = stride;
-  *out_format = hdformat;
-
-  return m_readback_staging_texture.ReadPixels(0, 0, width, height, out_pixels->data(), stride);
-}
-
 bool D3D12GPUDevice::SetGPUTimingEnabled(bool enabled)
 {
   g_d3d12_context->SetEnableGPUTiming(enabled);

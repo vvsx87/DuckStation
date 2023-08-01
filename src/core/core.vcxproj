@@ -76,6 +76,7 @@
     <ClCompile Include="gpu\postprocessing_chain.cpp" />
     <ClCompile Include="gpu\postprocessing_shader.cpp" />
     <ClCompile Include="gpu\postprocessing_shadergen.cpp" />
+    <ClCompile Include="gpu\gpu_shader_cache.cpp" />
     <ClCompile Include="gpu\vulkan\builders.cpp" />
     <ClCompile Include="gpu\vulkan\context.cpp" />
     <ClCompile Include="gpu\vulkan\loader.cpp" />
@@ -205,6 +206,7 @@
     <ClInclude Include="gpu\postprocessing_chain.h" />
     <ClInclude Include="gpu\postprocessing_shader.h" />
     <ClInclude Include="gpu\postprocessing_shadergen.h" />
+    <ClInclude Include="gpu\gpu_shader_cache.h" />
     <ClInclude Include="gpu\vulkan\builders.h" />
     <ClInclude Include="gpu\vulkan\context.h" />
     <ClInclude Include="gpu\vulkan\entry_points.h" />

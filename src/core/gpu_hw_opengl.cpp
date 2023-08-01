@@ -341,9 +341,9 @@ bool GPU_HW_OpenGL::CreateFramebuffer()
       !m_vram_read_texture.Create(texture_width, texture_height, 1, 1, 1, GPUTexture::Format::RGBA8, nullptr, 0, false,
                                   true) ||
       !m_vram_read_texture.CreateFramebuffer() ||
-      !m_vram_encoding_texture.Create(VRAM_WIDTH, VRAM_HEIGHT, 1, 1, 1, GPUTexture::Format::RGBA8, nullptr, 0, false,
+      !m_vram_readback_texture.Create(VRAM_WIDTH, VRAM_HEIGHT, 1, 1, 1, GPUTexture::Format::RGBA8, nullptr, 0, false,
                                       true) ||
-      !m_vram_encoding_texture.CreateFramebuffer() ||
+      !m_vram_readback_texture.CreateFramebuffer() ||
       !m_display_texture.Create(GPU_MAX_DISPLAY_WIDTH * m_resolution_scale, GPU_MAX_DISPLAY_HEIGHT * m_resolution_scale,
                                 1, 1, 1, GPUTexture::Format::RGBA8, nullptr, 0, true, true) ||
       !m_display_texture.CreateFramebuffer())
@@ -918,7 +918,7 @@ void GPU_HW_OpenGL::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
 
   // Encode the 24-bit texture as 16-bit.
   const u32 uniforms[4] = {copy_rect.left, copy_rect.top, copy_rect.GetWidth(), copy_rect.GetHeight()};
-  m_vram_encoding_texture.BindFramebuffer(GL_DRAW_FRAMEBUFFER);
+  m_vram_readback_texture.BindFramebuffer(GL_DRAW_FRAMEBUFFER);
   m_vram_texture.Bind();
   m_vram_read_program.Bind();
   UploadUniformBuffer(uniforms, sizeof(uniforms));
@@ -929,7 +929,7 @@ void GPU_HW_OpenGL::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
   glDrawArrays(GL_TRIANGLES, 0, 3);
 
   // Readback encoded texture.
-  m_vram_encoding_texture.BindFramebuffer(GL_READ_FRAMEBUFFER);
+  m_vram_readback_texture.BindFramebuffer(GL_READ_FRAMEBUFFER);
   glPixelStorei(GL_PACK_ALIGNMENT, 2);
   glPixelStorei(GL_PACK_ROW_LENGTH, VRAM_WIDTH / 2);
   glReadPixels(0, 0, encoded_width, encoded_height, GL_RGBA, GL_UNSIGNED_BYTE,
@@ -1064,7 +1064,7 @@ void GPU_HW_OpenGL::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* 
 
     // have to write to the 1x texture first
     if (m_resolution_scale > 1)
-      m_vram_encoding_texture.Bind();
+      m_vram_readback_texture.Bind();
     else
       m_vram_texture.Bind();
 
@@ -1081,7 +1081,7 @@ void GPU_HW_OpenGL::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* 
       const u32 scaled_x = x * m_resolution_scale;
       const u32 scaled_y = y * m_resolution_scale;
       glDisable(GL_SCISSOR_TEST);
-      m_vram_encoding_texture.BindFramebuffer(GL_READ_FRAMEBUFFER);
+      m_vram_readback_texture.BindFramebuffer(GL_READ_FRAMEBUFFER);
       glBlitFramebuffer(x, y, x + width, y + height, scaled_x, scaled_y, scaled_x + scaled_width,
                         scaled_y + scaled_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
       glEnable(GL_SCISSOR_TEST);

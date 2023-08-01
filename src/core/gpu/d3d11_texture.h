@@ -7,8 +7,12 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+class D3D11Device;
+
 class D3D11Texture final : public GPUTexture
 {
+  friend D3D11Device;
+
 public:
   template<typename T>
   using ComPtr = Microsoft::WRL::ComPtr<T>;

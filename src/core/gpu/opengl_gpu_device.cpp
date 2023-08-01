@@ -684,49 +684,6 @@ bool OpenGLGPUDevice::Render(bool skip_present)
   return true;
 }
 
-bool OpenGLGPUDevice::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect,
-                                       std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format)
-{
-  GL::Texture texture;
-  if (!texture.Create(width, height, 1, 1, 1, GPUTexture::Format::RGBA8, nullptr, 0) || !texture.CreateFramebuffer())
-  {
-    return false;
-  }
-
-  glDisable(GL_SCISSOR_TEST);
-  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-
-  if (HasDisplayTexture() && !m_post_processing_chain.IsEmpty())
-  {
-    ApplyPostProcessingChain(texture.GetGLFramebufferID(), draw_rect.left,
-                             height - draw_rect.top - draw_rect.GetHeight(), draw_rect.GetWidth(),
-                             draw_rect.GetHeight(), static_cast<GL::Texture*>(m_display_texture),
-                             m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
-                             m_display_texture_view_height, width, height);
-  }
-  else
-  {
-    texture.BindFramebuffer(GL_FRAMEBUFFER);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    if (HasDisplayTexture())
-    {
-      RenderDisplay(draw_rect.left, height - draw_rect.top - draw_rect.GetHeight(), draw_rect.GetWidth(),
-                    draw_rect.GetHeight(), static_cast<GL::Texture*>(m_display_texture), m_display_texture_view_x,
-                    m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
-                    IsUsingLinearFiltering());
-    }
-  }
-
-  out_pixels->resize(width * height);
-  *out_stride = sizeof(u32) * width;
-  *out_format = GPUTexture::Format::RGBA8;
-  glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, out_pixels->data());
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-  return true;
-}
-
 void OpenGLGPUDevice::RenderImGui()
 {
   ImGui::Render();

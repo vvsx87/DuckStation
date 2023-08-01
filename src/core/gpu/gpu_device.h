@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "gpu_shader_cache.h"
 #include "gpu_texture.h"
 
 #include "common/bitfield.h"
@@ -31,10 +32,22 @@ enum class RenderAPI : u32
 class GPUFramebuffer
 {
 public:
-  GPUFramebuffer() = default;
-  virtual ~GPUFramebuffer() = default;
+  GPUFramebuffer(GPUTexture* rt, GPUTexture* ds, u32 width, u32 height);
+  virtual ~GPUFramebuffer();
+
+  ALWAYS_INLINE GPUTexture* GetRT() const { return m_rt; }
+  ALWAYS_INLINE GPUTexture* GetDS() const { return m_ds; }
+
+  ALWAYS_INLINE u32 GetWidth() const { return m_width; }
+  ALWAYS_INLINE u32 GetHeight() const { return m_height; }
 
   virtual void SetDebugName(const std::string_view& name) = 0;
+
+protected:
+  GPUTexture* m_rt;
+  GPUTexture* m_ds;
+  u32 m_width;
+  u32 m_height;
 };
 
 class GPUSampler
@@ -57,7 +70,7 @@ public:
     MaxCount
   };
 
-  struct Config
+  union Config
   {
     BitField<u64, Filter, 0, 1> min_filter;
     BitField<u64, Filter, 1, 1> mag_filter;
@@ -72,31 +85,33 @@ public:
     u64 key;
   };
 
-  GPUSampler() = default;
-  virtual ~GPUSampler() = default;
+  GPUSampler();
+  virtual ~GPUSampler();
 
   virtual void SetDebugName(const std::string_view& name) = 0;
+};
+
+enum class GPUShaderStage : u8
+{
+  Vertex,
+  Fragment,
+  Compute
 };
 
 class GPUShader
 {
 public:
-  enum class Stage
-  {
-    Vertex,
-    Pixel,
-    Compute
-  };
+  GPUShader(GPUShaderStage stage);
+  virtual ~GPUShader();
 
-  GPUShader(Stage stage) : m_stage(stage) {}
-  virtual ~GPUShader() = default;
+  static const char* GetStageName(GPUShaderStage stage);
 
-  ALWAYS_INLINE Stage GetStage() const { return m_stage; }
+  ALWAYS_INLINE GPUShaderStage GetStage() const { return m_stage; }
 
   virtual void SetDebugName(const std::string_view& name) = 0;
 
 protected:
-  Stage m_stage;
+  GPUShaderStage m_stage;
 };
 
 class GPUPipeline
@@ -106,6 +121,9 @@ public:
   {
     // 128 byte UBO via push constants, 1 texture.
     SingleTexture,
+
+    // 1 streamed UBO, 1 texture in PS.
+    HWBatch,
 
     MaxCount
   };
@@ -122,14 +140,7 @@ public:
 
   union VertexAttribute
   {
-    enum class Semantic : u8
-    {
-      Position,
-      Texcoord,
-      Color,
-
-      MaxCount
-    };
+    static constexpr u32 MaxAttributes = 16;
 
     enum class Type : u8
     {
@@ -146,11 +157,10 @@ public:
       MaxCount
     };
 
-    BitField<u32, Semantic, 0, 3> semantic;
-    BitField<u32, u8, 4, 8> semantic_index;
-    BitField<u32, Type, 12, 4> type;
-    BitField<u32, u8, 16, 3> components;
-    BitField<u32, u8, 19, 8> offset;
+    BitField<u32, u8, 0, 4> index;
+    BitField<u32, Type, 4, 4> type;
+    BitField<u32, u8, 8, 3> components;
+    BitField<u32, u16, 16, 16> offset;
     u32 key;
 
     // clang-format off
@@ -160,20 +170,18 @@ public:
     ALWAYS_INLINE bool operator<(const VertexAttribute& rhs) const { return key < rhs.key; }
     // clang-format on
 
-    static constexpr VertexAttribute Make(Semantic semantic, u8 semantic_index, Type type, u8 components, u8 offset)
+    static constexpr VertexAttribute Make(u8 index, Type type, u8 components, u8 offset)
     {
       VertexAttribute ret = {};
 #if 0
-      ret.semantic = semantic;
-      ret.semantic_index = semantic_index;
+      ret.index = index;
       ret.type = type;
       ret.components = components;
       ret.offset = offset;
 #else
       // Nasty :/ can't access an inactive element of a union here..
-      ret.key = (static_cast<u32>(semantic) & 0x7) | ((static_cast<u32>(semantic_index) & 0xff) << 4) |
-                ((static_cast<u32>(type) & 0xf) << 12) | ((static_cast<u32>(components) & 0x7) << 16) |
-                ((static_cast<u32>(offset) & 0xff) << 19);
+      ret.key = (static_cast<u32>(index) & 0xf) | ((static_cast<u32>(type) & 0xf) << 4) |
+                ((static_cast<u32>(components) & 0x7) << 8) | ((static_cast<u32>(offset) & 0xffff) << 16);
 #endif
       return ret;
     }
@@ -229,6 +237,8 @@ public:
     InvSrcAlpha1,
     DstAlpha,
     InvDstAlpha,
+    ConstantColor,
+    InvConstantColor,
 
     MaxCount
   };
@@ -259,7 +269,7 @@ public:
     static RasterizationState GetNoCullState();
   };
 
-  struct DepthState
+  union DepthState
   {
     BitField<u8, DepthFunc, 0, 3> depth_test;
     BitField<u8, bool, 4, 1> depth_write;
@@ -276,21 +286,22 @@ public:
     static DepthState GetAlwaysWriteState();
   };
 
-  struct BlendState
+  union BlendState
   {
-    BitField<u32, bool, 0, 1> enable;
-    BitField<u32, BlendFunc, 1, 4> src_blend;
-    BitField<u32, BlendFunc, 5, 4> src_alpha_blend;
-    BitField<u32, BlendFunc, 9, 4> dst_blend;
-    BitField<u32, BlendFunc, 13, 4> dst_alpha_blend;
-    BitField<u32, BlendOp, 17, 3> blend_op;
-    BitField<u32, BlendOp, 20, 3> alpha_blend_op;
-    BitField<u32, bool, 24, 1> write_r;
-    BitField<u32, bool, 25, 1> write_g;
-    BitField<u32, bool, 26, 1> write_b;
-    BitField<u32, bool, 27, 1> write_a;
-    BitField<u32, u8, 24, 4> write_mask;
-    u32 key;
+    BitField<u64, bool, 0, 1> enable;
+    BitField<u64, BlendFunc, 1, 4> src_blend;
+    BitField<u64, BlendFunc, 5, 4> src_alpha_blend;
+    BitField<u64, BlendFunc, 9, 4> dst_blend;
+    BitField<u64, BlendFunc, 13, 4> dst_alpha_blend;
+    BitField<u64, BlendOp, 17, 3> blend_op;
+    BitField<u64, BlendOp, 20, 3> alpha_blend_op;
+    BitField<u64, bool, 24, 1> write_r;
+    BitField<u64, bool, 25, 1> write_g;
+    BitField<u64, bool, 26, 1> write_b;
+    BitField<u64, bool, 27, 1> write_a;
+    BitField<u64, u8, 24, 4> write_mask;
+    BitField<u64, u32, 32, 32> constant;
+    u64 key;
 
     // clang-format off
     ALWAYS_INLINE BlendState& operator=(const BlendState& rhs) { key = rhs.key; return *this; }
@@ -323,8 +334,8 @@ public:
     bool per_sample_shading;
   };
 
-  GPUPipeline() = default;
-  virtual ~GPUPipeline() = default;
+  GPUPipeline();
+  virtual ~GPUPipeline();
 
   virtual void SetDebugName(const std::string_view& name) = 0;
 };
@@ -332,6 +343,9 @@ public:
 class GPUDevice
 {
 public:
+  // TODO: drop virtuals
+  using DrawIndex = u16;
+
   struct AdapterAndModeList
   {
     std::vector<std::string> adapter_names;
@@ -353,6 +367,9 @@ public:
   ALWAYS_INLINE s32 GetWindowWidth() const { return static_cast<s32>(m_window_info.surface_width); }
   ALWAYS_INLINE s32 GetWindowHeight() const { return static_cast<s32>(m_window_info.surface_height); }
   ALWAYS_INLINE float GetWindowScale() const { return m_window_info.surface_scale; }
+
+  ALWAYS_INLINE GPUSampler* GetLinearSampler() const { return m_linear_sampler.get(); }
+  ALWAYS_INLINE GPUSampler* GetPointSampler() const { return m_point_sampler.get(); }
 
   // Position is relative to the top-left corner of the window.
   ALWAYS_INLINE s32 GetMousePositionX() const { return m_mouse_position_x; }
@@ -377,7 +394,7 @@ public:
   virtual bool HasSurface() const = 0;
 
   virtual bool CreateDevice(const WindowInfo& wi, bool vsync) = 0;
-  virtual bool SetupDevice() = 0;
+  virtual bool SetupDevice();
   virtual bool MakeCurrent() = 0;
   virtual bool DoneCurrent() = 0;
   virtual void DestroySurface() = 0;
@@ -389,34 +406,12 @@ public:
   virtual bool CreateResources();
   virtual void DestroyResources();
 
-  virtual bool SetPostProcessingChain(const std::string_view& config) = 0;
+  virtual bool SetPostProcessingChain(const std::string_view& config);
+
+  virtual std::string GetShaderCacheBaseName(const std::string_view& type, bool debug) const;
 
   /// Call when the window size changes externally to recreate any resources.
   virtual void ResizeWindow(s32 new_window_width, s32 new_window_height) = 0;
-
-  /// Vertex/index buffer abstraction.
-  virtual void MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space, u32* map_base_vertex);
-  virtual void UnmapVertexBuffer(u32 used_vertex_count);
-  virtual void MapIndexBuffer(u32 index_count, u16** map_ptr, u32* map_space, u32* map_base_index);
-  virtual void UnmapIndexBuffer(u32 used_index_count);
-
-  void UploadVertexBuffer(const void* vertices, u32 vertex_size, u32 vertex_count, u32* base_vertex);
-  void UploadIndexBuffer(const u16* indices, u32 index_count, u32* base_index);
-
-  /// Uniform buffer abstraction.
-  virtual void PushUniformBuffer(const void* data, u32 data_size);
-
-  /// Drawing setup abstraction.
-  virtual void SetFramebuffer(GPUFramebuffer* fb);
-  virtual void SetPipeline(GPUPipeline* pipeline);
-  virtual void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler);
-  virtual void SetViewport(u32 x, u32 y, u32 width, u32 height);
-  virtual void SetScissor(u32 x, u32 y, u32 width, u32 height);
-  void SetViewportAndScissor(u32 x, u32 y, u32 width, u32 height);
-
-  // Drawing abstraction.
-  virtual void Draw(u32 base_vertex, u32 vertex_count);
-  virtual void DrawIndexed(u32 base_index, u32 index_count, u32 base_vertex);
 
   /// Creates an abstracted RGBA8 texture. If dynamic, the texture can be updated with UpdateTexture() below.
   virtual std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
@@ -432,23 +427,55 @@ public:
   virtual void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
                                     GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
                                     u32 height);
+  void ClearRenderTarget(GPUTexture* t, u32 c);
+  void ClearDepth(GPUTexture* t, float d);
+  void InvalidateRenderTarget(GPUTexture* t);
 
   /// Framebuffer abstraction.
-  virtual std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level, GPUTexture* ds,
-                                                            u32 ds_layer, u32 ds_level);
+  virtual std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt = nullptr, u32 rt_layer = 0,
+                                                            u32 rt_level = 0, GPUTexture* ds = nullptr,
+                                                            u32 ds_layer = 0, u32 ds_level = 0);
 
   /// Shader abstraction.
-  virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShader::Stage stage, gsl::span<const u8> data);
-  virtual std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShader::Stage stage, const std::string_view& source,
-                                                            std::vector<u8>* out_binary = nullptr);
+  // TODO:  entry point?
+  std::unique_ptr<GPUShader> CreateShader(GPUShaderStage stage, const std::string_view& source);
   virtual std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config);
+
+  /// Debug messaging.
+  virtual void PushDebugGroup(const char* fmt, ...);
+  virtual void PopDebugGroup();
+  virtual void InsertDebugMessage(const char* fmt, ...);
+
+  /// Vertex/index buffer abstraction.
+  virtual void MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space, u32* map_base_vertex);
+  virtual void UnmapVertexBuffer(u32 vertex_size, u32 vertex_count);
+  virtual void MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index);
+  virtual void UnmapIndexBuffer(u32 used_size);
+
+  void UploadVertexBuffer(const void* vertices, u32 vertex_size, u32 vertex_count, u32* base_vertex);
+  void UploadIndexBuffer(const DrawIndex* indices, u32 index_count, u32* base_index);
+
+  /// Uniform buffer abstraction.
+  virtual void PushUniformBuffer(const void* data, u32 data_size);
+
+  /// Drawing setup abstraction.
+  virtual void SetFramebuffer(GPUFramebuffer* fb);
+  virtual void SetPipeline(GPUPipeline* pipeline);
+  virtual void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler);
+  virtual void SetViewport(s32 x, s32 y, s32 width, s32 height);
+  virtual void SetScissor(s32 x, s32 y, s32 width, s32 height);
+  void SetViewportAndScissor(s32 x, s32 y, s32 width, s32 height);
+
+  // Drawing abstraction.
+  virtual void Draw(u32 vertex_count, u32 base_vertex);
+  virtual void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex);
 
   /// Returns false if the window was completely occluded.
   virtual bool Render(bool skip_present) = 0;
 
   /// Renders the display with postprocessing to the specified image.
-  virtual bool RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect,
-                                std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format) = 0;
+  bool RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect, std::vector<u32>* out_pixels,
+                        u32* out_stride, GPUTexture::Format* out_format);
 
   ALWAYS_INLINE bool IsVsyncEnabled() const { return m_vsync_enabled; }
   virtual void SetVSync(bool enabled) = 0;
@@ -459,47 +486,11 @@ public:
   bool ShouldSkipDisplayingFrame();
   void ThrottlePresentation();
 
-  void ClearDisplayTexture()
-  {
-    m_display_texture = nullptr;
-    m_display_texture_view_x = 0;
-    m_display_texture_view_y = 0;
-    m_display_texture_view_width = 0;
-    m_display_texture_view_height = 0;
-    m_display_changed = true;
-  }
-
-  void SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 view_width, s32 view_height)
-  {
-    m_display_texture = texture;
-    m_display_texture_view_x = view_x;
-    m_display_texture_view_y = view_y;
-    m_display_texture_view_width = view_width;
-    m_display_texture_view_height = view_height;
-    m_display_changed = true;
-  }
-
-  void SetDisplayTextureRect(s32 view_x, s32 view_y, s32 view_width, s32 view_height)
-  {
-    m_display_texture_view_x = view_x;
-    m_display_texture_view_y = view_y;
-    m_display_texture_view_width = view_width;
-    m_display_texture_view_height = view_height;
-    m_display_changed = true;
-  }
-
+  void ClearDisplayTexture();
+  void SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 view_width, s32 view_height);
+  void SetDisplayTextureRect(s32 view_x, s32 view_y, s32 view_width, s32 view_height);
   void SetDisplayParameters(s32 display_width, s32 display_height, s32 active_left, s32 active_top, s32 active_width,
-                            s32 active_height, float display_aspect_ratio)
-  {
-    m_display_width = display_width;
-    m_display_height = display_height;
-    m_display_active_left = active_left;
-    m_display_active_top = active_top;
-    m_display_active_width = active_width;
-    m_display_active_height = active_height;
-    m_display_aspect_ratio = display_aspect_ratio;
-    m_display_changed = true;
-  }
+                            s32 active_height, float display_aspect_ratio);
 
   virtual bool SupportsTextureFormat(GPUTexture::Format format) const = 0;
 
@@ -548,6 +539,10 @@ public:
   bool WriteScreenshotToFile(std::string filename, bool internal_resolution = false, bool compress_on_thread = false);
 
 protected:
+  virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data);
+  virtual std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
+                                                            std::vector<u8>* out_binary = nullptr);
+
   ALWAYS_INLINE bool HasSoftwareCursor() const { return static_cast<bool>(m_cursor_texture); }
   ALWAYS_INLINE bool HasDisplayTexture() const { return (m_display_texture != nullptr); }
 
@@ -560,13 +555,22 @@ protected:
   std::tuple<s32, s32, s32, s32> CalculateSoftwareCursorDrawRect() const;
   std::tuple<s32, s32, s32, s32> CalculateSoftwareCursorDrawRect(s32 cursor_x, s32 cursor_y) const;
 
-  bool CreateImGuiResources();
-  void DestroyImGuiResources();
+  void RenderImGui();
+
+  void RenderDisplay();
+  void RenderSoftwareCursor();
+
+  void RenderDisplay(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture, s32 texture_view_x,
+                     s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter);
+  void RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture);
 
   WindowInfo m_window_info;
 
+  GPUShaderCache m_shader_cache;
+
   std::unique_ptr<GPUSampler> m_point_sampler;
   std::unique_ptr<GPUSampler> m_linear_sampler;
+  std::unique_ptr<GPUSampler> m_border_sampler;
 
   u64 m_last_frame_displayed_time = 0;
 
@@ -582,6 +586,7 @@ protected:
   float m_display_aspect_ratio = 1.0f;
   float m_display_frame_interval = 0.0f;
 
+  std::unique_ptr<GPUPipeline> m_display_pipeline;
   GPUTexture* m_display_texture = nullptr;
   s32 m_display_texture_view_x = 0;
   s32 m_display_texture_view_y = 0;
@@ -591,6 +596,7 @@ protected:
   std::unique_ptr<GPUPipeline> m_imgui_pipeline;
   std::unique_ptr<GPUTexture> m_imgui_font_texture;
 
+  std::unique_ptr<GPUPipeline> m_cursor_pipeline;
   std::unique_ptr<GPUTexture> m_cursor_texture;
   float m_cursor_texture_scale = 1.0f;
 
@@ -622,3 +628,24 @@ void ReleaseHostDisplay();
 void RenderDisplay(bool skip_present);
 void InvalidateDisplay();
 } // namespace Host
+
+// Macros for debug messages.
+#ifdef _DEBUG
+struct GLAutoPop
+{
+  GLAutoPop(int dummy) {}
+  ~GLAutoPop() { g_host_display->PopDebugGroup(); }
+};
+
+#define GL_SCOPE(...) GLAutoPop gl_auto_pop((g_host_display->PushDebugGroup(__VA_ARGS__), 0))
+#define GL_PUSH(...) g_host_display->PushDebugGroup(__VA_ARGS__)
+#define GL_POP() g_host_display->PopDebugGroup()
+#define GL_INS(...) g_host_display->InsertDebugMessage(__VA_ARGS__)
+#define GL_OBJECT_NAME(obj, ...) (obj)->SetDebugName(StringUtil::StdStringFromFormat(__VA_ARGS__))
+#else
+#define GL_SCOPE(...) (void)0
+#define GL_PUSH(...) (void)0
+#define GL_POP() (void)0
+#define GL_INS(...) (void)0
+#define GL_OBJECT_NAME(...) (void)0
+#endif
