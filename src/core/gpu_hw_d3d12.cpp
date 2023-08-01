@@ -7,7 +7,6 @@
 #include "common/log.h"
 #include "common/scoped_guard.h"
 #include "common/timer.h"
-#include "gpu/d3d11/shader_compiler.h"
 #include "gpu/d3d12/context.h"
 #include "gpu/d3d12/descriptor_heap_manager.h"
 #include "gpu/d3d12/shader_cache.h"
@@ -214,7 +213,7 @@ void GPU_HW_D3D12::SetCapabilities()
   m_max_resolution_scale = max_texture_scale;
 
   m_max_multisamples = 1;
-  for (u32 multisamples = 2; multisamples < D3D11_MAX_MULTISAMPLE_SAMPLE_COUNT; multisamples++)
+  for (u32 multisamples = 2; multisamples < D3D12_MAX_MULTISAMPLE_SAMPLE_COUNT; multisamples++)
   {
     D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS fd = {DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(multisamples)};
 

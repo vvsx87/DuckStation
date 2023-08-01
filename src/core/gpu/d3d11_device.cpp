@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "d3d11_device.h"
@@ -7,6 +7,7 @@
 #include "../shader_cache_version.h"
 
 #include "common/assert.h"
+#include "common/align.h"
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/path.h"
@@ -25,7 +26,12 @@ Log_SetChannel(D3D11Device);
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
+static constexpr std::array<DXGI_FORMAT, static_cast<u32>(GPUTexture::Format::Count)> s_dxgi_mapping = {
+  {DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B5G6R5_UNORM,
+   DXGI_FORMAT_B5G5R5A1_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_D16_UNORM}};
+
 static constexpr std::array<float, 4> s_clear_color = {};
+
 static unsigned s_next_bad_shader_id = 1;
 
 static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view& name)
@@ -34,6 +40,109 @@ static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view
   static constexpr GUID guid = {0x429b8c22, 0x9188, 0x4b0c, 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00};
   const std::wstring wname = StringUtil::UTF8StringToWideString(name);
   obj->SetPrivateData(guid, static_cast<UINT>(wname.length()) * 2u, wname.c_str());
+}
+
+D3D11StreamBuffer::D3D11StreamBuffer() : m_size(0), m_position(0)
+{
+}
+
+D3D11StreamBuffer::D3D11StreamBuffer(ComPtr<ID3D11Buffer> buffer) : m_buffer(std::move(buffer)), m_position(0)
+{
+  D3D11_BUFFER_DESC desc;
+  m_buffer->GetDesc(&desc);
+  m_size = desc.ByteWidth;
+}
+
+D3D11StreamBuffer::~D3D11StreamBuffer()
+{
+  Release();
+}
+
+bool D3D11StreamBuffer::Create(ID3D11Device* device, D3D11_BIND_FLAG bind_flags, u32 size)
+{
+  CD3D11_BUFFER_DESC desc(size, bind_flags, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE, 0, 0);
+  ComPtr<ID3D11Buffer> buffer;
+  HRESULT hr = device->CreateBuffer(&desc, nullptr, &buffer);
+  if (FAILED(hr))
+  {
+    Log_ErrorPrintf("Creating buffer failed: 0x%08X", hr);
+    return false;
+  }
+
+  m_buffer = std::move(buffer);
+  m_size = size;
+  m_position = 0;
+
+  D3D11_FEATURE_DATA_D3D11_OPTIONS options = {};
+  hr = device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &options, sizeof(options));
+  if (SUCCEEDED(hr))
+  {
+    if (bind_flags & D3D11_BIND_CONSTANT_BUFFER)
+      m_use_map_no_overwrite = options.MapNoOverwriteOnDynamicConstantBuffer;
+    else if (bind_flags & D3D11_BIND_SHADER_RESOURCE)
+      m_use_map_no_overwrite = options.MapNoOverwriteOnDynamicBufferSRV;
+    else
+      m_use_map_no_overwrite = true;
+
+    if (!m_use_map_no_overwrite)
+    {
+      Log_WarningPrintf("Unable to use MAP_NO_OVERWRITE on buffer with bind flag %u, this may affect performance. "
+                        "Update your driver/operating system.",
+                        static_cast<unsigned>(bind_flags));
+    }
+  }
+  else
+  {
+    Log_WarningPrintf("ID3D11Device::CheckFeatureSupport() failed: 0x%08X", hr);
+    m_use_map_no_overwrite = false;
+  }
+
+  return true;
+}
+
+void D3D11StreamBuffer::Adopt(ComPtr<ID3D11Buffer> buffer)
+{
+  m_buffer = std::move(buffer);
+
+  D3D11_BUFFER_DESC desc;
+  m_buffer->GetDesc(&desc);
+  m_size = desc.ByteWidth;
+  m_position = 0;
+}
+
+void D3D11StreamBuffer::Release()
+{
+  m_buffer.Reset();
+}
+
+D3D11StreamBuffer::MappingResult D3D11StreamBuffer::Map(ID3D11DeviceContext* context, u32 alignment, u32 min_size)
+{
+  m_position = Common::AlignUp(m_position, alignment);
+  if ((m_position + min_size) >= m_size || !m_use_map_no_overwrite)
+  {
+    // wrap around
+    m_position = 0;
+  }
+
+  D3D11_MAPPED_SUBRESOURCE sr;
+  const D3D11_MAP map_type = (m_position == 0) ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
+  const HRESULT hr = context->Map(m_buffer.Get(), 0, map_type, 0, &sr);
+  if (FAILED(hr))
+  {
+    Log_ErrorPrintf("Map failed: 0x%08X (alignment %u, minsize %u, size %u, position %u, map type %u)", hr, alignment,
+                    min_size, m_size, m_position, static_cast<u32>(map_type));
+    Panic("Map failed");
+    return {};
+  }
+
+  return MappingResult{static_cast<char*>(sr.pData) + m_position, m_position, m_position / alignment,
+                       (m_size - m_position) / alignment};
+}
+
+void D3D11StreamBuffer::Unmap(ID3D11DeviceContext* context, u32 used_size)
+{
+  context->Unmap(m_buffer.Get(), 0);
+  m_position += used_size;
 }
 
 D3D11Device::D3D11Device() = default;
@@ -679,7 +788,7 @@ bool D3D11Device::Render(bool skip_present)
 
   if (m_gpu_timing_enabled)
     KickTimestampQuery();
-  
+
   return true;
 }
 
@@ -1485,6 +1594,321 @@ std::unique_ptr<GPUPipeline> D3D11Device::CreatePipeline(const GPUPipeline::Grap
                       static_cast<const D3D11Shader*>(config.vertex_shader)->GetVertexShader(),
                       static_cast<const D3D11Shader*>(config.pixel_shader)->GetPixelShader(),
                       primitives[static_cast<u8>(config.primitive)]));
+}
+
+D3D11Texture::D3D11Texture() = default;
+
+D3D11Texture::D3D11Texture(ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderResourceView> srv,
+                           ComPtr<ID3D11View> rtv)
+  : m_texture(std::move(texture)), m_srv(std::move(srv)), m_rtv_dsv(std::move(rtv))
+{
+  const D3D11_TEXTURE2D_DESC desc = GetDesc();
+  m_width = static_cast<u16>(desc.Width);
+  m_height = static_cast<u16>(desc.Height);
+  m_layers = static_cast<u8>(desc.ArraySize);
+  m_levels = static_cast<u8>(desc.MipLevels);
+  m_samples = static_cast<u8>(desc.SampleDesc.Count);
+  m_format = LookupBaseFormat(desc.Format);
+  m_dynamic = (desc.Usage == D3D11_USAGE_DYNAMIC);
+}
+
+D3D11Texture::~D3D11Texture()
+{
+  Destroy();
+}
+
+DXGI_FORMAT D3D11Texture::GetDXGIFormat(Format format)
+{
+  return s_dxgi_mapping[static_cast<u8>(format)];
+}
+
+GPUTexture::Format D3D11Texture::LookupBaseFormat(DXGI_FORMAT dformat)
+{
+  for (u32 i = 0; i < static_cast<u32>(s_dxgi_mapping.size()); i++)
+  {
+    if (s_dxgi_mapping[i] == dformat)
+      return static_cast<Format>(i);
+  }
+  return GPUTexture::Format::Unknown;
+}
+
+D3D11_TEXTURE2D_DESC D3D11Texture::GetDesc() const
+{
+  D3D11_TEXTURE2D_DESC desc;
+  m_texture->GetDesc(&desc);
+  return desc;
+}
+
+void D3D11Texture::CommitClear(ID3D11DeviceContext* context)
+{
+  if (m_state == GPUTexture::State::Dirty)
+    return;
+
+  // TODO: 11.1
+  if (IsDepthStencil())
+  {
+    if (m_state == GPUTexture::State::Invalidated)
+      ; // context->DiscardView(GetD3DDSV());
+    else
+      context->ClearDepthStencilView(GetD3DDSV(), D3D11_CLEAR_DEPTH, GetClearDepth(), 0);
+  }
+  else if (IsRenderTarget())
+  {
+    if (m_state == GPUTexture::State::Invalidated)
+      ; // context->DiscardView(GetD3DRTV());
+    else
+      context->ClearRenderTargetView(GetD3DRTV(), GetUNormClearColor().data());
+  }
+
+  m_state = GPUTexture::State::Dirty;
+}
+
+bool D3D11Texture::IsValid() const
+{
+  return static_cast<bool>(m_texture);
+}
+
+bool D3D11Texture::Update(u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch, u32 layer /*= 0*/,
+                          u32 level /*= 0*/)
+{
+  if (m_dynamic)
+  {
+    void* map;
+    u32 map_stride;
+    if (!Map(&map, &map_stride, x, y, width, height, layer, level))
+      return false;
+
+    StringUtil::StrideMemCpy(map, map_stride, data, pitch, GetPixelSize() * width, height);
+    Unmap();
+    return true;
+  }
+
+  const CD3D11_BOX box(static_cast<LONG>(x), static_cast<LONG>(y), 0, static_cast<LONG>(x + width),
+                       static_cast<LONG>(y + height), 1);
+  const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
+
+  ID3D11DeviceContext* context = D3D11Device::GetD3DContext();
+  CommitClear(context);
+  context->UpdateSubresource(m_texture.Get(), srnum, &box, data, pitch, 0);
+  m_state = GPUTexture::State::Dirty;
+  return true;
+}
+
+bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer /*= 0*/,
+                       u32 level /*= 0*/)
+{
+  if (!m_dynamic || (x + width) > m_width || (y + height) > m_height || layer > m_layers || level > m_levels)
+    return false;
+
+  const bool discard = (width == m_width && height == m_height);
+  const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
+
+  ID3D11DeviceContext* context = D3D11Device::GetD3DContext();
+  CommitClear(context);
+
+  D3D11_MAPPED_SUBRESOURCE sr;
+  HRESULT hr = context->Map(m_texture.Get(), srnum, discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_READ_WRITE, 0, &sr);
+  if (FAILED(hr))
+  {
+    Log_ErrorPrintf("Map pixels texture failed: %08X", hr);
+    return false;
+  }
+
+  *map = static_cast<u8*>(sr.pData) + (y * sr.RowPitch) + (x * GetPixelSize());
+  *map_stride = sr.RowPitch;
+  m_mapped_subresource = srnum;
+  m_state = GPUTexture::State::Dirty;
+  return true;
+}
+
+void D3D11Texture::Unmap()
+{
+  D3D11Device::GetD3DContext()->Unmap(m_texture.Get(), m_mapped_subresource);
+  m_mapped_subresource = 0;
+}
+
+bool D3D11Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type,
+                          Format format, const void* initial_data /* = nullptr */, u32 initial_data_stride /* = 0 */,
+                          bool dynamic /* = false */)
+{
+  if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+      layers > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION || (layers > 1 && samples > 1))
+  {
+    Log_ErrorPrintf("Texture bounds (%ux%ux%u, %u mips, %u samples) are too large", width, height, layers, levels,
+                    samples);
+    return false;
+  }
+
+  u32 bind_flags = 0;
+  switch (type)
+  {
+    case Type::RenderTarget:
+      bind_flags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+      break;
+    case Type::DepthStencil:
+      bind_flags = D3D11_BIND_DEPTH_STENCIL; // | D3D11_BIND_SHADER_RESOURCE;
+      break;
+    case Type::Texture:
+      bind_flags = D3D11_BIND_SHADER_RESOURCE;
+      break;
+    case Type::RWTexture:
+      bind_flags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+      break;
+    default:
+      break;
+  }
+
+  CD3D11_TEXTURE2D_DESC desc(GetDXGIFormat(format), width, height, layers, levels, bind_flags,
+                             dynamic ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT, dynamic ? D3D11_CPU_ACCESS_WRITE : 0,
+                             samples, 0, 0);
+
+  D3D11_SUBRESOURCE_DATA srd;
+  srd.pSysMem = initial_data;
+  srd.SysMemPitch = initial_data_stride;
+  srd.SysMemSlicePitch = initial_data_stride * height;
+
+  ComPtr<ID3D11Texture2D> texture;
+  const HRESULT tex_hr = device->CreateTexture2D(&desc, initial_data ? &srd : nullptr, texture.GetAddressOf());
+  if (FAILED(tex_hr))
+  {
+    Log_ErrorPrintf(
+      "Create texture failed: 0x%08X (%ux%u levels:%u samples:%u format:%u bind_flags:%X initial_data:%p)", tex_hr,
+      width, height, levels, samples, static_cast<unsigned>(format), bind_flags, initial_data);
+    return false;
+  }
+
+  ComPtr<ID3D11ShaderResourceView> srv;
+  if (bind_flags & D3D11_BIND_SHADER_RESOURCE)
+  {
+    const D3D11_SRV_DIMENSION srv_dimension =
+      (desc.SampleDesc.Count > 1) ?
+        D3D11_SRV_DIMENSION_TEXTURE2DMS :
+        (desc.ArraySize > 1 ? D3D11_SRV_DIMENSION_TEXTURE2DARRAY : D3D11_SRV_DIMENSION_TEXTURE2D);
+    const CD3D11_SHADER_RESOURCE_VIEW_DESC srv_desc(srv_dimension, desc.Format, 0, desc.MipLevels, 0, desc.ArraySize);
+    const HRESULT hr = device->CreateShaderResourceView(texture.Get(), &srv_desc, srv.GetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_ErrorPrintf("Create SRV for texture failed: 0x%08X", hr);
+      return false;
+    }
+  }
+
+  ComPtr<ID3D11View> rtv_dsv;
+  if (bind_flags & D3D11_BIND_RENDER_TARGET)
+  {
+    const D3D11_RTV_DIMENSION rtv_dimension =
+      (desc.SampleDesc.Count > 1) ? D3D11_RTV_DIMENSION_TEXTURE2DMS : D3D11_RTV_DIMENSION_TEXTURE2D;
+    const CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(rtv_dimension, desc.Format, 0, 0, desc.ArraySize);
+    ComPtr<ID3D11RenderTargetView> rtv;
+    const HRESULT hr = device->CreateRenderTargetView(texture.Get(), &rtv_desc, rtv.GetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_ErrorPrintf("Create RTV for texture failed: 0x%08X", hr);
+      return false;
+    }
+
+    rtv_dsv = std::move(rtv);
+  }
+  else if (bind_flags & D3D11_BIND_DEPTH_STENCIL)
+  {
+    const D3D11_DSV_DIMENSION dsv_dimension =
+      (desc.SampleDesc.Count > 1) ? D3D11_DSV_DIMENSION_TEXTURE2DMS : D3D11_DSV_DIMENSION_TEXTURE2D;
+    const CD3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc(dsv_dimension, desc.Format, 0, 0, desc.ArraySize);
+    ComPtr<ID3D11DepthStencilView> dsv;
+    const HRESULT hr = device->CreateDepthStencilView(texture.Get(), &dsv_desc, dsv.GetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_ErrorPrintf("Create DSV for texture failed: 0x%08X", hr);
+      return false;
+    }
+
+    rtv_dsv = std::move(dsv);
+  }
+
+  m_texture = std::move(texture);
+  m_srv = std::move(srv);
+  m_rtv_dsv = std::move(rtv_dsv);
+  m_width = static_cast<u16>(width);
+  m_height = static_cast<u16>(height);
+  m_layers = static_cast<u8>(layers);
+  m_levels = static_cast<u8>(levels);
+  m_samples = static_cast<u8>(samples);
+  m_format = format;
+  m_dynamic = dynamic;
+  return true;
+}
+
+bool D3D11Texture::Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture)
+{
+  D3D11_TEXTURE2D_DESC desc;
+  texture->GetDesc(&desc);
+
+  ComPtr<ID3D11ShaderResourceView> srv;
+  if (desc.BindFlags & D3D11_BIND_SHADER_RESOURCE)
+  {
+    const D3D11_SRV_DIMENSION srv_dimension =
+      (desc.SampleDesc.Count > 1) ? D3D11_SRV_DIMENSION_TEXTURE2DMS : D3D11_SRV_DIMENSION_TEXTURE2D;
+    const CD3D11_SHADER_RESOURCE_VIEW_DESC srv_desc(srv_dimension, desc.Format, 0, desc.MipLevels, 0, desc.ArraySize);
+    const HRESULT hr = device->CreateShaderResourceView(texture.Get(), &srv_desc, srv.ReleaseAndGetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_ErrorPrintf("Create SRV for adopted texture failed: 0x%08X", hr);
+      return false;
+    }
+  }
+
+  ComPtr<ID3D11View> rtv_dsv;
+  if (desc.BindFlags & D3D11_BIND_RENDER_TARGET)
+  {
+    const D3D11_RTV_DIMENSION rtv_dimension =
+      (desc.SampleDesc.Count > 1) ? D3D11_RTV_DIMENSION_TEXTURE2DMS : D3D11_RTV_DIMENSION_TEXTURE2D;
+    const CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(rtv_dimension, desc.Format, 0, 0, desc.ArraySize);
+    ComPtr<ID3D11RenderTargetView> rtv;
+    const HRESULT hr = device->CreateRenderTargetView(texture.Get(), &rtv_desc, rtv.GetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_ErrorPrintf("Create RTV for adopted texture failed: 0x%08X", hr);
+      return false;
+    }
+
+    rtv_dsv = std::move(rtv);
+  }
+  else if (desc.BindFlags & D3D11_BIND_DEPTH_STENCIL)
+  {
+    const D3D11_DSV_DIMENSION dsv_dimension =
+      (desc.SampleDesc.Count > 1) ? D3D11_DSV_DIMENSION_TEXTURE2DMS : D3D11_DSV_DIMENSION_TEXTURE2D;
+    const CD3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc(dsv_dimension, desc.Format, 0, 0, desc.ArraySize);
+    ComPtr<ID3D11DepthStencilView> dsv;
+    const HRESULT hr = device->CreateDepthStencilView(texture.Get(), &dsv_desc, dsv.GetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_ErrorPrintf("Create DSV for adopted texture failed: 0x%08X", hr);
+      return false;
+    }
+
+    rtv_dsv = std::move(dsv);
+  }
+
+  m_texture = std::move(texture);
+  m_srv = std::move(srv);
+  m_rtv_dsv = std::move(rtv_dsv);
+  m_width = static_cast<u16>(desc.Width);
+  m_height = static_cast<u16>(desc.Height);
+  m_layers = static_cast<u8>(desc.ArraySize);
+  m_levels = static_cast<u8>(desc.MipLevels);
+  m_samples = static_cast<u8>(desc.SampleDesc.Count);
+  m_dynamic = (desc.Usage == D3D11_USAGE_DYNAMIC);
+  m_state = GPUTexture::State::Dirty;
+  return true;
+}
+
+void D3D11Texture::Destroy()
+{
+  m_rtv_dsv.Reset();
+  m_srv.Reset();
+  m_texture.Reset();
+  m_dynamic = false;
+  ClearBaseProperties();
 }
 
 void D3D11Device::PushDebugGroup(const char* fmt, ...)

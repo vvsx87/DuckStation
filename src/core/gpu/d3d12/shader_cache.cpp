@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "shader_cache.h"
-#include "../d3d11/shader_compiler.h"
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/md5_digest.h"
+#include "common/string_util.h"
+#include <array>
 #include <d3dcompiler.h>
+#include <fstream>
 Log_SetChannel(D3D12::ShaderCache);
 
 namespace D3D12 {
@@ -358,29 +360,86 @@ ShaderCache::ComPtr<ID3D12PipelineState> ShaderCache::GetPipelineState(ID3D12Dev
   return pso;
 }
 
+static unsigned s_next_bad_shader_id = 1;
+
+ShaderCache::ComPtr<ID3DBlob> ShaderCache::CompileShader(EntryType type, D3D_FEATURE_LEVEL feature_level, std::string_view code, bool debug)
+{
+  const char* target;
+  switch (feature_level)
+  {
+    case D3D_FEATURE_LEVEL_10_0:
+    {
+      static constexpr std::array<const char*, 4> targets = {{"vs_4_0", "gs_4_0", "ps_4_0", "cs_4_0"}};
+      target = targets[static_cast<int>(type)];
+    }
+    break;
+
+    case D3D_FEATURE_LEVEL_10_1:
+    {
+      static constexpr std::array<const char*, 4> targets = {{"vs_4_1", "gs_4_1", "ps_4_1", "cs_4_1"}};
+      target = targets[static_cast<int>(type)];
+    }
+    break;
+
+    case D3D_FEATURE_LEVEL_11_0:
+    {
+      static constexpr std::array<const char*, 4> targets = {{"vs_5_0", "gs_5_0", "ps_5_0", "cs_5_0"}};
+      target = targets[static_cast<int>(type)];
+    }
+    break;
+
+    case D3D_FEATURE_LEVEL_11_1:
+    default:
+    {
+      static constexpr std::array<const char*, 4> targets = {{"vs_5_1", "gs_5_1", "ps_5_1", "cs_5_1"}};
+      target = targets[static_cast<int>(type)];
+    }
+    break;
+  }
+
+  static constexpr UINT flags_non_debug = D3DCOMPILE_OPTIMIZATION_LEVEL3;
+  static constexpr UINT flags_debug = D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_DEBUG;
+
+  ComPtr<ID3DBlob> blob;
+  ComPtr<ID3DBlob> error_blob;
+  const HRESULT hr =
+    D3DCompile(code.data(), code.size(), "0", nullptr, nullptr, "main", target, debug ? flags_debug : flags_non_debug,
+               0, blob.GetAddressOf(), error_blob.GetAddressOf());
+
+  std::string error_string;
+  if (error_blob)
+  {
+    error_string.append(static_cast<const char*>(error_blob->GetBufferPointer()), error_blob->GetBufferSize());
+    error_blob.Reset();
+  }
+
+  if (FAILED(hr))
+  {
+    Log_ErrorPrintf("Failed to compile '%s':\n%s", target, error_string.c_str());
+
+    std::ofstream ofs(StringUtil::StdStringFromFormat("bad_shader_%u.txt", s_next_bad_shader_id++).c_str(),
+                      std::ofstream::out | std::ofstream::binary);
+    if (ofs.is_open())
+    {
+      ofs << code;
+      ofs << "\n\nCompile as " << target << " failed: " << hr << "\n";
+      ofs.write(error_string.c_str(), error_string.size());
+      ofs.close();
+    }
+
+    return {};
+  }
+
+  if (!error_string.empty())
+    Log_WarningPrintf("'%s' compiled with warnings:\n%s", target, error_string.c_str());
+
+  return blob;
+}
+
 ShaderCache::ComPtr<ID3DBlob> ShaderCache::CompileAndAddShaderBlob(const CacheIndexKey& key,
                                                                    std::string_view shader_code)
 {
-  ComPtr<ID3DBlob> blob;
-
-  switch (key.type)
-  {
-    case EntryType::VertexShader:
-      blob = D3D11::ShaderCompiler::CompileShader(D3D11::ShaderCompiler::Type::Vertex, m_feature_level, shader_code,
-                                                  m_debug);
-      break;
-    case EntryType::GeometryShader:
-      blob = D3D11::ShaderCompiler::CompileShader(D3D11::ShaderCompiler::Type::Geometry, m_feature_level, shader_code,
-                                                  m_debug);
-      break;
-    case EntryType::PixelShader:
-      blob =
-        D3D11::ShaderCompiler::CompileShader(D3D11::ShaderCompiler::Type::Pixel, m_feature_level, shader_code, m_debug);
-      break;
-    default:
-      break;
-  }
-
+  ComPtr<ID3DBlob> blob = CompileShader(key.type, m_feature_level, shader_code, m_debug);
   if (!blob)
     return {};
 

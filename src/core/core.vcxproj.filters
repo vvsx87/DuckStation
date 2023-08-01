@@ -74,15 +74,6 @@
     <ClCompile Include="gpu\vulkan_gpu_device.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
-    <ClCompile Include="gpu\d3d11\stream_buffer.cpp">
-      <Filter>gpu\d3d11</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d11\shader_cache.cpp">
-      <Filter>gpu\d3d11</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d11\shader_compiler.cpp">
-      <Filter>gpu\d3d11</Filter>
-    </ClCompile>
     <ClCompile Include="gpu\d3d12\shader_cache.cpp">
       <Filter>gpu\d3d12</Filter>
     </ClCompile>
@@ -185,9 +176,6 @@
     <ClCompile Include="gpu\gpu_texture.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
-    <ClCompile Include="gpu\d3d11_texture.cpp">
-      <Filter>gpu</Filter>
-    </ClCompile>
     <ClCompile Include="gpu\gpu_shader_cache.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
@@ -271,15 +259,6 @@
     </ClInclude>
     <ClInclude Include="gpu\vulkan_gpu_device.h">
       <Filter>gpu</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d11\shader_compiler.h">
-      <Filter>gpu\d3d11</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d11\stream_buffer.h">
-      <Filter>gpu\d3d11</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d11\shader_cache.h">
-      <Filter>gpu\d3d11</Filter>
     </ClInclude>
     <ClInclude Include="gpu\d3d12\shader_cache.h">
       <Filter>gpu\d3d12</Filter>
@@ -392,9 +371,6 @@
     <ClInclude Include="gpu\gpu_texture.h">
       <Filter>gpu</Filter>
     </ClInclude>
-    <ClInclude Include="gpu\d3d11_texture.h">
-      <Filter>gpu</Filter>
-    </ClInclude>
     <ClInclude Include="gpu\d3d_shaders.h">
       <Filter>gpu</Filter>
     </ClInclude>
@@ -405,9 +381,6 @@
   <ItemGroup>
     <Filter Include="gpu">
       <UniqueIdentifier>{7b18fac1-ee2b-4816-8537-eb8f32d40ada}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="gpu\d3d11">
-      <UniqueIdentifier>{f5b7a4af-72c7-406f-b787-9036115c3580}</UniqueIdentifier>
     </Filter>
     <Filter Include="gpu\d3d12">
       <UniqueIdentifier>{17c2f89b-5cf4-4d3a-9343-a03c1c668b85}</UniqueIdentifier>

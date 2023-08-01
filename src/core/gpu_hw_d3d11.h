@@ -2,15 +2,8 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "gpu/d3d11/shader_cache.h"
-#include "gpu/d3d11/stream_buffer.h"
-#include "gpu/d3d11_texture.h"
+#include "gpu/d3d11_device.h"
 #include "gpu_hw.h"
-#include <array>
-#include <d3d11.h>
-#include <memory>
-#include <tuple>
-#include <wrl/client.h>
 
 class GPU_HW_D3D11 final : public GPU_HW
 {
@@ -33,7 +26,7 @@ private:
 
   bool CreateTextureBuffer();
 
-  D3D11::StreamBuffer m_texture_stream_buffer;
+  D3D11StreamBuffer m_texture_stream_buffer;
 
   ComPtr<ID3D11ShaderResourceView> m_texture_stream_buffer_srv_r16ui;
 };

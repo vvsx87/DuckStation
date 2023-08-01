@@ -6,7 +6,6 @@
 #include "common/assert.h"
 #include "common/log.h"
 #include "common/string_util.h"
-#include "d3d11/shader_compiler.h"
 #include "d3d12/context.h"
 #include "d3d12/shader_cache.h"
 #include "d3d12/util.h"

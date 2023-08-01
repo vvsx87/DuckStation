@@ -87,6 +87,8 @@ private:
 
   using CacheIndex = std::unordered_map<CacheIndexKey, CacheIndexData, CacheIndexEntryHasher>;
 
+  static ComPtr<ID3DBlob> CompileShader(EntryType type, D3D_FEATURE_LEVEL feature_level, std::string_view code, bool debug);
+
   static std::string GetCacheBaseFileName(const std::string_view& base_path, const std::string_view& type,
                                           D3D_FEATURE_LEVEL feature_level, bool debug);
   static CacheIndexKey GetShaderCacheKey(EntryType type, const std::string_view& shader_code);

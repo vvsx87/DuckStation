@@ -6,8 +6,6 @@
 #include "common/timer.h"
 #include "common/window_info.h"
 #include "common/windows_headers.h"
-#include "d3d11/stream_buffer.h"
-#include "d3d11_texture.h"
 #include "gpu_device.h"
 #include "postprocessing_chain.h"
 #include <d3d11_1.h>
@@ -20,6 +18,43 @@
 #include <wrl/client.h>
 
 class D3D11Device;
+
+class D3D11StreamBuffer
+{
+public:
+  template<typename T>
+  using ComPtr = Microsoft::WRL::ComPtr<T>;
+
+  D3D11StreamBuffer();
+  D3D11StreamBuffer(ComPtr<ID3D11Buffer> buffer);
+  ~D3D11StreamBuffer();
+
+  ALWAYS_INLINE ID3D11Buffer* GetD3DBuffer() const { return m_buffer.Get(); }
+  ALWAYS_INLINE ID3D11Buffer* const* GetD3DBufferArray() const { return m_buffer.GetAddressOf(); }
+  ALWAYS_INLINE u32 GetSize() const { return m_size; }
+  ALWAYS_INLINE u32 GetPosition() const { return m_position; }
+
+  bool Create(ID3D11Device* device, D3D11_BIND_FLAG bind_flags, u32 size);
+  void Adopt(ComPtr<ID3D11Buffer> buffer);
+  void Release();
+
+  struct MappingResult
+  {
+    void* pointer;
+    u32 buffer_offset;
+    u32 index_aligned; // offset / alignment, suitable for base vertex
+    u32 space_aligned; // remaining space / alignment
+  };
+
+  MappingResult Map(ID3D11DeviceContext* context, u32 alignment, u32 min_size);
+  void Unmap(ID3D11DeviceContext* context, u32 used_size);
+
+private:
+  ComPtr<ID3D11Buffer> m_buffer;
+  u32 m_size;
+  u32 m_position;
+  bool m_use_map_no_overwrite = false;
+};
 
 class D3D11Framebuffer final : public GPUFramebuffer
 {
@@ -124,6 +159,74 @@ private:
   ComPtr<ID3D11VertexShader> m_vs;
   ComPtr<ID3D11PixelShader> m_ps;
   D3D11_PRIMITIVE_TOPOLOGY m_topology;
+};
+
+class D3D11Texture final : public GPUTexture
+{
+  friend D3D11Device;
+
+public:
+  template<typename T>
+  using ComPtr = Microsoft::WRL::ComPtr<T>;
+
+  D3D11Texture();
+  D3D11Texture(ComPtr<ID3D11Texture2D> texture, ComPtr<ID3D11ShaderResourceView> srv, ComPtr<ID3D11View> rtv);
+  ~D3D11Texture();
+
+  static DXGI_FORMAT GetDXGIFormat(Format format);
+  static Format LookupBaseFormat(DXGI_FORMAT dformat);
+
+  ALWAYS_INLINE ID3D11Texture2D* GetD3DTexture() const { return m_texture.Get(); }
+  ALWAYS_INLINE ID3D11ShaderResourceView* GetD3DSRV() const { return m_srv.Get(); }
+  ALWAYS_INLINE ID3D11RenderTargetView* GetD3DRTV() const
+  {
+    return static_cast<ID3D11RenderTargetView*>(m_rtv_dsv.Get());
+  }
+  ALWAYS_INLINE ID3D11DepthStencilView* GetD3DDSV() const
+  {
+    return static_cast<ID3D11DepthStencilView*>(m_rtv_dsv.Get());
+  }
+  ALWAYS_INLINE ID3D11ShaderResourceView* const* GetD3DSRVArray() const { return m_srv.GetAddressOf(); }
+  ALWAYS_INLINE ID3D11RenderTargetView* const* GetD3DRTVArray() const
+  {
+    return reinterpret_cast<ID3D11RenderTargetView* const*>(m_rtv_dsv.GetAddressOf());
+  }
+  ALWAYS_INLINE DXGI_FORMAT GetDXGIFormat() const { return GetDXGIFormat(m_format); }
+  ALWAYS_INLINE bool IsDynamic() const { return m_dynamic; }
+
+  ALWAYS_INLINE operator ID3D11Texture2D*() const { return m_texture.Get(); }
+  ALWAYS_INLINE operator ID3D11ShaderResourceView*() const { return m_srv.Get(); }
+  ALWAYS_INLINE operator ID3D11RenderTargetView*() const
+  {
+    return static_cast<ID3D11RenderTargetView*>(m_rtv_dsv.Get());
+  }
+  ALWAYS_INLINE operator ID3D11DepthStencilView*() const
+  {
+    return static_cast<ID3D11DepthStencilView*>(m_rtv_dsv.Get());
+  }
+  ALWAYS_INLINE operator bool() const { return static_cast<bool>(m_texture); }
+
+  bool Create(ID3D11Device* device, u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type,
+              Format format, const void* initial_data = nullptr, u32 initial_data_stride = 0, bool dynamic = false);
+  bool Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture);
+
+  void Destroy();
+
+  D3D11_TEXTURE2D_DESC GetDesc() const;
+  void CommitClear(ID3D11DeviceContext* context);
+
+  bool IsValid() const override;
+
+  bool Update(u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch, u32 layer = 0, u32 level = 0) override;
+  bool Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer = 0, u32 level = 0) override;
+  void Unmap() override;
+
+private:
+  ComPtr<ID3D11Texture2D> m_texture;
+  ComPtr<ID3D11ShaderResourceView> m_srv;
+  ComPtr<ID3D11View> m_rtv_dsv;
+  u32 m_mapped_subresource = 0;
+  bool m_dynamic = false;
 };
 
 class D3D11Device final : public GPUDevice
@@ -278,9 +381,9 @@ private:
   bool m_using_flip_model_swap_chain = true;
   bool m_using_allow_tearing = false;
 
-  D3D11::StreamBuffer m_vertex_buffer;
-  D3D11::StreamBuffer m_index_buffer;
-  D3D11::StreamBuffer m_uniform_buffer;
+  D3D11StreamBuffer m_vertex_buffer;
+  D3D11StreamBuffer m_index_buffer;
+  D3D11StreamBuffer m_uniform_buffer;
 
   D3D11Framebuffer* m_current_framebuffer = nullptr;
   D3D11Pipeline* m_current_pipeline = nullptr;
