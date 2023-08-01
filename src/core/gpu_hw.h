@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "common/dimensional_array.h"
-#include "common/heap_array.h"
+
 #include "gpu.h"
 #include "gpu/gpu_device.h"
+#include "texture_replacements.h"
+
+#include "common/dimensional_array.h"
+#include "common/heap_array.h"
+
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -35,15 +39,17 @@ public:
   };
 
   GPU_HW();
-  virtual ~GPU_HW();
+  ~GPU_HW() override;
 
   const Threading::Thread* GetSWThread() const override;
 
-  virtual bool Initialize() override;
-  virtual void Reset(bool clear_vram) override;
-  virtual bool DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display) override;
+  bool Initialize() override;
+  void Reset(bool clear_vram) override;
+  bool DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display) override;
 
-  virtual void UpdateSettings() override;
+  void RestoreGraphicsAPIState() override;
+
+  void UpdateSettings() override;
   void UpdateResolutionScale() override final;
   std::tuple<u32, u32> GetEffectiveDisplayResolution(bool scaled = true) override final;
   std::tuple<u32, u32> GetFullDisplayResolution(bool scaled = true) override final;
@@ -131,6 +137,7 @@ protected:
     u32 u_set_mask_while_drawing;
   };
 
+  // TODO: move all these to source
   struct VRAMFillUBOData
   {
     u32 u_dst_x;
@@ -202,22 +209,22 @@ protected:
 
   void UpdateHWSettings(bool* framebuffer_changed, bool* shaders_changed);
 
-  virtual bool CreateFramebuffer();
-  virtual void DestroyFramebuffer();
+  bool CreateFramebuffer();
+  void ClearFramebuffer();
+  void DestroyFramebuffer();
 
   bool CompilePipelines();
   void DestroyPipelines();
 
   void UpdateVRAMReadTexture();
-  virtual void UpdateDepthBufferFromMaskBit() = 0;
-  virtual void ClearDepthBuffer() = 0;
-  virtual void SetScissorFromDrawingArea() = 0;
-  virtual void MapBatchVertexPointer(u32 required_vertices);
-  virtual void UnmapBatchVertexPointer(u32 used_vertices);
-  virtual void UploadUniformBuffer(const void* uniforms, u32 uniforms_size) = 0;
-  virtual void DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices);
-  virtual void ClearDisplay();
-  virtual void UpdateDisplay();
+  void UpdateDepthBufferFromMaskBit();
+  void ClearDepthBuffer();
+  void SetScissor();
+  void MapBatchVertexPointer(u32 required_vertices);
+  void UnmapBatchVertexPointer(u32 used_vertices);
+  void DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices);
+  void ClearDisplay();
+  void UpdateDisplay();
 
   u32 CalculateResolutionScale() const;
   GPUDownsampleMode GetDownsampleMode(u32 resolution_scale) const;
@@ -313,13 +320,12 @@ protected:
   void CopySoftwareRendererVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height);
 
   void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color) override;
+  void ReadVRAM(u32 x, u32 y, u32 width, u32 height) override;
   void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask) override;
   void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height) override;
   void DispatchRenderCommand() override;
   void FlushRender() override;
   void DrawRendererStats(bool is_idle_frame) override;
-
-  void CalcScissorRect(int* left, int* top, int* right, int* bottom);
 
   std::tuple<s32, s32> ScaleVRAMCoordinates(s32 x, s32 y) const
   {
@@ -336,6 +342,8 @@ protected:
   VRAMWriteUBOData GetVRAMWriteUBOData(u32 x, u32 y, u32 width, u32 height, u32 buffer_offset, bool set_mask,
                                        bool check_mask) const;
   VRAMCopyUBOData GetVRAMCopyUBOData(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height) const;
+
+  bool BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u32 dst_x, u32 dst_y, u32 width, u32 height);
 
   /// Expands a line into two triangles.
   void DrawLine(float x0, float y0, u32 col0, float x1, float y1, u32 col1, float depth);
@@ -365,11 +373,16 @@ protected:
   SmoothingUBOData GetSmoothingUBO(u32 level, u32 left, u32 top, u32 width, u32 height, u32 tex_width,
                                    u32 tex_height) const;
 
+  void DownsampleFramebuffer(const GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebufferAdaptive(const GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebufferBoxFilter(const GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
+
   std::unique_ptr<GPUTexture> m_vram_texture;
   std::unique_ptr<GPUTexture> m_vram_depth_texture;
   std::unique_ptr<GPUTexture> m_vram_depth_view;
   std::unique_ptr<GPUTexture> m_vram_read_texture;
   std::unique_ptr<GPUTexture> m_vram_readback_texture;
+  std::unique_ptr<GPUTexture> m_vram_replacement_texture;
   std::unique_ptr<GPUTexture> m_display_texture;
 
   std::unique_ptr<GPUFramebuffer> m_vram_framebuffer;
@@ -438,6 +451,9 @@ protected:
 
   // [depth_24][interlace_mode]
   DimensionalArray<std::unique_ptr<GPUPipeline>, 3, 2> m_display_pipelines{};
+
+  // TODO: get rid of this, and use image blits instead where supported
+  std::unique_ptr<GPUPipeline> m_copy_pipeline;
 
   std::unique_ptr<GPUPipeline> m_downsample_first_pass_pipeline;
   std::unique_ptr<GPUPipeline> m_downsample_mid_pass_pipeline;

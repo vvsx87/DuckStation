@@ -293,8 +293,6 @@ bool GPU::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_displ
   return !sw.HasError();
 }
 
-void GPU::ResetGraphicsAPIState() {}
-
 void GPU::RestoreGraphicsAPIState() {}
 
 void GPU::UpdateDMARequest()

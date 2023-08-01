@@ -623,7 +623,6 @@ static void HotkeyModifyResolutionScale(s32 increment)
   {
     g_gpu->RestoreGraphicsAPIState();
     g_gpu->UpdateSettings();
-    g_gpu->ResetGraphicsAPIState();
     System::ClearMemorySaveStates();
     Host::InvalidateDisplay();
   }
@@ -883,7 +882,6 @@ DEFINE_HOTKEY("TogglePGXP", TRANSLATABLE("Hotkeys", "Graphics"), TRANSLATABLE("H
                   g_settings.gpu_pgxp_enable = !g_settings.gpu_pgxp_enable;
                   g_gpu->RestoreGraphicsAPIState();
                   g_gpu->UpdateSettings();
-                  g_gpu->ResetGraphicsAPIState();
                   System::ClearMemorySaveStates();
                   Host::AddKeyedOSDMessage("TogglePGXP",
                                            g_settings.gpu_pgxp_enable ?
@@ -953,7 +951,6 @@ DEFINE_HOTKEY("TogglePGXPDepth", TRANSLATABLE("Hotkeys", "Graphics"),
 
                   g_gpu->RestoreGraphicsAPIState();
                   g_gpu->UpdateSettings();
-                  g_gpu->ResetGraphicsAPIState();
                   System::ClearMemorySaveStates();
                   Host::AddKeyedOSDMessage(
                     "TogglePGXPDepth",
@@ -974,7 +971,6 @@ DEFINE_HOTKEY("TogglePGXPCPU", TRANSLATABLE("Hotkeys", "Graphics"), TRANSLATABLE
 
                   g_gpu->RestoreGraphicsAPIState();
                   g_gpu->UpdateSettings();
-                  g_gpu->ResetGraphicsAPIState();
                   System::ClearMemorySaveStates();
                   Host::AddKeyedOSDMessage("TogglePGXPCPU",
                                            g_settings.gpu_pgxp_cpu ?

@@ -110,35 +110,6 @@ bool D3D11Device::DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, 
   return true;
 }
 
-void D3D11Device::CommitClear(GPUTexture* t)
-{
-  D3D11Texture* T = static_cast<D3D11Texture*>(t);
-  if (T->GetState() == GPUTexture::State::Dirty)
-    return;
-
-  // TODO: 11.1
-  if (T->IsDepthStencil())
-  {
-    if (T->GetState() == GPUTexture::State::Invalidated)
-      ; // m_context->DiscardView(T->GetD3DDSV());
-    else
-      m_context->ClearDepthStencilView(T->GetD3DDSV(), D3D11_CLEAR_DEPTH, T->GetClearDepth(), 0);
-  }
-  else if (T->IsRenderTarget())
-  {
-    if (T->GetState() == GPUTexture::State::Invalidated)
-      ; // m_context->DiscardView(T->GetD3DRTV());
-    else
-      m_context->ClearRenderTargetView(T->GetD3DRTV(), T->GetUNormClearColor().data());
-  }
-  else
-  {
-    return;
-  }
-
-  T->SetState(GPUTexture::State::Dirty);
-}
-
 bool D3D11Device::CheckStagingBufferSize(u32 width, u32 height, DXGI_FORMAT format)
 {
   if (m_readback_staging_texture_width >= width && m_readback_staging_texture_width >= height &&
@@ -191,19 +162,29 @@ void D3D11Device::CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 d
   D3D11Texture* dst11 = static_cast<D3D11Texture*>(dst);
   D3D11Texture* src11 = static_cast<D3D11Texture*>(src);
 
-  if (src11->GetState() == GPUTexture::State::Cleared)
+  if (dst11->IsRenderTargetOrDepthStencil())
   {
-    if (src11->GetWidth() == dst11->GetWidth() && src11->GetHeight() == dst11->GetHeight())
+    if (src11->GetState() == GPUTexture::State::Cleared)
     {
-      // pass clear through
-      dst11->m_state = src11->m_state;
-      dst11->m_clear_value = src11->m_clear_value;
-      return;
+      if (src11->GetWidth() == dst11->GetWidth() && src11->GetHeight() == dst11->GetHeight())
+      {
+        // pass clear through
+        dst11->m_state = src11->m_state;
+        dst11->m_clear_value = src11->m_clear_value;
+        return;
+      }
     }
+    else if (dst_x == 0 && dst_y == 0 && width == dst11->GetMipWidth(dst_level) &&
+             height == dst11->GetMipHeight(dst_level))
+    {
+      // TODO: 11.1 discard
+      dst11->SetState(GPUTexture::State::Dirty);
+    }
+
+    dst11->CommitClear(m_context.Get());
   }
 
-  CommitClear(src11);
-  CommitClear(dst11);
+  src11->CommitClear(m_context.Get());
 
   const CD3D11_BOX src_box(static_cast<LONG>(src_x), static_cast<LONG>(src_y), 0, static_cast<LONG>(src_x + width),
                            static_cast<LONG>(src_y + height), 1);
@@ -227,13 +208,15 @@ void D3D11Device::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u3
   // DX11 can't resolve partial rects.
   Assert(src_x == dst_x && src_y == dst_y);
 
-  CommitClear(src);
-  CommitClear(dst);
+  D3D11Texture* dst11 = static_cast<D3D11Texture*>(dst);
+  D3D11Texture* src11 = static_cast<D3D11Texture*>(src);
 
-  m_context->ResolveSubresource(
-    static_cast<D3D11Texture*>(dst)->GetD3DTexture(), D3D11CalcSubresource(dst_level, dst_layer, dst->GetLevels()),
-    static_cast<D3D11Texture*>(src)->GetD3DTexture(), D3D11CalcSubresource(src_level, src_layer, src->GetLevels()),
-    static_cast<D3D11Texture*>(dst)->GetDXGIFormat());
+  src11->CommitClear(m_context.Get());
+  dst11->CommitClear(m_context.Get());
+
+  m_context->ResolveSubresource(dst11->GetD3DTexture(), D3D11CalcSubresource(dst_level, dst_layer, dst->GetLevels()),
+                                src11->GetD3DTexture(), D3D11CalcSubresource(src_level, src_layer, src->GetLevels()),
+                                dst11->GetDXGIFormat());
 }
 
 bool D3D11Device::GetHostRefreshRate(float* refresh_rate)
@@ -645,7 +628,7 @@ bool D3D11Device::CreateBuffers()
 {
   if (!m_vertex_buffer.Create(m_device.Get(), D3D11_BIND_VERTEX_BUFFER, VERTEX_BUFFER_SIZE) ||
       !m_index_buffer.Create(m_device.Get(), D3D11_BIND_INDEX_BUFFER, INDEX_BUFFER_SIZE) ||
-      !m_push_uniform_buffer.Create(m_device.Get(), D3D11_BIND_CONSTANT_BUFFER, PUSH_UNIFORM_BUFFER_SIZE))
+      !m_uniform_buffer.Create(m_device.Get(), D3D11_BIND_CONSTANT_BUFFER, MAX_UNIFORM_BUFFER_SIZE))
   {
     Log_ErrorPrintf("Failed to create vertex/index/uniform buffers.");
     return false;
@@ -656,7 +639,7 @@ bool D3D11Device::CreateBuffers()
 
 void D3D11Device::DestroyBuffers()
 {
-  m_push_uniform_buffer.Release();
+  m_uniform_buffer.Release();
   m_vertex_buffer.Release();
   m_index_buffer.Release();
 }
@@ -678,6 +661,7 @@ bool D3D11Device::Render(bool skip_present)
 
   m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), s_clear_color.data());
   m_context->OMSetRenderTargets(1, m_swap_chain_rtv.GetAddressOf(), nullptr);
+  m_current_framebuffer = nullptr;
 
   RenderDisplay();
 
@@ -695,7 +679,7 @@ bool D3D11Device::Render(bool skip_present)
 
   if (m_gpu_timing_enabled)
     KickTimestampQuery();
-
+  
   return true;
 }
 
@@ -1571,20 +1555,45 @@ void D3D11Device::UnmapIndexBuffer(u32 used_index_count)
 
 void D3D11Device::PushUniformBuffer(const void* data, u32 data_size)
 {
-  Assert(data_size <= PUSH_UNIFORM_BUFFER_SIZE);
+  Assert(data_size <= MAX_UNIFORM_BUFFER_SIZE);
 
-  const auto res = m_push_uniform_buffer.Map(m_context.Get(), PUSH_UNIFORM_BUFFER_SIZE, PUSH_UNIFORM_BUFFER_SIZE);
+  const auto res = m_uniform_buffer.Map(m_context.Get(), MAX_UNIFORM_BUFFER_SIZE, MAX_UNIFORM_BUFFER_SIZE);
   std::memcpy(res.pointer, data, data_size);
-  m_push_uniform_buffer.Unmap(m_context.Get(), data_size);
+  m_uniform_buffer.Unmap(m_context.Get(), data_size);
 
-  m_context->VSSetConstantBuffers(0, 1, m_push_uniform_buffer.GetD3DBufferArray());
-  m_context->PSSetConstantBuffers(0, 1, m_push_uniform_buffer.GetD3DBufferArray());
+  m_context->VSSetConstantBuffers(0, 1, m_uniform_buffer.GetD3DBufferArray());
+  m_context->PSSetConstantBuffers(0, 1, m_uniform_buffer.GetD3DBufferArray());
+}
+
+void* D3D11Device::MapUniformBuffer(u32 size)
+{
+  Assert(size <= MAX_UNIFORM_BUFFER_SIZE);
+
+  const auto res = m_uniform_buffer.Map(m_context.Get(), MAX_UNIFORM_BUFFER_SIZE, MAX_UNIFORM_BUFFER_SIZE);
+  return res.pointer;
+}
+
+void D3D11Device::UnmapUniformBuffer(u32 size)
+{
+  m_uniform_buffer.Unmap(m_context.Get(), size);
+  m_context->VSSetConstantBuffers(0, 1, m_uniform_buffer.GetD3DBufferArray());
+  m_context->PSSetConstantBuffers(0, 1, m_uniform_buffer.GetD3DBufferArray());
 }
 
 void D3D11Device::SetFramebuffer(GPUFramebuffer* fb)
 {
-  D3D11Framebuffer* FB = static_cast<D3D11Framebuffer*>(fb);
-  m_context->OMSetRenderTargets(FB->GetNumRTVs(), FB->GetRTVArray(), FB->GetDSV());
+  if (m_current_framebuffer == fb)
+    return;
+
+  m_current_framebuffer = static_cast<D3D11Framebuffer*>(fb);
+  if (!m_current_framebuffer)
+  {
+    m_context->OMSetRenderTargets(0, nullptr, nullptr);
+    return;
+  }
+
+  m_context->OMSetRenderTargets(m_current_framebuffer->GetNumRTVs(), m_current_framebuffer->GetRTVArray(),
+                                m_current_framebuffer->GetDSV());
 }
 
 void D3D11Device::UnbindFramebuffer(D3D11Framebuffer* fb)

@@ -388,6 +388,26 @@ void GPUDevice::PushUniformBuffer(const void* data, u32 data_size)
   UnreachableCode();
 }
 
+void* GPUDevice::MapUniformBuffer(u32 size)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return nullptr;
+}
+
+void GPUDevice::UnmapUniformBuffer(u32 size)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+void GPUDevice::UploadUniformBuffer(const void* data, u32 data_size)
+{
+  void* map = MapUniformBuffer(data_size);
+  std::memcpy(map, data, data_size);
+  UnmapUniformBuffer(data_size);
+}
+
 void GPUDevice::SetFramebuffer(GPUFramebuffer* fb)
 {
   // TODO: REMOVE ME

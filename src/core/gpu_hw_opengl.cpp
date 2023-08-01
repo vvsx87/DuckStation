@@ -150,17 +150,6 @@ void GPU_HW_OpenGL::CopyFramebufferForState(GLenum target, GLuint src_texture, u
 }
 #endif
 
-void GPU_HW_OpenGL::ResetGraphicsAPIState()
-{
-  GPU_HW::ResetGraphicsAPIState();
-
-  glEnable(GL_CULL_FACE);
-  glDisable(GL_SCISSOR_TEST);
-  glDisable(GL_BLEND);
-  glBindVertexArray(0);
-  m_uniform_stream_buffer->Unbind();
-}
-
 void GPU_HW_OpenGL::RestoreGraphicsAPIState()
 {
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_vram_fbo_id);
@@ -176,7 +165,7 @@ void GPU_HW_OpenGL::RestoreGraphicsAPIState()
   SetBlendMode();
   m_current_depth_test = 0;
   SetDepthFunc();
-  SetScissorFromDrawingArea();
+  SetScissor();
   m_batch_ubo_dirty = true;
 }
 
@@ -191,7 +180,6 @@ void GPU_HW_OpenGL::UpdateSettings()
   {
     RestoreGraphicsAPIState();
     ReadVRAM(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
-    ResetGraphicsAPIState();
     g_host_display->ClearDisplayTexture();
     CreateFramebuffer();
   }
@@ -204,10 +192,10 @@ void GPU_HW_OpenGL::UpdateSettings()
     UpdateVRAM(0, 0, VRAM_WIDTH, VRAM_HEIGHT, m_vram_ptr, false, false);
     UpdateDepthBufferFromMaskBit();
     UpdateDisplay();
-    ResetGraphicsAPIState();
   }
 }
 
+#if 0
 void GPU_HW_OpenGL::MapBatchVertexPointer(u32 required_vertices)
 {
   DebugAssert(!m_batch_start_vertex_ptr);
@@ -230,6 +218,7 @@ void GPU_HW_OpenGL::UnmapBatchVertexPointer(u32 used_vertices)
   m_batch_end_vertex_ptr = nullptr;
   m_batch_current_vertex_ptr = nullptr;
 }
+#endif
 
 void GPU_HW_OpenGL::SetCapabilities()
 {
@@ -664,6 +653,7 @@ bool GPU_HW_OpenGL::CompilePrograms()
   return true;
 }
 
+#if 0
 void GPU_HW_OpenGL::DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices)
 {
   const GL::Program& prog = m_render_programs[static_cast<u8>(render_mode)][static_cast<u8>(m_batch.texture_mode)]
@@ -681,6 +671,7 @@ void GPU_HW_OpenGL::DrawBatchVertices(BatchRenderMode render_mode, u32 base_vert
 
   glDrawArrays(GL_TRIANGLES, m_batch_base_vertex, num_vertices);
 }
+#endif
 
 void GPU_HW_OpenGL::SetBlendMode()
 {
@@ -753,20 +744,7 @@ void GPU_HW_OpenGL::SetDepthFunc(GLenum func)
   m_current_depth_test = func;
 }
 
-void GPU_HW_OpenGL::SetScissorFromDrawingArea()
-{
-  int left, top, right, bottom;
-  CalcScissorRect(&left, &top, &right, &bottom);
-
-  const int width = right - left;
-  const int height = bottom - top;
-  const int x = left;
-  const int y = top;
-
-  Log_DebugPrintf("SetScissor: (%d-%d, %d-%d)", x, x + width, y, y + height);
-  glScissor(x, y, width, height);
-}
-
+#if 0
 void GPU_HW_OpenGL::UploadUniformBuffer(const void* data, u32 data_size)
 {
   const GL::StreamBuffer::MappingResult res = m_uniform_stream_buffer->Map(m_uniform_buffer_alignment, data_size);
@@ -777,6 +755,7 @@ void GPU_HW_OpenGL::UploadUniformBuffer(const void* data, u32 data_size)
 
   m_renderer_stats.num_uniform_buffer_updates++;
 }
+#endif
 
 void GPU_HW_OpenGL::ClearDisplay()
 {
@@ -871,7 +850,7 @@ void GPU_HW_OpenGL::UpdateDisplay()
       const u32 reinterpret_crop_left = (m_crtc_state.display_vram_left - m_crtc_state.regs.X) * resolution_scale;
       const u32 uniforms[4] = {reinterpret_start_x, scaled_vram_offset_y + reinterpret_field_offset,
                                reinterpret_crop_left, reinterpret_field_offset};
-      UploadUniformBuffer(uniforms, sizeof(uniforms));
+      g_host_display->UploadUniformBuffer(uniforms, sizeof(uniforms));
       m_batch_ubo_dirty = true;
 
       Assert(scaled_display_width <= m_display_texture.GetWidth() &&
@@ -921,7 +900,7 @@ void GPU_HW_OpenGL::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
   m_vram_readback_texture.BindFramebuffer(GL_DRAW_FRAMEBUFFER);
   m_vram_texture.Bind();
   m_vram_read_program.Bind();
-  UploadUniformBuffer(uniforms, sizeof(uniforms));
+  g_host_display->UploadUniformBuffer(uniforms, sizeof(uniforms));
   glDisable(GL_BLEND);
   glDisable(GL_SCISSOR_TEST);
   glViewport(0, 0, encoded_width, encoded_height);
@@ -960,14 +939,14 @@ void GPU_HW_OpenGL::FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color)
     glClearColor(r, g, b, a);
     IsGLES() ? glClearDepthf(a) : glClearDepth(a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    SetScissorFromDrawingArea();
+    SetScissor();
   }
   else
   {
     const VRAMFillUBOData uniforms = GetVRAMFillUBOData(x, y, width, height, color);
 
     m_vram_fill_programs[BoolToUInt8(wrapped)][BoolToUInt8(interlaced)].Bind();
-    UploadUniformBuffer(&uniforms, sizeof(uniforms));
+    g_host_display->UploadUniformBuffer(&uniforms, sizeof(uniforms));
     glDisable(GL_BLEND);
     SetDepthFunc(GL_ALWAYS);
     glBindVertexArray(m_attributeless_vao_id);
@@ -1014,7 +993,7 @@ void GPU_HW_OpenGL::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* 
 
     const VRAMWriteUBOData uniforms =
       GetVRAMWriteUBOData(x, y, width, height, map_result.index_aligned, set_mask, check_mask);
-    UploadUniformBuffer(&uniforms, sizeof(uniforms));
+    g_host_display->UploadUniformBuffer(&uniforms, sizeof(uniforms));
 
     // the viewport should already be set to the full vram, so just adjust the scissor
     const Common::Rectangle<u32> scaled_bounds = bounds * m_resolution_scale;
@@ -1105,7 +1084,7 @@ void GPU_HW_OpenGL::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 wid
     IncludeVRAMDirtyRectangle(dst_bounds);
 
     const VRAMCopyUBOData uniforms = GetVRAMCopyUBOData(src_x, src_y, dst_x, dst_y, width, height);
-    UploadUniformBuffer(&uniforms, sizeof(uniforms));
+    g_host_display->UploadUniformBuffer(&uniforms, sizeof(uniforms));
 
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
@@ -1205,29 +1184,6 @@ void GPU_HW_OpenGL::UpdateVRAMReadTexture()
 
   GPU_HW::UpdateVRAMReadTexture();
 }
-#endif
-
-void GPU_HW_OpenGL::UpdateDepthBufferFromMaskBit()
-{
-  if (m_pgxp_depth_buffer)
-    return;
-
-  glDisable(GL_SCISSOR_TEST);
-  glDisable(GL_BLEND);
-  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-  glDepthFunc(GL_ALWAYS);
-
-  m_vram_texture.Bind();
-  m_vram_update_depth_program.Bind();
-  glBindVertexArray(m_attributeless_vao_id);
-  glDrawArrays(GL_TRIANGLES, 0, 3);
-
-  glBindVertexArray(m_vao_id);
-  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  glEnable(GL_SCISSOR_TEST);
-
-  m_vram_read_texture.Bind();
-}
 
 void GPU_HW_OpenGL::ClearDepthBuffer()
 {
@@ -1237,6 +1193,7 @@ void GPU_HW_OpenGL::ClearDepthBuffer()
   glEnable(GL_SCISSOR_TEST);
   m_last_depth_z = 1.0f;
 }
+#endif
 
 void GPU_HW_OpenGL::DownsampleFramebuffer(GL::Texture& source, u32 left, u32 top, u32 width, u32 height)
 {

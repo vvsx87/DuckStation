@@ -457,6 +457,9 @@ public:
 
   /// Uniform buffer abstraction.
   virtual void PushUniformBuffer(const void* data, u32 data_size);
+  virtual void* MapUniformBuffer(u32 size);
+  virtual void UnmapUniformBuffer(u32 size);
+  void UploadUniformBuffer(const void* data, u32 data_size);
 
   /// Drawing setup abstraction.
   virtual void SetFramebuffer(GPUFramebuffer* fb);

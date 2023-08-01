@@ -22,7 +22,6 @@ public:
   bool Initialize() override;
   void Reset(bool clear_vram) override;
 
-  void ResetGraphicsAPIState() override;
   void RestoreGraphicsAPIState() override;
   void UpdateSettings() override;
 
@@ -33,13 +32,6 @@ protected:
   void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color) override;
   void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask) override;
   void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height) override;
-  void UpdateDepthBufferFromMaskBit() override;
-  void ClearDepthBuffer() override;
-  void SetScissorFromDrawingArea() override;
-  void MapBatchVertexPointer(u32 required_vertices) override;
-  void UnmapBatchVertexPointer(u32 used_vertices) override;
-  void UploadUniformBuffer(const void* data, u32 data_size) override;
-  void DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices) override;
 
 private:
   enum : u32

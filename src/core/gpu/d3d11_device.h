@@ -195,6 +195,8 @@ public:
   void MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index) override;
   void UnmapIndexBuffer(u32 used_index_count) override;
   void PushUniformBuffer(const void* data, u32 data_size) override;
+  void* MapUniformBuffer(u32 size) override;
+  void UnmapUniformBuffer(u32 size);
   void SetFramebuffer(GPUFramebuffer* fb) override;
   void SetPipeline(GPUPipeline* pipeline) override;
   void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) override;
@@ -225,14 +227,14 @@ private:
   using InputLayoutMap =
     std::unordered_map<GPUPipeline::InputLayout, ComPtr<ID3D11InputLayout>, GPUPipeline::InputLayoutHash>;
 
-  static constexpr u32 PUSH_UNIFORM_BUFFER_SIZE = 64;
+  // Currently we don't stream uniforms, instead just re-map the buffer every time and let the driver take care of it.
+  static constexpr u32 MAX_UNIFORM_BUFFER_SIZE = 64;
   static constexpr u32 VERTEX_BUFFER_SIZE = 8 * 1024 * 1024;
   static constexpr u32 INDEX_BUFFER_SIZE = 4 * 1024 * 1024;
   static constexpr u8 NUM_TIMESTAMP_QUERIES = 3;
 
   static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
 
-  void CommitClear(GPUTexture* t);
   void PreDrawCheck();
 
   bool CheckStagingBufferSize(u32 width, u32 height, DXGI_FORMAT format);
@@ -278,7 +280,7 @@ private:
 
   D3D11::StreamBuffer m_vertex_buffer;
   D3D11::StreamBuffer m_index_buffer;
-  D3D11::StreamBuffer m_push_uniform_buffer;
+  D3D11::StreamBuffer m_uniform_buffer;
 
   D3D11Framebuffer* m_current_framebuffer = nullptr;
   D3D11Pipeline* m_current_pipeline = nullptr;

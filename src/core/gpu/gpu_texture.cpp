@@ -23,6 +23,7 @@ void GPUTexture::ClearBaseProperties()
   m_levels = 0;
   m_samples = 0;
   m_format = GPUTexture::Format::Unknown;
+  m_state = State::Dirty;
 }
 
 u32 GPUTexture::GPUTexture::GetPixelSize(GPUTexture::Format format)

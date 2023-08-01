@@ -88,7 +88,6 @@ public:
   virtual bool DoState(StateWrapper& sw, GPUTexture** save_to_texture, bool update_display);
 
   // Graphics API state reset/restore - call when drawing the UI etc.
-  virtual void ResetGraphicsAPIState();
   virtual void RestoreGraphicsAPIState();
 
   // Render statistics debug window.
@@ -192,6 +191,9 @@ public:
   // Dumps raw VRAM to a file.
   bool DumpVRAMToFile(const char* filename);
 
+  // Ensures all buffered vertices are drawn.
+  virtual void FlushRender();
+
 protected:
   TickCount CRTCTicksToSystemTicks(TickCount crtc_ticks, TickCount fractional_ticks) const;
   TickCount SystemTicksToCRTCTicks(TickCount sysclk_ticks, TickCount* fractional_ticks) const;
@@ -291,7 +293,6 @@ protected:
   virtual void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask);
   virtual void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height);
   virtual void DispatchRenderCommand();
-  virtual void FlushRender();
   virtual void ClearDisplay();
   virtual void UpdateDisplay();
   virtual void DrawRendererStats(bool is_idle_frame);

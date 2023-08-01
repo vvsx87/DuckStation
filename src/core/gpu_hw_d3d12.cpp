@@ -93,11 +93,6 @@ void GPU_HW_D3D12::Reset(bool clear_vram)
     ClearFramebuffer();
 }
 
-void GPU_HW_D3D12::ResetGraphicsAPIState()
-{
-  GPU_HW::ResetGraphicsAPIState();
-}
-
 void GPU_HW_D3D12::RestoreGraphicsAPIState()
 {
   ID3D12GraphicsCommandList* cmdlist = g_d3d12_context->GetCommandList();
@@ -118,7 +113,7 @@ void GPU_HW_D3D12::RestoreGraphicsAPIState()
 
   D3D12::SetViewport(cmdlist, 0, 0, m_vram_texture.GetWidth(), m_vram_texture.GetHeight());
 
-  SetScissorFromDrawingArea();
+  SetScissor();
 }
 
 void GPU_HW_D3D12::UpdateSettings()
@@ -132,7 +127,6 @@ void GPU_HW_D3D12::UpdateSettings()
   {
     RestoreGraphicsAPIState();
     ReadVRAM(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
-    ResetGraphicsAPIState();
   }
 
   // Everything should be finished executing before recreating resources.
@@ -156,10 +150,10 @@ void GPU_HW_D3D12::UpdateSettings()
     UpdateVRAM(0, 0, VRAM_WIDTH, VRAM_HEIGHT, m_vram_ptr, false, false);
     UpdateDepthBufferFromMaskBit();
     UpdateDisplay();
-    ResetGraphicsAPIState();
   }
 }
 
+#if 0
 void GPU_HW_D3D12::MapBatchVertexPointer(u32 required_vertices)
 {
   DebugAssert(!m_batch_start_vertex_ptr);
@@ -209,6 +203,7 @@ void GPU_HW_D3D12::UploadUniformBuffer(const void* data, u32 data_size)
   g_d3d12_context->GetCommandList()->SetGraphicsRootConstantBufferView(0, m_uniform_stream_buffer.GetGPUPointer() +
                                                                             m_current_uniform_buffer_offset);
 }
+#endif
 
 void GPU_HW_D3D12::SetCapabilities()
 {
@@ -817,6 +812,7 @@ bool GPU_HW_D3D12::BlitVRAMReplacementTexture(const TextureReplacementTexture* t
   return true;
 }
 
+#if 0
 void GPU_HW_D3D12::DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices)
 {
   ID3D12GraphicsCommandList* cmdlist = g_d3d12_context->GetCommandList();
@@ -831,14 +827,7 @@ void GPU_HW_D3D12::DrawBatchVertices(BatchRenderMode render_mode, u32 base_verte
   cmdlist->SetPipelineState(pipeline);
   cmdlist->DrawInstanced(num_vertices, 1, base_vertex, 0);
 }
-
-void GPU_HW_D3D12::SetScissorFromDrawingArea()
-{
-  int left, top, right, bottom;
-  CalcScissorRect(&left, &top, &right, &bottom);
-
-  D3D12::SetScissor(g_d3d12_context->GetCommandList(), left, top, right - left, bottom - top);
-}
+#endif
 
 void GPU_HW_D3D12::ClearDisplay()
 {
@@ -1159,24 +1148,6 @@ void GPU_HW_D3D12::UpdateVRAMReadTexture()
   GPU_HW::UpdateVRAMReadTexture();
 }
 
-#endif
-
-void GPU_HW_D3D12::UpdateDepthBufferFromMaskBit()
-{
-  ID3D12GraphicsCommandList* cmdlist = g_d3d12_context->GetCommandList();
-
-  m_vram_texture.TransitionToState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-  cmdlist->OMSetRenderTargets(0, nullptr, FALSE, &m_vram_depth_texture.GetRTVOrDSVDescriptor().cpu_handle);
-  cmdlist->SetGraphicsRootDescriptorTable(1, m_vram_texture.GetSRVDescriptor());
-  cmdlist->SetPipelineState(m_vram_update_depth_pipeline.Get());
-  D3D12::SetViewportAndScissor(cmdlist, 0, 0, m_vram_texture.GetWidth(), m_vram_texture.GetHeight());
-  cmdlist->DrawInstanced(3, 1, 0, 0);
-
-  m_vram_texture.TransitionToState(D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-  RestoreGraphicsAPIState();
-}
 
 void GPU_HW_D3D12::ClearDepthBuffer()
 {
@@ -1184,6 +1155,7 @@ void GPU_HW_D3D12::ClearDepthBuffer()
   cmdlist->ClearDepthStencilView(m_vram_depth_texture.GetRTVOrDSVDescriptor(), D3D12_CLEAR_FLAG_DEPTH,
                                  m_pgxp_depth_buffer ? 1.0f : 0.0f, 0, 0, nullptr);
 }
+#endif
 
 std::unique_ptr<GPU> GPU::CreateHardwareD3D12Renderer()
 {

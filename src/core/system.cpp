@@ -799,8 +799,6 @@ bool System::RecreateGPU(GPURenderer renderer, bool force_recreate_display, bool
   if (!state_valid)
     Log_ErrorPrintf("Failed to save old GPU state when switching renderers");
 
-  g_gpu->ResetGraphicsAPIState();
-
   // create new renderer
   g_gpu.reset();
   if (force_recreate_display)
@@ -822,7 +820,6 @@ bool System::RecreateGPU(GPURenderer renderer, bool force_recreate_display, bool
     g_gpu->RestoreGraphicsAPIState();
     g_gpu->DoState(sw, nullptr, update_display);
     TimingEvents::DoState(sw);
-    g_gpu->ResetGraphicsAPIState();
   }
 
   // fix up vsync etc
@@ -1507,8 +1504,6 @@ void System::DestroySystem()
   Timers::Shutdown();
   Pad::Shutdown();
   CDROM::Shutdown();
-  if (g_gpu)
-    g_gpu->ResetGraphicsAPIState();
   g_gpu.reset();
   InterruptController::Shutdown();
   DMA::Shutdown();
@@ -1727,9 +1722,7 @@ bool System::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_di
     return false;
 
   g_gpu->RestoreGraphicsAPIState();
-  const bool gpu_result = sw.DoMarker("GPU") && g_gpu->DoState(sw, host_texture, update_display);
-  g_gpu->ResetGraphicsAPIState();
-  if (!gpu_result)
+  if (!sw.DoMarker("GPU") || !g_gpu->DoState(sw, host_texture, update_display))
     return false;
 
   if (!sw.DoMarker("CDROM") || !CDROM::DoState(sw))
@@ -1864,8 +1857,6 @@ void System::InternalReset()
 #ifdef WITH_CHEEVOS
   Achievements::ResetRuntime();
 #endif
-
-  g_gpu->ResetGraphicsAPIState();
 }
 
 std::string System::GetMediaPathFromSaveState(const char* path)
@@ -2147,8 +2138,6 @@ bool System::InternalSaveState(ByteStream* state, u32 screenshot_size /* = 256 *
       header.data_compressed_size = static_cast<u32>(state->GetPosition() - header.offset_to_data);
     }
 
-    g_gpu->ResetGraphicsAPIState();
-
     if (!result)
       return false;
   }
@@ -2175,11 +2164,10 @@ void System::SingleStepCPU()
   CPU::SingleStep();
 
   SPU::GeneratePendingSamples();
+  g_gpu->FlushRender();
 
   if (s_frame_number != old_frame_number && s_cheat_list)
     s_cheat_list->Apply();
-
-  g_gpu->ResetGraphicsAPIState();
 }
 
 void System::DoRunFrame()
@@ -2215,11 +2203,10 @@ void System::DoRunFrame()
 
   // Generate any pending samples from the SPU before sleeping, this way we reduce the chances of underruns.
   SPU::GeneratePendingSamples();
+  g_gpu->FlushRender();
 
   if (s_cheat_list)
     s_cheat_list->Apply();
-
-  g_gpu->ResetGraphicsAPIState();
 }
 
 void System::RunFrame()
@@ -2986,10 +2973,7 @@ bool System::DumpVRAM(const char* filename)
     return false;
 
   g_gpu->RestoreGraphicsAPIState();
-  const bool result = g_gpu->DumpVRAMToFile(filename);
-  g_gpu->ResetGraphicsAPIState();
-
-  return result;
+  return g_gpu->DumpVRAMToFile(filename);
 }
 
 bool System::DumpSPURAM(const char* filename)

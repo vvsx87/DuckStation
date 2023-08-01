@@ -56,6 +56,30 @@ D3D11_TEXTURE2D_DESC D3D11Texture::GetDesc() const
   return desc;
 }
 
+void D3D11Texture::CommitClear(ID3D11DeviceContext* context)
+{
+  if (m_state == GPUTexture::State::Dirty)
+    return;
+
+  // TODO: 11.1
+  if (IsDepthStencil())
+  {
+    if (m_state == GPUTexture::State::Invalidated)
+      ; // context->DiscardView(GetD3DDSV());
+    else
+      context->ClearDepthStencilView(GetD3DDSV(), D3D11_CLEAR_DEPTH, GetClearDepth(), 0);
+  }
+  else if (IsRenderTarget())
+  {
+    if (m_state == GPUTexture::State::Invalidated)
+      ; // context->DiscardView(GetD3DRTV());
+    else
+      context->ClearRenderTargetView(GetD3DRTV(), GetUNormClearColor().data());
+  }
+
+  m_state = GPUTexture::State::Dirty;
+}
+
 bool D3D11Texture::IsValid() const
 {
   return static_cast<bool>(m_texture);
@@ -80,7 +104,10 @@ bool D3D11Texture::Update(u32 x, u32 y, u32 width, u32 height, const void* data,
                        static_cast<LONG>(y + height), 1);
   const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
 
-  D3D11Device::GetD3DContext()->UpdateSubresource(m_texture.Get(), srnum, &box, data, pitch, 0);
+  ID3D11DeviceContext* context = D3D11Device::GetD3DContext();
+  CommitClear(context);
+  context->UpdateSubresource(m_texture.Get(), srnum, &box, data, pitch, 0);
+  m_state = GPUTexture::State::Dirty;
   return true;
 }
 
@@ -92,9 +119,12 @@ bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32
 
   const bool discard = (width == m_width && height == m_height);
   const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
+
+  ID3D11DeviceContext* context = D3D11Device::GetD3DContext();
+  CommitClear(context);
+
   D3D11_MAPPED_SUBRESOURCE sr;
-  HRESULT hr = D3D11Device::GetD3DContext()->Map(m_texture.Get(), srnum,
-                                                 discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_READ_WRITE, 0, &sr);
+  HRESULT hr = context->Map(m_texture.Get(), srnum, discard ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_READ_WRITE, 0, &sr);
   if (FAILED(hr))
   {
     Log_ErrorPrintf("Map pixels texture failed: %08X", hr);
@@ -104,6 +134,7 @@ bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32
   *map = static_cast<u8*>(sr.pData) + (y * sr.RowPitch) + (x * GetPixelSize());
   *map_stride = sr.RowPitch;
   m_mapped_subresource = srnum;
+  m_state = GPUTexture::State::Dirty;
   return true;
 }
 
@@ -284,6 +315,7 @@ bool D3D11Texture::Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture)
   m_levels = static_cast<u8>(desc.MipLevels);
   m_samples = static_cast<u8>(desc.SampleDesc.Count);
   m_dynamic = (desc.Usage == D3D11_USAGE_DYNAMIC);
+  m_state = GPUTexture::State::Dirty;
   return true;
 }
 

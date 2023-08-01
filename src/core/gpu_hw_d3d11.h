@@ -6,7 +6,6 @@
 #include "gpu/d3d11/stream_buffer.h"
 #include "gpu/d3d11_texture.h"
 #include "gpu_hw.h"
-#include "texture_replacements.h"
 #include <array>
 #include <d3d11.h>
 #include <memory>
@@ -19,119 +18,22 @@ public:
   template<typename T>
   using ComPtr = Microsoft::WRL::ComPtr<T>;
 
-  GPU_HW_D3D11(ID3D11Device* device, ID3D11DeviceContext* context);
+  GPU_HW_D3D11();
   ~GPU_HW_D3D11() override;
 
   GPURenderer GetRendererType() const override;
 
   bool Initialize() override;
-  void Reset(bool clear_vram) override;
-
-  void ResetGraphicsAPIState() override;
-  void RestoreGraphicsAPIState() override;
 
 protected:
-  void ClearDisplay() override;
-  void ReadVRAM(u32 x, u32 y, u32 width, u32 height) override;
-  void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color) override;
   void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask) override;
-  void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height) override;
-  void UpdateDepthBufferFromMaskBit() override;
-  void ClearDepthBuffer() override;
-  void SetScissorFromDrawingArea() override;
-  void UploadUniformBuffer(const void* data, u32 data_size) override;
 
 private:
-  enum : u32
-  {
-    // Currently we don't stream uniforms, instead just re-map the buffer every time and let the driver take care of it.
-    MAX_UNIFORM_BUFFER_SIZE = 64
-  };
-
-  ALWAYS_INLINE D3D11Texture* GetVRAMTexture() const { return static_cast<D3D11Texture*>(m_vram_texture.get()); }
-  ALWAYS_INLINE D3D11Texture* GetVRAMDepthTexture() const
-  {
-    return static_cast<D3D11Texture*>(m_vram_depth_texture.get());
-  }
-  ALWAYS_INLINE D3D11Texture* GetVRAMReadTexture() const
-  {
-    return static_cast<D3D11Texture*>(m_vram_read_texture.get());
-  }
-  ALWAYS_INLINE D3D11Texture* GetVRAMEncodingTexture() const
-  {
-    return static_cast<D3D11Texture*>(m_vram_readback_texture.get());
-  }
-  ALWAYS_INLINE D3D11Texture* GetDisplayTexture() const
-  {
-    return static_cast<D3D11Texture*>(m_display_texture.get());
-  }
-
   void SetCapabilities();
-  bool CreateFramebuffer() override;
-  void ClearFramebuffer();
-  void DestroyFramebuffer() override;
 
-  bool CreateUniformBuffer();
   bool CreateTextureBuffer();
-  bool CreateStateObjects();
-  void DestroyStateObjects();
-
-  bool CompileShaders();
-  void DestroyShaders();
-  void SetViewport(u32 x, u32 y, u32 width, u32 height);
-  void SetScissor(u32 x, u32 y, u32 width, u32 height);
-  void SetViewportAndScissor(u32 x, u32 y, u32 width, u32 height);
-
-  void DrawUtilityShader(ID3D11PixelShader* shader, const void* uniforms, u32 uniforms_size);
-
-  bool BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u32 dst_x, u32 dst_y, u32 width, u32 height);
-
-  void DownsampleFramebuffer(const D3D11Texture* source, u32 left, u32 top, u32 width, u32 height);
-  void DownsampleFramebufferAdaptive(const D3D11Texture* source, u32 left, u32 top, u32 width, u32 height);
-  void DownsampleFramebufferBoxFilter(const D3D11Texture* source, u32 left, u32 top, u32 width, u32 height);
-
-  ComPtr<ID3D11Device> m_device;
-  ComPtr<ID3D11DeviceContext> m_context;
-
-  D3D11::StreamBuffer m_uniform_stream_buffer;
 
   D3D11::StreamBuffer m_texture_stream_buffer;
 
   ComPtr<ID3D11ShaderResourceView> m_texture_stream_buffer_srv_r16ui;
-
-  ComPtr<ID3D11RasterizerState> m_cull_none_rasterizer_state;
-  ComPtr<ID3D11RasterizerState> m_cull_none_rasterizer_state_no_msaa;
-
-  ComPtr<ID3D11DepthStencilState> m_depth_disabled_state;
-  ComPtr<ID3D11DepthStencilState> m_depth_test_always_state;
-  ComPtr<ID3D11DepthStencilState> m_depth_test_less_state;
-  ComPtr<ID3D11DepthStencilState> m_depth_test_greater_state;
-
-  ComPtr<ID3D11BlendState> m_blend_disabled_state;
-  ComPtr<ID3D11BlendState> m_blend_no_color_writes_state;
-
-  ComPtr<ID3D11SamplerState> m_point_sampler_state;
-  ComPtr<ID3D11SamplerState> m_linear_sampler_state;
-  ComPtr<ID3D11SamplerState> m_trilinear_sampler_state;
-
-  ComPtr<ID3D11VertexShader> m_screen_quad_vertex_shader;
-  ComPtr<ID3D11VertexShader> m_uv_quad_vertex_shader;
-  ComPtr<ID3D11PixelShader> m_copy_pixel_shader;
-  std::array<std::array<ComPtr<ID3D11PixelShader>, 2>, 2> m_vram_fill_pixel_shaders; // [wrapped][interlaced]
-  ComPtr<ID3D11PixelShader> m_vram_read_pixel_shader;
-  ComPtr<ID3D11PixelShader> m_vram_write_pixel_shader;
-  ComPtr<ID3D11PixelShader> m_vram_copy_pixel_shader;
-  ComPtr<ID3D11PixelShader> m_vram_update_depth_pixel_shader;
-  std::array<std::array<ComPtr<ID3D11PixelShader>, 3>, 2> m_display_pixel_shaders; // [depth_24][interlaced]
-
-  D3D11Texture m_vram_replacement_texture;
-
-  // downsampling
-  ComPtr<ID3D11PixelShader> m_downsample_first_pass_pixel_shader;
-  ComPtr<ID3D11PixelShader> m_downsample_mid_pass_pixel_shader;
-  ComPtr<ID3D11PixelShader> m_downsample_blur_pass_pixel_shader;
-  ComPtr<ID3D11PixelShader> m_downsample_composite_pixel_shader;
-  D3D11Texture m_downsample_texture;
-  D3D11Texture m_downsample_weight_texture;
-  std::vector<std::pair<ComPtr<ID3D11ShaderResourceView>, ComPtr<ID3D11RenderTargetView>>> m_downsample_mip_views;
 };

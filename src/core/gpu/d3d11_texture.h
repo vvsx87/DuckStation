@@ -61,6 +61,7 @@ public:
   void Destroy();
 
   D3D11_TEXTURE2D_DESC GetDesc() const;
+  void CommitClear(ID3D11DeviceContext* context);
 
   bool IsValid() const override;
 
