@@ -188,7 +188,7 @@ GPUDevice::~GPUDevice()
 
 RenderAPI GPUDevice::GetPreferredAPI()
 {
-#ifdef _WIN32
+#ifdef _WIN32___ // TODO remove me
   return RenderAPI::D3D11;
 #else
   return RenderAPI::OpenGL;
@@ -503,6 +503,19 @@ void GPUDevice::Draw(u32 base_vertex, u32 vertex_count)
 }
 
 void GPUDevice::DrawIndexed(u32 base_index, u32 index_count, u32 base_vertex)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
+bool GPUDevice::BeginPresent(bool skip_present)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return false;
+}
+
+void GPUDevice::EndPresent()
 {
   // TODO: REMOVE ME
   UnreachableCode();
@@ -877,6 +890,48 @@ bool GPUDevice::IsUsingLinearFiltering() const
   return g_settings.display_linear_filtering;
 }
 
+bool GPUDevice::Render(bool skip_present)
+{
+  if (skip_present)
+  {
+    // Should never return true here..
+    if (UNLIKELY(BeginPresent(skip_present)))
+      Panic("BeginPresent() returned true when skipping...");
+
+    // Need to kick ImGui state.
+    ImGui::Render();
+    return false;
+  }
+
+  bool render_frame;
+  if (HasDisplayTexture())
+  {
+    const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
+    render_frame = RenderDisplay(nullptr, left, top, width, height, m_display_texture, m_display_texture_view_x,
+                                 m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
+                                 IsUsingLinearFiltering());
+  }
+  else
+  {
+    render_frame = BeginPresent(false);
+  }
+
+  if (!render_frame)
+  {
+    // Window minimized etc.
+    ImGui::Render();
+    return false;
+  }
+
+  SetViewportAndScissor(0, 0, GetWindowWidth(), GetWindowHeight());
+
+  RenderImGui();
+  RenderSoftwareCursor();
+
+  EndPresent();
+  return true;
+}
+
 bool GPUDevice::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect,
                                  std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format)
 {
@@ -909,10 +964,12 @@ bool GPUDevice::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<
   return true;
 }
 
-void GPUDevice::RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 width, s32 height, GPUTexture* texture,
+bool GPUDevice::RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 width, s32 height, GPUTexture* texture,
                               s32 texture_view_x, s32 texture_view_y, s32 texture_view_width, s32 texture_view_height,
                               bool linear_filter)
 {
+  GL_SCOPE("RenderDisplay: %dx%d at %d,%d", left, top, width, height);
+
   static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8; // TODO FIXME m_window_info.surface_format
   const u32 target_width = target ? target->GetWidth() : m_window_info.surface_width;
   const u32 target_height = target ? target->GetHeight() : m_window_info.surface_height;
@@ -925,7 +982,10 @@ void GPUDevice::RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 wid
   }
   else
   {
-    SetFramebuffer(target);
+    if (target)
+      SetFramebuffer(target);
+    else if (!BeginPresent(false))
+      return false;
   }
 
   SetPipeline(m_display_pipeline.get());
@@ -946,8 +1006,12 @@ void GPUDevice::RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 wid
 
   if (postfx)
   {
-    m_post_processing_chain->Apply(target, left, top, width, height, texture_view_width, texture_view_height,
-                                   target_width, target_height);
+    return m_post_processing_chain->Apply(target, left, top, width, height, texture_view_width, texture_view_height,
+                                          target_width, target_height);
+  }
+  else
+  {
+    return true;
   }
 }
 

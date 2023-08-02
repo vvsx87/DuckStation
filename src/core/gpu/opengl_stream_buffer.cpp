@@ -1,57 +1,71 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
-#include "stream_buffer.h"
+#include "opengl_stream_buffer.h"
+
 #include "common/align.h"
 #include "common/assert.h"
+
 #include <array>
 #include <cstdio>
 
-namespace GL {
-
-StreamBuffer::StreamBuffer(GLenum target, GLuint buffer_id, u32 size)
+OpenGLStreamBuffer::OpenGLStreamBuffer(GLenum target, GLuint buffer_id, u32 size)
   : m_target(target), m_buffer_id(buffer_id), m_size(size)
 {
 }
 
-StreamBuffer::~StreamBuffer()
+OpenGLStreamBuffer::~OpenGLStreamBuffer()
 {
   glDeleteBuffers(1, &m_buffer_id);
 }
 
-void StreamBuffer::Bind()
+void OpenGLStreamBuffer::Bind()
 {
   glBindBuffer(m_target, m_buffer_id);
 }
 
-void StreamBuffer::Unbind()
+void OpenGLStreamBuffer::Unbind()
 {
   glBindBuffer(m_target, 0);
 }
 
-namespace detail {
+void OpenGLStreamBuffer::SetDebugName(const std::string_view& name)
+{
+#ifdef _DEBUG
+  if (glObjectLabel)
+  {
+    glObjectLabel(GL_BUFFER, GetGLBufferId(), static_cast<GLsizei>(name.length()),
+                  static_cast<const GLchar*>(name.data()));
+  }
+#endif
+}
+
+namespace {
 
 // Uses glBufferSubData() to update. Preferred for drivers which don't support {ARB,EXT}_buffer_storage.
-class BufferSubDataStreamBuffer final : public StreamBuffer
+class BufferSubDataStreamBuffer final : public OpenGLStreamBuffer
 {
 public:
-  ~BufferSubDataStreamBuffer() override = default;
+  ~BufferSubDataStreamBuffer() override { _aligned_free(m_cpu_buffer); }
 
   MappingResult Map(u32 alignment, u32 min_size) override
   {
-    return MappingResult{static_cast<void*>(m_cpu_buffer.data()), 0, 0, m_size / alignment};
+    return MappingResult{static_cast<void*>(m_cpu_buffer), 0, 0, m_size / alignment};
   }
 
-  void Unmap(u32 used_size) override
+  u32 Unmap(u32 used_size) override
   {
     if (used_size == 0)
-      return;
+      return 0;
 
     glBindBuffer(m_target, m_buffer_id);
-    glBufferSubData(m_target, 0, used_size, m_cpu_buffer.data());
+    glBufferSubData(m_target, 0, used_size, m_cpu_buffer);
+    return 0;
   }
 
-  static std::unique_ptr<StreamBuffer> Create(GLenum target, u32 size)
+  u32 GetChunkSize() const override { return m_size; }
+
+  static std::unique_ptr<OpenGLStreamBuffer> Create(GLenum target, u32 size)
   {
     glGetError();
 
@@ -63,43 +77,49 @@ public:
     GLenum err = glGetError();
     if (err != GL_NO_ERROR)
     {
+      glBindBuffer(target, 0);
       glDeleteBuffers(1, &buffer_id);
       return {};
     }
 
-    return std::unique_ptr<StreamBuffer>(new BufferSubDataStreamBuffer(target, buffer_id, size));
+    return std::unique_ptr<OpenGLStreamBuffer>(new BufferSubDataStreamBuffer(target, buffer_id, size));
   }
 
 private:
-  BufferSubDataStreamBuffer(GLenum target, GLuint buffer_id, u32 size)
-    : StreamBuffer(target, buffer_id, size), m_cpu_buffer(size)
+  BufferSubDataStreamBuffer(GLenum target, GLuint buffer_id, u32 size) : OpenGLStreamBuffer(target, buffer_id, size)
   {
+    m_cpu_buffer = static_cast<u8*>(_aligned_malloc(size, 32));
+    if (!m_cpu_buffer)
+      Panic("Failed to allocate CPU storage for GL buffer");
   }
 
-  std::vector<u8> m_cpu_buffer;
+  u8* m_cpu_buffer;
 };
 
 // Uses BufferData() to orphan the buffer after every update. Used on Mali where BufferSubData forces a sync.
-class BufferDataStreamBuffer final : public StreamBuffer
+class BufferDataStreamBuffer final : public OpenGLStreamBuffer
 {
 public:
-  ~BufferDataStreamBuffer() override = default;
+  ~BufferDataStreamBuffer() override { _aligned_free(m_cpu_buffer); }
 
   MappingResult Map(u32 alignment, u32 min_size) override
   {
-    return MappingResult{static_cast<void*>(m_cpu_buffer.data()), 0, 0, m_size / alignment};
+    return MappingResult{static_cast<void*>(m_cpu_buffer), 0, 0, m_size / alignment};
   }
 
-  void Unmap(u32 used_size) override
+  u32 Unmap(u32 used_size) override
   {
     if (used_size == 0)
-      return;
+      return 0;
 
     glBindBuffer(m_target, m_buffer_id);
-    glBufferData(m_target, used_size, m_cpu_buffer.data(), GL_STREAM_DRAW);
+    glBufferData(m_target, used_size, m_cpu_buffer, GL_STREAM_DRAW);
+    return 0;
   }
 
-  static std::unique_ptr<StreamBuffer> Create(GLenum target, u32 size)
+  u32 GetChunkSize() const override { return m_size; }
+
+  static std::unique_ptr<OpenGLStreamBuffer> Create(GLenum target, u32 size)
   {
     glGetError();
 
@@ -111,24 +131,27 @@ public:
     GLenum err = glGetError();
     if (err != GL_NO_ERROR)
     {
+      glBindBuffer(target, 0);
       glDeleteBuffers(1, &buffer_id);
       return {};
     }
 
-    return std::unique_ptr<StreamBuffer>(new BufferDataStreamBuffer(target, buffer_id, size));
+    return std::unique_ptr<OpenGLStreamBuffer>(new BufferDataStreamBuffer(target, buffer_id, size));
   }
 
 private:
-  BufferDataStreamBuffer(GLenum target, GLuint buffer_id, u32 size)
-    : StreamBuffer(target, buffer_id, size), m_cpu_buffer(size)
+  BufferDataStreamBuffer(GLenum target, GLuint buffer_id, u32 size) : OpenGLStreamBuffer(target, buffer_id, size)
   {
+    m_cpu_buffer = static_cast<u8*>(_aligned_malloc(size, 32));
+    if (!m_cpu_buffer)
+      Panic("Failed to allocate CPU storage for GL buffer");
   }
 
-  std::vector<u8> m_cpu_buffer;
+  u8* m_cpu_buffer;
 };
 
 // Base class for implementations which require syncing.
-class SyncingStreamBuffer : public StreamBuffer
+class SyncingStreamBuffer : public OpenGLStreamBuffer
 {
 public:
   enum : u32
@@ -147,13 +170,13 @@ public:
 
 protected:
   SyncingStreamBuffer(GLenum target, GLuint buffer_id, u32 size)
-    : StreamBuffer(target, buffer_id, size), m_bytes_per_block((size + (NUM_SYNC_POINTS)-1) / NUM_SYNC_POINTS)
+    : OpenGLStreamBuffer(target, buffer_id, size), m_bytes_per_block((size + (NUM_SYNC_POINTS)-1) / NUM_SYNC_POINTS)
   {
   }
 
-  u32 GetSyncIndexForOffset(u32 offset) { return offset / m_bytes_per_block; }
+  ALWAYS_INLINE u32 GetSyncIndexForOffset(u32 offset) { return offset / m_bytes_per_block; }
 
-  void AddSyncsForOffset(u32 offset)
+  ALWAYS_INLINE void AddSyncsForOffset(u32 offset)
   {
     const u32 end = GetSyncIndexForOffset(offset);
     for (; m_used_block_index < end; m_used_block_index++)
@@ -163,14 +186,14 @@ protected:
     }
   }
 
-  void WaitForSync(GLsync& sync)
+  ALWAYS_INLINE void WaitForSync(GLsync& sync)
   {
     glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
     glDeleteSync(sync);
     sync = nullptr;
   }
 
-  void EnsureSyncsWaitedForOffset(u32 offset)
+  ALWAYS_INLINE void EnsureSyncsWaitedForOffset(u32 offset)
   {
     const u32 end = std::min<u32>(GetSyncIndexForOffset(offset) + 1, NUM_SYNC_POINTS);
     for (; m_available_block_index < end; m_available_block_index++)
@@ -207,6 +230,8 @@ protected:
     }
   }
 
+  u32 GetChunkSize() const override { return m_size / NUM_SYNC_POINTS; }
+
   u32 m_position = 0;
   u32 m_used_block_index = 0;
   u32 m_available_block_index = NUM_SYNC_POINTS;
@@ -221,6 +246,7 @@ public:
   {
     glBindBuffer(m_target, m_buffer_id);
     glUnmapBuffer(m_target);
+    glBindBuffer(m_target, 0);
   }
 
   MappingResult Map(u32 alignment, u32 min_size) override
@@ -236,19 +262,22 @@ public:
                          free_space_in_block / alignment};
   }
 
-  void Unmap(u32 used_size) override
+  u32 Unmap(u32 used_size) override
   {
     DebugAssert((m_position + used_size) <= m_size);
     if (!m_coherent)
     {
+      // TODO: shouldn't be needed anymore
       Bind();
       glFlushMappedBufferRange(m_target, m_position, used_size);
     }
 
+    const u32 prev_position = m_position;
     m_position += used_size;
+    return prev_position;
   }
 
-  static std::unique_ptr<StreamBuffer> Create(GLenum target, u32 size, bool coherent = true)
+  static std::unique_ptr<OpenGLStreamBuffer> Create(GLenum target, u32 size, bool coherent = true)
   {
     glGetError();
 
@@ -266,14 +295,16 @@ public:
     GLenum err = glGetError();
     if (err != GL_NO_ERROR)
     {
+      glBindBuffer(target, 0);
       glDeleteBuffers(1, &buffer_id);
       return {};
     }
 
     u8* mapped_ptr = static_cast<u8*>(glMapBufferRange(target, 0, size, map_flags));
-    Assert(mapped_ptr);
+    AssertMsg(mapped_ptr, "Persistent buffer was mapped");
 
-    return std::unique_ptr<StreamBuffer>(new BufferStorageStreamBuffer(target, buffer_id, size, mapped_ptr, coherent));
+    return std::unique_ptr<OpenGLStreamBuffer>(
+      new BufferStorageStreamBuffer(target, buffer_id, size, mapped_ptr, coherent));
   }
 
 private:
@@ -286,14 +317,14 @@ private:
   bool m_coherent;
 };
 
-} // namespace detail
+} // namespace
 
-std::unique_ptr<StreamBuffer> StreamBuffer::Create(GLenum target, u32 size)
+std::unique_ptr<OpenGLStreamBuffer> OpenGLStreamBuffer::Create(GLenum target, u32 size)
 {
-  std::unique_ptr<StreamBuffer> buf;
+  std::unique_ptr<OpenGLStreamBuffer> buf;
   if (GLAD_GL_VERSION_4_4 || GLAD_GL_ARB_buffer_storage || GLAD_GL_EXT_buffer_storage)
   {
-    buf = detail::BufferStorageStreamBuffer::Create(target, size);
+    buf = BufferStorageStreamBuffer::Create(target, size);
     if (buf)
       return buf;
   }
@@ -304,13 +335,11 @@ std::unique_ptr<StreamBuffer> StreamBuffer::Create(GLenum target, u32 size)
   if (std::strcmp(vendor, "ARM") == 0 || std::strcmp(vendor, "Qualcomm") == 0)
   {
     // Mali and Adreno drivers can't do sub-buffer tracking...
-    return detail::BufferDataStreamBuffer::Create(target, size);
+    return BufferDataStreamBuffer::Create(target, size);
   }
 
-  return detail::BufferSubDataStreamBuffer::Create(target, size);
+  return BufferSubDataStreamBuffer::Create(target, size);
 #else
-  return detail::BufferDataStreamBuffer::Create(target, size);
+  return BufferDataStreamBuffer::Create(target, size);
 #endif
 }
-
-} // namespace GL

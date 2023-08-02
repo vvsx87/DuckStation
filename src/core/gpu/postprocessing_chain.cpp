@@ -243,7 +243,7 @@ bool PostProcessingChain::CheckTargets(GPUTexture::Format format, u32 target_wid
   return true;
 }
 
-void PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s32 final_top, s32 final_width,
+bool PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s32 final_top, s32 final_width,
                                 s32 final_height, s32 orig_width, s32 orig_height, u32 target_width, u32 target_height)
 {
   const u32 window_width = final_target ? final_target->GetWidth() : g_host_display->GetWindowWidth();
@@ -256,6 +256,7 @@ void PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s3
   GPUTexture* input = m_input_texture.get();
   input->MakeReadyForSampling();
 
+  bool result = true;
   const PostProcessingShader& final_stage = m_shaders.back();
   for (PostProcessingShader& stage : m_shaders)
   {
@@ -267,7 +268,18 @@ void PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s3
     if (!is_final)
       g_host_display->ClearRenderTarget(stage.GetOutputTexture(), 0);
 
-    g_host_display->SetFramebuffer(is_final ? final_target : stage.GetOutputFramebuffer());
+    if (is_final && !final_target)
+    {
+      if (!g_host_display->BeginPresent(false))
+      {
+        result = false;
+        break;
+      }
+    }
+    else
+    {
+      g_host_display->SetFramebuffer(is_final ? final_target : stage.GetOutputFramebuffer());
+    }
 
     g_host_display->SetPipeline(stage.GetPipeline());
     g_host_display->SetTextureSampler(0, input, m_border_sampler.get());
@@ -288,4 +300,5 @@ void PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s3
   }
 
   GL_POP();
+  return result;
 }

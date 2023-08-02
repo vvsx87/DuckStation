@@ -573,6 +573,7 @@ bool D3D12GPUDevice::UpdateImGuiFontTexture()
 }
 #endif
 
+#if 0
 bool D3D12GPUDevice::Render(bool skip_present)
 {
   if (skip_present || !m_swap_chain)
@@ -604,6 +605,7 @@ bool D3D12GPUDevice::Render(bool skip_present)
 
   return true;
 }
+#endif
 
 bool D3D12GPUDevice::SetGPUTimingEnabled(bool enabled)
 {

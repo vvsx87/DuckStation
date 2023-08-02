@@ -83,6 +83,17 @@ public:
     BitField<u64, u8, 18, 4> max_lod;
     BitField<u64, u32, 32, 32> border_color;
     u64 key;
+
+    // clang-format off
+    ALWAYS_INLINE float GetBorderRed() const { return static_cast<float>(border_color.GetValue() & 0xFF) / 255.0f; }
+    ALWAYS_INLINE float GetBorderGreen() const { return static_cast<float>((border_color.GetValue() >> 8) & 0xFF) / 255.0f; }
+    ALWAYS_INLINE float GetBorderBlue() const { return static_cast<float>((border_color.GetValue() >> 16) & 0xFF) / 255.0f; }
+    ALWAYS_INLINE float GetBorderAlpha() const { return static_cast<float>((border_color.GetValue() >> 24) & 0xFF) / 255.0f; }
+    // clang-format on
+    ALWAYS_INLINE std::array<float, 4> GetBorderFloatColor() const
+    {
+      return std::array<float, 4>{GetBorderRed(), GetBorderGreen(), GetBorderBlue(), GetBorderAlpha()};
+    }
   };
 
   GPUSampler();
@@ -98,7 +109,9 @@ enum class GPUShaderStage : u8
 {
   Vertex,
   Fragment,
-  Compute
+  Compute,
+
+  MaxCount
 };
 
 class GPUShader
@@ -314,6 +327,17 @@ public:
     ALWAYS_INLINE bool operator<(const BlendState& rhs) const { return key < rhs.key; }
     // clang-format on
 
+    // clang-format off
+    ALWAYS_INLINE float GetConstantRed() const { return static_cast<float>(constant.GetValue() & 0xFF) / 255.0f; }
+    ALWAYS_INLINE float GetConstantGreen() const { return static_cast<float>((constant.GetValue() >> 8) & 0xFF) / 255.0f; }
+    ALWAYS_INLINE float GetConstantBlue() const { return static_cast<float>((constant.GetValue() >> 16) & 0xFF) / 255.0f; }
+    ALWAYS_INLINE float GetConstantAlpha() const { return static_cast<float>((constant.GetValue() >> 24) & 0xFF) / 255.0f; }
+    // clang-format on
+    ALWAYS_INLINE std::array<float, 4> GetConstantFloatColor() const
+    {
+      return std::array<float, 4>{GetConstantRed(), GetConstantGreen(), GetConstantBlue(), GetConstantAlpha()};
+    }
+
     static BlendState GetNoBlendingState();
     static BlendState GetAlphaBlendingState();
   };
@@ -397,6 +421,8 @@ public:
     std::vector<std::string> adapter_names;
     std::vector<std::string> fullscreen_modes;
   };
+
+  static constexpr u32 MAX_TEXTURE_SAMPLERS = 4;
 
   virtual ~GPUDevice();
 
@@ -525,7 +551,9 @@ public:
   virtual void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex);
 
   /// Returns false if the window was completely occluded.
-  virtual bool Render(bool skip_present) = 0;
+  virtual bool BeginPresent(bool skip_present);
+  virtual void EndPresent();
+  bool Render(bool skip_present);
 
   /// Renders the display with postprocessing to the specified image.
   bool RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect, std::vector<u32>* out_pixels,
@@ -613,7 +641,7 @@ protected:
 
   void RenderSoftwareCursor();
 
-  void RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 width, s32 height, GPUTexture* texture,
+  bool RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 width, s32 height, GPUTexture* texture,
                      s32 texture_view_x, s32 texture_view_y, s32 texture_view_width, s32 texture_view_height,
                      bool linear_filter);
   void RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture);

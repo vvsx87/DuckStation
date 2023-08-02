@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "context_wgl.h"
+#include "../opengl_loader.h"
+
 #include "common/assert.h"
 #include "common/log.h"
 #include "common/scoped_guard.h"
-#include "loader.h"
+
 Log_SetChannel(GL::ContextWGL);
 
 // TODO: get rid of this
@@ -33,7 +35,9 @@ static bool ReloadWGL(HDC dc)
 }
 
 namespace GL {
-ContextWGL::ContextWGL(const WindowInfo& wi) : Context(wi) {}
+ContextWGL::ContextWGL(const WindowInfo& wi) : Context(wi)
+{
+}
 
 ContextWGL::~ContextWGL()
 {

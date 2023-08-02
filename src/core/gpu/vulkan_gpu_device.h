@@ -52,7 +52,7 @@ public:
 
   void SetVSync(bool enabled) override;
 
-  bool Render(bool skip_present) override;
+  //bool Render(bool skip_present) override;
 
   bool SetGPUTimingEnabled(bool enabled) override;
   float GetAndResetAccumulatedGPUTime() override;

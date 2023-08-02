@@ -63,7 +63,7 @@
 #endif
 
 #ifdef WITH_OPENGL
-#include "core/gpu/opengl_gpu_device.h"
+#include "core/gpu/opengl_device.h"
 #endif
 
 #ifdef WITH_VULKAN
@@ -151,7 +151,7 @@ std::unique_ptr<GPUDevice> Host::CreateDisplayForAPI(RenderAPI api)
 #ifdef WITH_OPENGL
     case RenderAPI::OpenGL:
     case RenderAPI::OpenGLES:
-      return std::make_unique<OpenGLGPUDevice>();
+      return std::make_unique<OpenGLDevice>();
 #endif
 
 #ifdef _WIN32
@@ -168,7 +168,7 @@ std::unique_ptr<GPUDevice> Host::CreateDisplayForAPI(RenderAPI api)
 #elif defined(_WIN32)
       return std::make_unique<D3D11Device>();
 #elif defined(WITH_OPENGL)
-      return std::make_unique<OpenGLGPUDevice>();
+      return std::make_unique<OpenGLDevice>();
 #elif defined(WITH_VULKAN)
       return std::make_unique<VulkanGPUDevice>();
 #else

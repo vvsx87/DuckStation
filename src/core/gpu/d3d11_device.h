@@ -221,6 +221,8 @@ public:
   bool Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer = 0, u32 level = 0) override;
   void Unmap() override;
 
+  void SetDebugName(const std::string_view& name) override;
+
 private:
   ComPtr<ID3D11Texture2D> m_texture;
   ComPtr<ID3D11ShaderResourceView> m_srv;
@@ -335,7 +337,8 @@ public:
 
   void SetVSync(bool enabled) override;
 
-  bool Render(bool skip_present) override;
+  bool BeginPresent(bool skip_present) override;
+  void EndPresent() override;
 
   void UnbindFramebuffer(D3D11Framebuffer* fb);
   void UnbindPipeline(D3D11Pipeline* pl);
@@ -387,8 +390,7 @@ private:
 
   ComPtr<IDXGIFactory> m_dxgi_factory;
   ComPtr<IDXGISwapChain> m_swap_chain;
-  std::unique_ptr<D3D11Texture> m_swap_chain_texture;
-  std::unique_ptr<D3D11Framebuffer> m_swap_chain_framebuffer;
+  ComPtr<ID3D11RenderTargetView> m_swap_chain_rtv;
 
   RasterizationStateMap m_rasterization_states;
   DepthStateMap m_depth_states;

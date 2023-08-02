@@ -2,17 +2,20 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+#include "opengl_loader.h"
+
 #include "common/types.h"
-#include "loader.h"
+
 #include <memory>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
-namespace GL {
-class StreamBuffer
+class OpenGLStreamBuffer
 {
 public:
-  virtual ~StreamBuffer();
+  virtual ~OpenGLStreamBuffer();
 
   ALWAYS_INLINE GLuint GetGLBufferId() const { return m_buffer_id; }
   ALWAYS_INLINE GLenum GetGLTarget() const { return m_target; }
@@ -20,6 +23,8 @@ public:
 
   void Bind();
   void Unbind();
+
+  void SetDebugName(const std::string_view& name);
 
   struct MappingResult
   {
@@ -30,15 +35,19 @@ public:
   };
 
   virtual MappingResult Map(u32 alignment, u32 min_size) = 0;
-  virtual void Unmap(u32 used_size) = 0;
 
-  static std::unique_ptr<StreamBuffer> Create(GLenum target, u32 size);
+  /// Returns the position in the buffer *before* the start of used_size.
+  virtual u32 Unmap(u32 used_size) = 0;
+
+  /// Returns the minimum granularity of blocks which sync objects will be created around.
+  virtual u32 GetChunkSize() const = 0;
+
+  static std::unique_ptr<OpenGLStreamBuffer> Create(GLenum target, u32 size);
 
 protected:
-  StreamBuffer(GLenum target, GLuint buffer_id, u32 size);
+  OpenGLStreamBuffer(GLenum target, GLuint buffer_id, u32 size);
 
   GLenum m_target;
   GLuint m_buffer_id;
   u32 m_size;
 };
-} // namespace GL

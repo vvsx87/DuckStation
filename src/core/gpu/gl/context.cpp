@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "context.h"
+#include "../opengl_loader.h"
+
 #include "common/log.h"
-#include "loader.h"
+
 #include <cstdio>
 #include <cstdlib>
 #ifdef __APPLE__
@@ -11,7 +13,6 @@
 #else
 #include <malloc.h>
 #endif
-Log_SetChannel(GL::Context);
 
 #if defined(_WIN32) && !defined(_M_ARM64)
 #include "context_wgl.h"
@@ -31,6 +32,8 @@ Log_SetChannel(GL::Context);
 #include "context_glx.h"
 #endif
 #endif
+
+Log_SetChannel(GL::Context);
 
 namespace GL {
 
@@ -84,7 +87,9 @@ static void DisableBrokenExtensions(const char* gl_vendor, const char* gl_render
   }
 }
 
-Context::Context(const WindowInfo& wi) : m_wi(wi) {}
+Context::Context(const WindowInfo& wi) : m_wi(wi)
+{
+}
 
 Context::~Context() = default;
 

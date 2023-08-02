@@ -63,6 +63,9 @@ public:
   static void CopyToUploadBuffer(const void* src_data, u32 src_pitch, u32 height, void* dst_data, u32 dst_pitch);
   void CopyFromBuffer(u32 x, u32 y, u32 width, u32 height, u32 pitch, ID3D12Resource* buffer, u32 buffer_offset);
 
+  void SetDebugName(const std::string_view& name) override;
+  void MakeReadyForSampling() override;
+
 private:
   static bool CreateSRVDescriptor(ID3D12Resource* resource, DXGI_FORMAT format, bool multisampled,
                                   DescriptorHandle* dh);

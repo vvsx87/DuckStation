@@ -8,7 +8,7 @@
 #include <cstring>
 
 #ifdef WITH_OPENGL
-#include "gpu/gl/loader.h"
+#include "gpu/opengl_loader.h"
 #endif
 
 Log_SetChannel(ShaderGen);
@@ -673,7 +673,7 @@ std::string ShaderGen::GenerateDisplayVertexShader()
   float2 pos = float2(float((v_id << 1) & 2u), float(v_id & 2u));
   v_tex0 = u_src_rect.xy + pos * u_src_rect.zw;
   v_pos = float4(pos * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 0.0f, 1.0f);
-  #if API_OPENGL || API_OPENGL_ES || API_VULKAN
+  #if API_VULKAN
     v_pos.y = -v_pos.y;
   #endif
 }
@@ -711,7 +711,7 @@ std::string ShaderGen::GenerateImGuiVertexShader()
   v_pos = mul(ProjectionMatrix, float4(a_pos, 0.f, 1.f));
   v_col0 = a_col0;
   v_tex0 = a_tex0;
-  #if API_OPENGL || API_OPENGL_ES || API_VULKAN
+  #if API_VULKAN
     v_pos.y = -v_pos.y;
   #endif
 }

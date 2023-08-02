@@ -13,8 +13,6 @@
 #include "common/path.h"
 #include "common/string_util.h"
 
-#include "imgui.h"
-
 #include "fmt/format.h"
 
 #include <array>
@@ -36,6 +34,7 @@ static unsigned s_next_bad_shader_id = 1;
 
 static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view& name)
 {
+#ifdef _DEBUG
   // WKPDID_D3DDebugObjectName
   static constexpr GUID guid = {0x429b8c22, 0x9188, 0x4b0c, 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00};
 
@@ -46,6 +45,7 @@ static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view
 
   const std::wstring wname = StringUtil::UTF8StringToWideString(name);
   obj->SetPrivateData(guid, static_cast<UINT>(wname.length()) * 2u, wname.c_str());
+#endif
 }
 
 D3D11StreamBuffer::D3D11StreamBuffer() : m_size(0), m_position(0)
@@ -419,8 +419,10 @@ bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
     }
   }
 
+#ifdef _DEBUG
   if (g_settings.gpu_use_debug_device)
     m_context.As(&m_annotation);
+#endif
 
   // we need the specific factory for the device, otherwise MakeWindowAssociation() is flaky.
   ComPtr<IDXGIDevice> dxgi_device;
@@ -600,22 +602,20 @@ bool D3D11Device::CreateSwapChainRTV()
     return false;
   }
 
-  m_swap_chain_texture = std::make_unique<D3D11Texture>();
-  if (!m_swap_chain_texture->Adopt(m_device.Get(), std::move(backbuffer)))
+  D3D11_TEXTURE2D_DESC backbuffer_desc;
+  backbuffer->GetDesc(&backbuffer_desc);
+
+  CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(D3D11_RTV_DIMENSION_TEXTURE2D, backbuffer_desc.Format, 0, 0,
+                                          backbuffer_desc.ArraySize);
+  hr = m_device->CreateRenderTargetView(backbuffer.Get(), &rtv_desc, m_swap_chain_rtv.GetAddressOf());
+  if (FAILED(hr))
   {
-    m_swap_chain_texture.reset();
+    Log_ErrorPrintf("CreateRenderTargetView for swap chain failed: 0x%08X", hr);
     return false;
   }
 
-  if (!(m_swap_chain_framebuffer = std::unique_ptr<D3D11Framebuffer>(
-          static_cast<D3D11Framebuffer*>(CreateFramebuffer(m_swap_chain_texture.get()).release()))))
-  {
-    m_swap_chain_texture.reset();
-    return false;
-  }
-
-  m_window_info.surface_width = m_swap_chain_texture->GetWidth();
-  m_window_info.surface_height = m_swap_chain_texture->GetHeight();
+  m_window_info.surface_width = backbuffer_desc.Width;
+  m_window_info.surface_height = backbuffer_desc.Height;
   Log_InfoPrintf("Swap chain buffer size: %ux%u", m_window_info.surface_width, m_window_info.surface_height);
 
   if (m_window_info.type == WindowInfo::Type::Win32)
@@ -651,8 +651,7 @@ void D3D11Device::DestroySurface()
   if (IsFullscreen())
     SetFullscreen(false, 0, 0, 0.0f);
 
-  m_swap_chain_framebuffer.reset();
-  m_swap_chain_texture.reset();
+  m_swap_chain_rtv.Reset();
   m_swap_chain.Reset();
 }
 
@@ -676,8 +675,7 @@ void D3D11Device::ResizeWindow(s32 new_window_width, s32 new_window_height)
   if (!m_swap_chain)
     return;
 
-  m_swap_chain_framebuffer.reset();
-  m_swap_chain_texture.reset();
+  m_swap_chain_rtv.Reset();
 
   HRESULT hr = m_swap_chain->ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN,
                                            m_using_allow_tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
@@ -746,8 +744,7 @@ bool D3D11Device::SetFullscreen(bool fullscreen, u32 width, u32 height, float re
     return true;
   }
 
-  m_swap_chain_framebuffer.reset();
-  m_swap_chain_texture.reset();
+  m_swap_chain_rtv.Reset();
   m_swap_chain.Reset();
 
   if (!CreateSwapChain(&closest_mode))
@@ -782,13 +779,10 @@ void D3D11Device::DestroyBuffers()
   m_index_buffer.Release();
 }
 
-bool D3D11Device::Render(bool skip_present)
+bool D3D11Device::BeginPresent(bool skip_present)
 {
   if (skip_present || !m_swap_chain)
-  {
-    ImGui::Render();
     return false;
-  }
 
   // When using vsync, the time here seems to include the time for the buffer to become available.
   // This blows our our GPU usage number considerably, so read the timestamp before the final blit
@@ -797,23 +791,16 @@ bool D3D11Device::Render(bool skip_present)
   if (m_vsync_enabled && m_gpu_timing_enabled)
     PopTimestampQuery();
 
-  ClearRenderTarget(m_swap_chain_texture.get(), 0);
+  static constexpr float clear_color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+  m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), clear_color);
+  m_context->OMSetRenderTargets(1, m_swap_chain_rtv.GetAddressOf(), nullptr);
+  m_current_framebuffer = nullptr;
+  return true;
+}
 
-  if (HasDisplayTexture())
-  {
-    const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
-    GL_SCOPE("RenderDisplay: %dx%d at %d,%d", left, top, width, height);
-    RenderDisplay(m_swap_chain_framebuffer.get(), left, top, width, height, m_display_texture, m_display_texture_view_x,
-                  m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
-                  IsUsingLinearFiltering());
-  }
-
-  SetFramebuffer(m_swap_chain_framebuffer.get());
-  SetViewportAndScissor(0, 0, m_swap_chain_framebuffer->GetWidth(), m_swap_chain_framebuffer->GetHeight());
-
-  RenderImGui();
-
-  RenderSoftwareCursor();
+void D3D11Device::EndPresent()
+{
+  DebugAssert(!m_current_framebuffer);
 
   if (!m_vsync_enabled && m_gpu_timing_enabled)
     PopTimestampQuery();
@@ -825,10 +812,6 @@ bool D3D11Device::Render(bool skip_present)
 
   if (m_gpu_timing_enabled)
     KickTimestampQuery();
-
-  m_current_framebuffer = nullptr;
-
-  return true;
 }
 
 GPUDevice::AdapterAndModeList D3D11Device::StaticGetAdapterAndModeList()
@@ -1750,8 +1733,11 @@ bool D3D11Texture::Update(u32 x, u32 y, u32 width, u32 height, const void* data,
 bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer /*= 0*/,
                        u32 level /*= 0*/)
 {
-  if (!m_dynamic || (x + width) > m_width || (y + height) > m_height || layer > m_layers || level > m_levels)
+  if (!m_dynamic || (x + width) > GetMipWidth(level) || (y + height) > GetMipHeight(level) || layer > m_layers ||
+    level > m_levels)
+  {
     return false;
+  }
 
   const bool discard = (width == m_width && height == m_height);
   const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
@@ -1778,6 +1764,11 @@ void D3D11Texture::Unmap()
 {
   D3D11Device::GetD3DContext()->Unmap(m_texture.Get(), m_mapped_subresource);
   m_mapped_subresource = 0;
+}
+
+void D3D11Texture::SetDebugName(const std::string_view& name)
+{
+  SetD3DDebugObjectName(m_texture.Get(), name);
 }
 
 bool D3D11Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type,
@@ -2016,6 +2007,7 @@ std::unique_ptr<GPUTextureBuffer> D3D11Device::CreateTextureBuffer(GPUTextureBuf
 
 void D3D11Device::PushDebugGroup(const char* fmt, ...)
 {
+#ifdef _DEBUG
   if (!m_annotation)
     return;
 
@@ -2025,18 +2017,22 @@ void D3D11Device::PushDebugGroup(const char* fmt, ...)
   va_end(ap);
 
   m_annotation->BeginEvent(StringUtil::UTF8StringToWideString(str).c_str());
+#endif
 }
 
 void D3D11Device::PopDebugGroup()
 {
+#ifdef _DEBUG
   if (!m_annotation)
     return;
 
   m_annotation->EndEvent();
+#endif
 }
 
 void D3D11Device::InsertDebugMessage(const char* fmt, ...)
 {
+#ifdef _DEBUG
   if (!m_annotation)
     return;
 
@@ -2046,6 +2042,7 @@ void D3D11Device::InsertDebugMessage(const char* fmt, ...)
   va_end(ap);
 
   m_annotation->SetMarker(StringUtil::UTF8StringToWideString(str).c_str());
+#endif
 }
 
 void D3D11Device::MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space,

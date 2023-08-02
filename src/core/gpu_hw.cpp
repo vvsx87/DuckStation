@@ -2645,3 +2645,36 @@ std::unique_ptr<GPU> GPU::CreateHardwareD3D11Renderer()
 
   return gpu;
 }
+
+
+std::unique_ptr<GPU> GPU::CreateHardwareOpenGLRenderer()
+{
+  // Don't re-request GL when we already have GLES here...
+  const RenderAPI current_api = g_host_display ? g_host_display->GetRenderAPI() : RenderAPI::None;
+  if (current_api != RenderAPI::OpenGL && current_api != RenderAPI::OpenGLES &&
+      !Host::AcquireHostDisplay(RenderAPI::OpenGL))
+  {
+    Log_ErrorPrintf("Host render API type is incompatible");
+    return nullptr;
+  }
+
+#if 0
+  const bool opengl_is_available = ((g_host_display->GetRenderAPI() == RenderAPI::OpenGL &&
+                                     (GLAD_GL_VERSION_3_0 || GLAD_GL_ARB_uniform_buffer_object)) ||
+                                    (g_host_display->GetRenderAPI() == RenderAPI::OpenGLES && GLAD_GL_ES_VERSION_3_1));
+  if (!opengl_is_available)
+  {
+    Host::AddOSDMessage(Host::TranslateStdString("OSDMessage",
+                                                 "OpenGL renderer unavailable, your driver or hardware is not "
+                                                 "recent enough. OpenGL 3.1 or OpenGL ES 3.1 is required."),
+                        20.0f);
+    return nullptr;
+  }
+#endif
+
+  std::unique_ptr<GPU_HW> gpu(std::make_unique<GPU_HW>());
+  if (!gpu->Initialize())
+    return nullptr;
+
+  return gpu;
+}

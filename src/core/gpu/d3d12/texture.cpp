@@ -355,6 +355,16 @@ void D3D12::Texture::CopyFromBuffer(u32 x, u32 y, u32 width, u32 height, u32 pit
   TransitionToState(old_state);
 }
 
+void D3D12::Texture::SetDebugName(const std::string_view& name)
+{
+  UnreachableCode();
+}
+
+void D3D12::Texture::MakeReadyForSampling()
+{
+  UnreachableCode();
+}
+
 bool D3D12::Texture::LoadData(u32 x, u32 y, u32 width, u32 height, const void* data, u32 pitch)
 {
   const u32 texel_size = GetPixelSize();

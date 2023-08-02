@@ -1,10 +1,13 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
 #include "common/types.h"
+
 #include <algorithm>
 #include <array>
+#include <string_view>
 #include <vector>
 
 class GPUTexture
@@ -82,6 +85,7 @@ public:
   ALWAYS_INLINE bool IsDepthStencil() const { return (m_type == Type::DepthStencil); }
   ALWAYS_INLINE bool IsTexture() const { return (m_type == Type::Texture); }
 
+  ALWAYS_INLINE const ClearValue& GetClearValue() const { return m_clear_value; }
   ALWAYS_INLINE u32 GetClearColor() const { return m_clear_value.color; }
   ALWAYS_INLINE float GetClearDepth() const { return m_clear_value.depth; }
   ALWAYS_INLINE std::array<float, 4> GetUNormClearColor() const
@@ -119,6 +123,8 @@ public:
 
   // Instructs the backend that we're finished rendering to this texture. It may transition it to a new layout.
   virtual void MakeReadyForSampling();
+
+  virtual void SetDebugName(const std::string_view& name) = 0;
 
 protected:
   GPUTexture();

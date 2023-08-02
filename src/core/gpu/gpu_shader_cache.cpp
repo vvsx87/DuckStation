@@ -36,16 +36,20 @@ GPUShaderCache::~GPUShaderCache()
 
 bool GPUShaderCache::CacheIndexKey::operator==(const CacheIndexKey& key) const
 {
-  return (source_hash_low == key.source_hash_low && source_hash_high == key.source_hash_high &&
-          entry_point_low == key.entry_point_low && entry_point_high == key.entry_point_high &&
-          shader_type == key.shader_type && source_length == key.source_length);
+  return (std::memcmp(this, &key, sizeof(*this)) == 0);
 }
 
 bool GPUShaderCache::CacheIndexKey::operator!=(const CacheIndexKey& key) const
 {
-  return (source_hash_low != key.source_hash_low || source_hash_high != key.source_hash_high ||
-          entry_point_low != key.entry_point_low || entry_point_high != key.entry_point_high ||
-          shader_type != key.shader_type || source_length != key.source_length);
+  return (std::memcmp(this, &key, sizeof(*this)) != 0);
+}
+
+std::size_t GPUShaderCache::CacheIndexEntryHash::operator()(const CacheIndexKey& e) const noexcept
+{
+  std::size_t h = 0;
+  hash_combine(h, e.entry_point_low, e.entry_point_high, e.source_hash_low, e.source_hash_high, e.source_length,
+               e.shader_type);
+  return h;
 }
 
 bool GPUShaderCache::Open(const std::string_view& base_filename)
@@ -189,12 +193,8 @@ bool GPUShaderCache::ReadExisting(const std::string& index_filename, const std::
       return false;
     }
 
-    const CacheIndexKey key{static_cast<GPUShaderStage>(entry.shader_type),
-                            entry.source_length,
-                            entry.source_hash_low,
-                            entry.source_hash_high,
-                            entry.entry_point_low,
-                            entry.entry_point_high};
+    const CacheIndexKey key{entry.shader_type,      entry.source_length,   entry.source_hash_low,
+                            entry.source_hash_high, entry.entry_point_low, entry.entry_point_high};
     const CacheIndexData data{entry.file_offset, entry.blob_size};
     m_index.emplace(key, data);
   }
@@ -220,7 +220,7 @@ GPUShaderCache::CacheIndexKey GPUShaderCache::GetCacheKey(GPUShaderStage stage, 
   };
 
   CacheIndexKey key = {};
-  key.shader_type = stage;
+  key.shader_type = static_cast<u32>(stage);
 
   MD5Digest digest;
   digest.Update(shader_code.data(), static_cast<u32>(shader_code.length()));
@@ -250,7 +250,7 @@ bool GPUShaderCache::Lookup(const CacheIndexKey& key, ShaderBinary* binary)
       std::fread(binary->data(), 1, iter->second.blob_size, m_blob_file) != iter->second.blob_size)
   {
     Log_ErrorPrintf("Read %u byte %s shader from file failed", iter->second.blob_size,
-                    GPUShader::GetStageName(key.shader_type));
+                    GPUShader::GetStageName(static_cast<GPUShaderStage>(key.shader_type)));
     return false;
   }
 
@@ -280,11 +280,12 @@ bool GPUShaderCache::Insert(const CacheIndexKey& key, const void* data, u32 data
       std::fwrite(&entry, sizeof(entry), 1, m_index_file) != 1 || std::fflush(m_index_file) != 0)
   {
     Log_ErrorPrintf("Failed to write %u byte %s shader blob to file", data_size,
-                    GPUShader::GetStageName(key.shader_type));
+                    GPUShader::GetStageName(static_cast<GPUShaderStage>(key.shader_type)));
     return false;
   }
 
-  Log_DevPrintf("Cached %u byte %s shader", data_size, GPUShader::GetStageName(key.shader_type));
+  Log_DevPrintf("Cached %u byte %s shader", data_size,
+                GPUShader::GetStageName(static_cast<GPUShaderStage>(key.shader_type)));
   m_index.emplace(key, idata);
   return true;
 }

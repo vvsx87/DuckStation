@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "common/windows_headers.h"
 #include "context.h"
+
+#include "../opengl_loader.h"
+
+#include "common/windows_headers.h"
+
 #include "glad_wgl.h"
-#include "loader.h"
+
 #include <optional>
 
 namespace GL {

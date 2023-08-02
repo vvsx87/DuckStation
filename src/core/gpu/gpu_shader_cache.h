@@ -19,7 +19,7 @@ public:
 
   struct CacheIndexKey
   {
-    GPUShaderStage shader_type;
+    u32 shader_type;
     u32 source_length;
     u64 source_hash_low;
     u64 source_hash_high;
@@ -28,6 +28,12 @@ public:
 
     bool operator==(const CacheIndexKey& key) const;
     bool operator!=(const CacheIndexKey& key) const;
+  };
+  static_assert(sizeof(CacheIndexKey) == 40);
+
+  struct CacheIndexEntryHash
+  {
+    std::size_t operator()(const CacheIndexKey& e) const noexcept;
   };
 
   GPUShaderCache();
@@ -46,24 +52,13 @@ public:
   void Clear();
 
 private:
-  struct CacheIndexEntryHasher
-  {
-    std::size_t operator()(const CacheIndexKey& e) const noexcept
-    {
-      std::size_t h = 0;
-      hash_combine(h, e.entry_point_low, e.entry_point_high, e.source_hash_low, e.source_hash_high, e.source_length,
-                   e.shader_type);
-      return h;
-    }
-  };
-
   struct CacheIndexData
   {
     u32 file_offset;
     u32 blob_size;
   };
 
-  using CacheIndex = std::unordered_map<CacheIndexKey, CacheIndexData, CacheIndexEntryHasher>;
+  using CacheIndex = std::unordered_map<CacheIndexKey, CacheIndexData, CacheIndexEntryHash>;
 
   bool CreateNew(const std::string& index_filename, const std::string& blob_filename);
   bool ReadExisting(const std::string& index_filename, const std::string& blob_filename);

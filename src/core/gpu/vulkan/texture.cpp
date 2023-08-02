@@ -71,6 +71,16 @@ bool Vulkan::Texture::Update(u32 x, u32 y, u32 width, u32 height, const void* da
   return false;
 }
 
+void Vulkan::Texture::SetDebugName(const std::string_view& name)
+{
+  UnreachableCode();
+}
+
+void Vulkan::Texture::MakeReadyForSampling()
+{
+  UnreachableCode();
+}
+
 bool Vulkan::Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32 height, u32 layer /*= 0*/,
                           u32 level /*= 0*/)
 {

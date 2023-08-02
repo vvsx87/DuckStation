@@ -593,6 +593,7 @@ bool VulkanGPUDevice::DoneCurrent()
   return true;
 }
 
+#if 0
 bool VulkanGPUDevice::Render(bool skip_present)
 {
   if (skip_present || !m_swap_chain)
@@ -668,6 +669,7 @@ bool VulkanGPUDevice::Render(bool skip_present)
 
   return true;
 }
+#endif
 
 void VulkanGPUDevice::BeginSwapChainRenderPass(VkFramebuffer framebuffer, u32 width, u32 height)
 {

@@ -74,6 +74,9 @@ public:
   void EndUpdate(u32 x, u32 y, u32 width, u32 height, u32 level, u32 layer);
   bool Update(u32 x, u32 y, u32 width, u32 height, u32 level, u32 layer, const void* data, u32 data_pitch);
 
+  void SetDebugName(const std::string_view& name) override;
+  void MakeReadyForSampling() override;
+
 private:
   VkImageViewType m_view_type = VK_IMAGE_VIEW_TYPE_2D;
   VkImageLayout m_layout = VK_IMAGE_LAYOUT_UNDEFINED;

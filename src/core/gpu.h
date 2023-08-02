@@ -88,6 +88,7 @@ public:
   virtual bool DoState(StateWrapper& sw, GPUTexture** save_to_texture, bool update_display);
 
   // Graphics API state reset/restore - call when drawing the UI etc.
+  // TODO: replace with "invalidate cached state"
   virtual void RestoreGraphicsAPIState();
 
   // Render statistics debug window.
