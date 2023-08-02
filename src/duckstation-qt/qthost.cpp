@@ -1634,7 +1634,8 @@ void EmuThread::updatePerformanceCounters()
 
   if (g_gpu)
   {
-    renderer = g_gpu->GetRendererType();
+    // TODO: Fix renderer type
+    renderer = g_gpu->IsHardwareRenderer() ? GPURenderer::HardwareD3D11 : GPURenderer::Software;
     std::tie(render_width, render_height) = g_gpu->GetEffectiveDisplayResolution();
   }
 

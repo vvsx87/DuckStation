@@ -35,11 +35,6 @@ GPU_HW_OpenGL::~GPU_HW_OpenGL()
   glUseProgram(0);
 }
 
-GPURenderer GPU_HW_OpenGL::GetRendererType() const
-{
-  return GPURenderer::HardwareOpenGL;
-}
-
 bool GPU_HW_OpenGL::Initialize()
 {
   SetCapabilities();
@@ -47,7 +42,7 @@ bool GPU_HW_OpenGL::Initialize()
   if (!GPU_HW::Initialize())
     return false;
 
-  if (!CreateFramebuffer())
+  if (!CreateBuffers())
   {
     Log_ErrorPrintf("Failed to create framebuffer");
     return false;
@@ -181,7 +176,7 @@ void GPU_HW_OpenGL::UpdateSettings()
     RestoreGraphicsAPIState();
     ReadVRAM(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
     g_host_display->ClearDisplayTexture();
-    CreateFramebuffer();
+    CreateBuffers();
   }
   if (shaders_changed)
     CompilePrograms();
@@ -316,7 +311,7 @@ void GPU_HW_OpenGL::SetCapabilities()
   m_supports_disable_color_perspective = (g_host_display->GetRenderAPI() == RenderAPI::OpenGL);
 }
 
-bool GPU_HW_OpenGL::CreateFramebuffer()
+bool GPU_HW_OpenGL::CreateBuffers()
 {
   // scale vram size to internal resolution
   const u32 texture_width = VRAM_WIDTH * m_resolution_scale;

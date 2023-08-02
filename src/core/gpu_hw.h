@@ -42,6 +42,7 @@ public:
   ~GPU_HW() override;
 
   const Threading::Thread* GetSWThread() const override;
+  bool IsHardwareRenderer() const override;
 
   bool Initialize() override;
   void Reset(bool clear_vram) override;
@@ -209,9 +210,9 @@ protected:
 
   void UpdateHWSettings(bool* framebuffer_changed, bool* shaders_changed);
 
-  bool CreateFramebuffer();
+  bool CreateBuffers();
   void ClearFramebuffer();
-  void DestroyFramebuffer();
+  void DestroyBuffers();
 
   bool CompilePipelines();
   void DestroyPipelines();
@@ -389,6 +390,8 @@ protected:
   std::unique_ptr<GPUFramebuffer> m_vram_update_depth_framebuffer;
   std::unique_ptr<GPUFramebuffer> m_vram_readback_framebuffer;
   std::unique_ptr<GPUFramebuffer> m_display_framebuffer;
+
+  std::unique_ptr<GPUTextureBuffer> m_vram_upload_buffer;
 
   HeapArray<u16, VRAM_WIDTH * VRAM_HEIGHT> m_vram_shadow;
 

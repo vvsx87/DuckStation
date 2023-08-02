@@ -25,11 +25,6 @@ GPU_HW_D3D12::~GPU_HW_D3D12()
   DestroyResources();
 }
 
-GPURenderer GPU_HW_D3D12::GetRendererType() const
-{
-  return GPURenderer::HardwareD3D12;
-}
-
 bool GPU_HW_D3D12::Initialize()
 {
   SetCapabilities();
@@ -67,7 +62,7 @@ bool GPU_HW_D3D12::Initialize()
     return false;
   }
 
-  if (!CreateFramebuffer())
+  if (!CreateBuffers())
   {
     Log_ErrorPrintf("Failed to create framebuffer");
     return false;
@@ -133,7 +128,7 @@ void GPU_HW_D3D12::UpdateSettings()
   g_d3d12_context->ExecuteCommandList(true);
 
   if (framebuffer_changed)
-    CreateFramebuffer();
+    CreateBuffers();
 
   if (shaders_changed)
   {
@@ -239,7 +234,7 @@ void GPU_HW_D3D12::DestroyResources()
   if (g_d3d12_context)
     g_d3d12_context->ExecuteCommandList(true);
 
-  DestroyFramebuffer();
+  DestroyBuffers();
   DestroyPipelines();
 
   g_d3d12_context->GetSamplerHeapManager().Free(&m_point_sampler);
@@ -297,9 +292,9 @@ bool GPU_HW_D3D12::CreateSamplers()
   return true;
 }
 
-bool GPU_HW_D3D12::CreateFramebuffer()
+bool GPU_HW_D3D12::CreateBuffers()
 {
-  DestroyFramebuffer();
+  DestroyBuffers();
 
   // scale vram size to internal resolution
   const u32 texture_width = VRAM_WIDTH * m_resolution_scale;
@@ -349,7 +344,7 @@ void GPU_HW_D3D12::ClearFramebuffer()
   SetFullVRAMDirtyRectangle();
 }
 
-void GPU_HW_D3D12::DestroyFramebuffer()
+void GPU_HW_D3D12::DestroyBuffers()
 {
   m_vram_read_texture.Destroy(false);
   m_vram_depth_texture.Destroy(false);

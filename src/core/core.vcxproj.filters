@@ -23,7 +23,6 @@
     <ClCompile Include="gpu_commands.cpp" />
     <ClCompile Include="gpu_sw.cpp" />
     <ClCompile Include="gpu_hw_shadergen.cpp" />
-    <ClCompile Include="gpu_hw_d3d11.cpp" />
     <ClCompile Include="bios.cpp" />
     <ClCompile Include="cpu_code_cache.cpp" />
     <ClCompile Include="cpu_recompiler_register_cache.cpp" />
@@ -204,7 +203,6 @@
     <ClInclude Include="settings.h" />
     <ClInclude Include="gpu_sw.h" />
     <ClInclude Include="gpu_hw_shadergen.h" />
-    <ClInclude Include="gpu_hw_d3d11.h" />
     <ClInclude Include="bios.h" />
     <ClInclude Include="cpu_recompiler_types.h" />
     <ClInclude Include="cpu_code_cache.h" />

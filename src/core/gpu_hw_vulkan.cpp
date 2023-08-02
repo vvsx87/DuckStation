@@ -24,11 +24,6 @@ GPU_HW_Vulkan::~GPU_HW_Vulkan()
   DestroyResources();
 }
 
-GPURenderer GPU_HW_Vulkan::GetRendererType() const
-{
-  return GPURenderer::HardwareVulkan;
-}
-
 bool GPU_HW_Vulkan::Initialize()
 {
   SetCapabilities();
@@ -66,7 +61,7 @@ bool GPU_HW_Vulkan::Initialize()
     return false;
   }
 
-  if (!CreateFramebuffer())
+  if (!CreateBuffers())
   {
     Log_ErrorPrintf("Failed to create framebuffer");
     return false;
@@ -128,7 +123,7 @@ void GPU_HW_Vulkan::UpdateSettings()
   g_vulkan_context->ExecuteCommandBuffer(true);
 
   if (framebuffer_changed)
-    CreateFramebuffer();
+    CreateBuffers();
 
   if (shaders_changed)
   {
@@ -261,7 +256,7 @@ void GPU_HW_Vulkan::DestroyResources()
   if (g_vulkan_context)
     g_vulkan_context->ExecuteCommandBuffer(true);
 
-  DestroyFramebuffer();
+  DestroyBuffers();
   DestroyPipelines();
 
   Vulkan::Util::SafeDestroyPipelineLayout(m_downsample_pipeline_layout);
@@ -454,9 +449,9 @@ bool GPU_HW_Vulkan::CreateSamplers()
   return true;
 }
 
-bool GPU_HW_Vulkan::CreateFramebuffer()
+bool GPU_HW_Vulkan::CreateBuffers()
 {
-  DestroyFramebuffer();
+  DestroyBuffers();
 
   // scale vram size to internal resolution
   const u32 texture_width = VRAM_WIDTH * m_resolution_scale;
@@ -722,7 +717,7 @@ void GPU_HW_Vulkan::ClearFramebuffer()
   SetFullVRAMDirtyRectangle();
 }
 
-void GPU_HW_Vulkan::DestroyFramebuffer()
+void GPU_HW_Vulkan::DestroyBuffers()
 {
   Vulkan::Util::SafeFreeGlobalDescriptorSet(m_downsample_composite_descriptor_set);
 

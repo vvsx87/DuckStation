@@ -407,9 +407,10 @@ void ImGuiManager::DrawPerformanceOverlay()
 
 void ImGuiManager::DrawEnhancementsOverlay()
 {
+  // TODO: Fix device type name
   LargeString text;
   text.AppendFmtString("{} {}", Settings::GetConsoleRegionName(System::GetRegion()),
-                       Settings::GetRendererName(g_gpu->GetRendererType()));
+                       g_gpu->IsHardwareRenderer() ? "HW" : "SW");
 
   if (g_settings.rewind_enable)
     text.AppendFormattedString(" RW=%g/%u", g_settings.rewind_save_frequency, g_settings.rewind_save_slots);

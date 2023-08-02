@@ -80,8 +80,8 @@ public:
   GPU();
   virtual ~GPU();
 
-  virtual GPURenderer GetRendererType() const = 0;
   virtual const Threading::Thread* GetSWThread() const = 0;
+  virtual bool IsHardwareRenderer() const = 0;
 
   virtual bool Initialize();
   virtual void Reset(bool clear_vram);
@@ -93,7 +93,6 @@ public:
   // Render statistics debug window.
   void DrawDebugStateWindow();
 
-  bool IsHardwareRenderer();
   void CPUClockChanged();
 
   // MMIO access

@@ -42,14 +42,14 @@ GPU_SW::~GPU_SW()
   g_host_display->ClearDisplayTexture();
 }
 
-GPURenderer GPU_SW::GetRendererType() const
-{
-  return GPURenderer::Software;
-}
-
 const Threading::Thread* GPU_SW::GetSWThread() const
 {
   return m_backend.GetThread();
+}
+
+bool GPU_SW::IsHardwareRenderer() const
+{
+  return false;
 }
 
 bool GPU_SW::Initialize()

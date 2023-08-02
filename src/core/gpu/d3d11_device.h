@@ -229,6 +229,27 @@ private:
   bool m_dynamic = false;
 };
 
+class D3D11TextureBuffer final : public GPUTextureBuffer
+{
+public:
+  D3D11TextureBuffer(Format format, u32 size_in_elements);
+  ~D3D11TextureBuffer() override;
+
+  ALWAYS_INLINE ID3D11Buffer* GetBuffer() const { return m_buffer.GetD3DBuffer(); }
+  ALWAYS_INLINE ID3D11ShaderResourceView* GetSRV() const { return m_srv.Get(); }
+  ALWAYS_INLINE ID3D11ShaderResourceView* const* GetSRVArray() const { return m_srv.GetAddressOf(); }
+
+  bool CreateBuffer(ID3D11Device* device);
+
+  // Inherited via GPUTextureBuffer
+  virtual void* Map(u32 required_elements) override;
+  virtual void Unmap(u32 used_elements) override;
+
+private:
+  D3D11StreamBuffer m_buffer;
+  Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_srv;
+};
+
 class D3D11Device final : public GPUDevice
 {
 public:
@@ -270,6 +291,7 @@ public:
                                             const void* data = nullptr, u32 data_stride = 0,
                                             bool dynamic = false) override;
   std::unique_ptr<GPUSampler> CreateSampler(const GPUSampler::Config& config) override;
+  std::unique_ptr<GPUTextureBuffer> CreateTextureBuffer(GPUTextureBuffer::Format format, u32 size_in_elements) override;
 
   bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                        u32 out_data_stride) override;
@@ -303,6 +325,7 @@ public:
   void SetFramebuffer(GPUFramebuffer* fb) override;
   void SetPipeline(GPUPipeline* pipeline) override;
   void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) override;
+  void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer) override;
   void SetViewport(s32 x, s32 y, s32 width, s32 height) override;
   void SetScissor(s32 x, s32 y, s32 width, s32 height) override;
   void Draw(u32 vertex_count, u32 base_vertex) override;
@@ -337,6 +360,8 @@ private:
   static constexpr u8 NUM_TIMESTAMP_QUERIES = 3;
 
   static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
+
+  void SetFeatures();
 
   void PreDrawCheck();
 

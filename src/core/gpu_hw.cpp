@@ -67,10 +67,22 @@ const Threading::Thread* GPU_HW::GetSWThread() const
   return m_sw_renderer ? m_sw_renderer->GetThread() : nullptr;
 }
 
+bool GPU_HW::IsHardwareRenderer() const
+{
+  return true;
+}
+
 bool GPU_HW::Initialize()
 {
   if (!GPU::Initialize())
     return false;
+
+  const GPUDevice::Features features = g_host_display->GetFeatures();
+  m_max_resolution_scale = g_host_display->GetMaxTextureSize() / VRAM_WIDTH;
+  m_supports_dual_source_blend = features.dual_source_blend;
+  m_supports_per_sample_shading = features.per_sample_shading;
+  m_supports_adaptive_downsampling = features.mipmapped_render_targets;
+  m_supports_disable_color_perspective = features.noperspective_interpolation;
 
   m_resolution_scale = CalculateResolutionScale();
   m_multisamples = std::min(g_settings.gpu_multisamples, m_max_multisamples);
@@ -124,12 +136,13 @@ bool GPU_HW::Initialize()
     return false;
   }
 
-  if (!CreateFramebuffer())
+  if (!CreateBuffers())
   {
     Log_ErrorPrintf("Failed to create framebuffer");
     return false;
   }
 
+  RestoreGraphicsAPIState();
   return true;
 }
 
@@ -224,7 +237,7 @@ void GPU_HW::UpdateSettings()
     RestoreGraphicsAPIState();
     ReadVRAM(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
     g_host_display->ClearDisplayTexture();
-    CreateFramebuffer();
+    CreateBuffers();
   }
 
   if (shaders_changed)
@@ -243,6 +256,7 @@ void GPU_HW::UpdateSettings()
   }
 }
 
+// TODO: Merge into UpdateSettings()
 void GPU_HW::UpdateHWSettings(bool* framebuffer_changed, bool* shaders_changed)
 {
   const u32 resolution_scale = CalculateResolutionScale();
@@ -402,9 +416,9 @@ void GPU_HW::PrintSettingsToLog()
   Log_InfoPrintf("Using software renderer for readbacks: %s", m_sw_renderer ? "YES" : "NO");
 }
 
-bool GPU_HW::CreateFramebuffer()
+bool GPU_HW::CreateBuffers()
 {
-  DestroyFramebuffer();
+  DestroyBuffers();
 
   // scale vram size to internal resolution
   const u32 texture_width = VRAM_WIDTH * m_resolution_scale;
@@ -443,6 +457,13 @@ bool GPU_HW::CreateFramebuffer()
   GL_OBJECT_NAME(m_vram_update_depth_framebuffer, "VRAM Update Depth Framebuffer");
   GL_OBJECT_NAME(m_vram_readback_framebuffer, "VRAM Readback Framebuffer");
   GL_OBJECT_NAME(m_display_framebuffer, "Display Framebuffer");
+
+  // TODO: check caps
+  if (!(m_vram_upload_buffer = g_host_display->CreateTextureBuffer(GPUTextureBuffer::Format::R16UI,
+                                                                   VRAM_UPDATE_TEXTURE_BUFFER_SIZE / sizeof(u16))))
+  {
+    return false;
+  }
 
   Log_InfoPrintf("Created HW framebuffer of %ux%u", texture_width, texture_height);
 
@@ -503,8 +524,9 @@ void GPU_HW::ClearFramebuffer()
   m_last_depth_z = 1.0f;
 }
 
-void GPU_HW::DestroyFramebuffer()
+void GPU_HW::DestroyBuffers()
 {
+  m_vram_upload_buffer.reset();
   m_display_framebuffer.reset();
   m_vram_readback_framebuffer.reset();
   m_vram_update_depth_framebuffer.reset();
@@ -2080,6 +2102,11 @@ void GPU_HW::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
 
 void GPU_HW::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask)
 {
+  if (IsUsingSoftwareRendererForReadbacks())
+    UpdateSoftwareRendererVRAM(x, y, width, height, data, set_mask, check_mask);
+
+  const Common::Rectangle<u32> bounds = GetVRAMTransferBounds(x, y, width, height);
+
   DebugAssert((x + width) <= VRAM_WIDTH && (y + height) <= VRAM_HEIGHT);
   IncludeVRAMDirtyRectangle(Common::Rectangle<u32>::FromExtents(x, y, width, height));
 
@@ -2088,6 +2115,34 @@ void GPU_HW::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, b
     // set new vertex counter since we want this to take into consideration previous masked pixels
     m_current_depth++;
   }
+  else
+  {
+    const TextureReplacementTexture* rtex = g_texture_replacements.GetVRAMWriteReplacement(width, height, data);
+    if (rtex && BlitVRAMReplacementTexture(rtex, x * m_resolution_scale, y * m_resolution_scale,
+                                           width * m_resolution_scale, height * m_resolution_scale))
+    {
+      return;
+    }
+  }
+
+  const u32 num_pixels = width * height;
+  void* map = m_vram_upload_buffer->Map(num_pixels);
+  const u32 map_index = m_vram_upload_buffer->GetCurrentPosition();
+  std::memcpy(map, data, num_pixels * sizeof(u16));
+  m_vram_upload_buffer->Unmap(num_pixels);
+
+  const VRAMWriteUBOData uniforms = GetVRAMWriteUBOData(x, y, width, height, map_index, set_mask, check_mask);
+
+  // the viewport should already be set to the full vram, so just adjust the scissor
+  const Common::Rectangle<u32> scaled_bounds = bounds * m_resolution_scale;
+  g_host_display->SetScissor(scaled_bounds.left, scaled_bounds.top, scaled_bounds.GetWidth(),
+                             scaled_bounds.GetHeight());
+  g_host_display->SetPipeline(m_vram_write_pipelines[BoolToUInt8(check_mask && !m_pgxp_depth_buffer)].get());
+  g_host_display->PushUniformBuffer(&uniforms, sizeof(uniforms));
+  g_host_display->SetTextureBuffer(0, m_vram_upload_buffer.get());
+  g_host_display->Draw(3, 0);
+
+  RestoreGraphicsAPIState();
 }
 
 void GPU_HW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height)
@@ -2584,4 +2639,19 @@ void GPU_HW::ShaderCompileProgressTracker::Increment()
     Host::DisplayLoadingScreen(m_title.c_str(), 0, static_cast<int>(m_total), static_cast<int>(m_progress));
     m_last_update_time = tv;
   }
+}
+
+std::unique_ptr<GPU> GPU::CreateHardwareD3D11Renderer()
+{
+  if (!Host::AcquireHostDisplay(RenderAPI::D3D11))
+  {
+    Log_ErrorPrintf("Host render API is incompatible");
+    return nullptr;
+  }
+
+  std::unique_ptr<GPU_HW> gpu(std::make_unique<GPU_HW>());
+  if (!gpu->Initialize())
+    return nullptr;
+
+  return gpu;
 }

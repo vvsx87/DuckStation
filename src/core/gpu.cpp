@@ -78,12 +78,6 @@ void GPU::UpdateSettings()
   g_host_display->SetGPUTimingEnabled(g_settings.display_show_gpu);
 }
 
-bool GPU::IsHardwareRenderer()
-{
-  const GPURenderer renderer = GetRendererType();
-  return (renderer != GPURenderer::Software);
-}
-
 void GPU::CPUClockChanged()
 {
   UpdateCRTCConfig();

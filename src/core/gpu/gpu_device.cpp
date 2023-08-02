@@ -138,6 +138,21 @@ GPUPipeline::BlendState GPUPipeline::BlendState::GetAlphaBlendingState()
   return ret;
 }
 
+GPUTextureBuffer::GPUTextureBuffer(Format format, u32 size) : m_format(format), m_size_in_elements(size)
+{
+}
+
+GPUTextureBuffer::~GPUTextureBuffer() = default;
+
+u32 GPUTextureBuffer::GetElementSize(Format format)
+{
+  static constexpr std::array<u32, static_cast<u32>(Format::MaxCount)> element_size = {{
+    sizeof(u16),
+  }};
+
+  return element_size[static_cast<u32>(format)];
+}
+
 GPUDevice::~GPUDevice()
 {
   // TODO: move to Destroy() method
@@ -426,6 +441,12 @@ void GPUDevice::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sam
   UnreachableCode();
 }
 
+void GPUDevice::SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
 void GPUDevice::SetViewport(s32 x, s32 y, s32 width, s32 height)
 {
   // TODO: REMOVE ME
@@ -522,6 +543,13 @@ void GPUDevice::InsertDebugMessage(const char* fmt, ...)
 }
 
 std::unique_ptr<GPUSampler> GPUDevice::CreateSampler(const GPUSampler::Config& config)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return {};
+}
+
+std::unique_ptr<GPUTextureBuffer> GPUDevice::CreateTextureBuffer(GPUTextureBuffer::Format format, u32 size_in_elements)
 {
   // TODO: REMOVE ME
   UnreachableCode();

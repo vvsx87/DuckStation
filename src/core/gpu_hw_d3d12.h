@@ -21,8 +21,6 @@ public:
   GPU_HW_D3D12();
   ~GPU_HW_D3D12() override;
 
-  GPURenderer GetRendererType() const override;
-
   bool Initialize() override;
   void Reset(bool clear_vram) override;
 
@@ -49,9 +47,9 @@ private:
   bool CreateRootSignatures();
   bool CreateSamplers();
 
-  bool CreateFramebuffer();
+  bool CreateBuffers();
   void ClearFramebuffer();
-  void DestroyFramebuffer();
+  void DestroyBuffers();
 
   bool CreateVertexBuffer();
   bool CreateUniformBuffer();

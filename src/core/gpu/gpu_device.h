@@ -340,11 +340,50 @@ public:
   virtual void SetDebugName(const std::string_view& name) = 0;
 };
 
+class GPUTextureBuffer
+{
+public:
+  enum class Format
+  {
+    R16UI,
+
+    MaxCount
+  };
+
+  GPUTextureBuffer(Format format, u32 size_in_elements);
+  virtual ~GPUTextureBuffer();
+
+  static u32 GetElementSize(Format format);
+
+  ALWAYS_INLINE Format GetFormat() const { return m_format; }
+  ALWAYS_INLINE u32 GetSizeInElements() const { return m_size_in_elements; }
+  ALWAYS_INLINE u32 GetSizeInBytes() const { return m_size_in_elements * GetElementSize(m_format); }
+  ALWAYS_INLINE u32 GetCurrentPosition() const { return m_current_position; }
+
+  virtual void* Map(u32 required_elements) = 0;
+  virtual void Unmap(u32 used_elements) = 0;
+
+protected:
+  Format m_format;
+  u32 m_size_in_elements;
+  u32 m_current_position;
+};
+
 class GPUDevice
 {
 public:
   // TODO: drop virtuals
   using DrawIndex = u16;
+
+  struct Features
+  {
+    bool dual_source_blend : 1;
+    bool per_sample_shading : 1;
+    bool mipmapped_render_targets : 1;
+    bool noperspective_interpolation : 1;
+    bool supports_texture_buffers : 1;
+    bool texture_buffers_emulated_with_ssbo : 1;
+  };
 
   struct AdapterAndModeList
   {
@@ -362,6 +401,10 @@ public:
 
   /// Converts a fullscreen mode to a string.
   static std::string GetFullscreenModeString(u32 width, u32 height, float refresh_rate);
+
+  ALWAYS_INLINE const Features& GetFeatures() const { return m_features; }
+  ALWAYS_INLINE u32 GetMaxTextureSize() const { return m_max_texture_size; }
+  ALWAYS_INLINE u32 GetMaxMultisamples() const { return m_max_multisamples; }
 
   ALWAYS_INLINE const WindowInfo& GetWindowInfo() const { return m_window_info; }
   ALWAYS_INLINE s32 GetWindowWidth() const { return static_cast<s32>(m_window_info.surface_width); }
@@ -419,6 +462,7 @@ public:
                                                     const void* data = nullptr, u32 data_stride = 0,
                                                     bool dynamic = false) = 0;
   virtual std::unique_ptr<GPUSampler> CreateSampler(const GPUSampler::Config& config);
+  virtual std::unique_ptr<GPUTextureBuffer> CreateTextureBuffer(GPUTextureBuffer::Format format, u32 size_in_elements);
 
   virtual bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                                u32 out_data_stride) = 0;
@@ -437,7 +481,7 @@ public:
                                                             u32 ds_layer = 0, u32 ds_level = 0);
 
   /// Shader abstraction.
-  // TODO:  entry point?
+  // TODO:  entry point? source format?
   std::unique_ptr<GPUShader> CreateShader(GPUShaderStage stage, const std::string_view& source);
   virtual std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config);
 
@@ -465,6 +509,7 @@ public:
   virtual void SetFramebuffer(GPUFramebuffer* fb);
   virtual void SetPipeline(GPUPipeline* pipeline);
   virtual void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler);
+  virtual void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer);
   virtual void SetViewport(s32 x, s32 y, s32 width, s32 height);
   virtual void SetScissor(s32 x, s32 y, s32 width, s32 height);
   void SetViewportAndScissor(s32 x, s32 y, s32 width, s32 height);
@@ -566,6 +611,10 @@ protected:
   void RenderDisplay(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture, s32 texture_view_x,
                      s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter);
   void RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture);
+
+  Features m_features = {};
+  u32 m_max_texture_size = 0;
+  u32 m_max_multisamples = 0;
 
   WindowInfo m_window_info;
 

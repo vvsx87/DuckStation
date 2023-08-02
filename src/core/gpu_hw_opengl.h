@@ -19,8 +19,6 @@ public:
   GPU_HW_OpenGL();
   ~GPU_HW_OpenGL() override;
 
-  GPURenderer GetRendererType() const override;
-
   bool Initialize() override;
   void Reset(bool clear_vram) override;
 
@@ -49,7 +47,7 @@ private:
   ALWAYS_INLINE bool IsGLES() const { return (m_render_api == RenderAPI::OpenGLES); }
 
   void SetCapabilities();
-  bool CreateFramebuffer();
+  bool CreateBuffers();
   void ClearFramebuffer();
 
   bool CreateVertexBuffer();

@@ -6,8 +6,8 @@
 #include "../settings.h"
 #include "../shader_cache_version.h"
 
-#include "common/assert.h"
 #include "common/align.h"
+#include "common/assert.h"
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/path.h"
@@ -451,17 +451,7 @@ bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
     }
   }
 
-  m_allow_tearing_supported = false;
-  ComPtr<IDXGIFactory5> dxgi_factory5;
-  hr = m_dxgi_factory.As(&dxgi_factory5);
-  if (SUCCEEDED(hr))
-  {
-    BOOL allow_tearing_supported = false;
-    hr = dxgi_factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing_supported,
-                                            sizeof(allow_tearing_supported));
-    if (SUCCEEDED(hr))
-      m_allow_tearing_supported = (allow_tearing_supported == TRUE);
-  }
+  SetFeatures();
 
   m_window_info = wi;
   m_vsync_enabled = vsync;
@@ -484,6 +474,43 @@ bool D3D11Device::SetupDevice()
     return false;
 
   return true;
+}
+
+void D3D11Device::SetFeatures()
+{
+  const D3D_FEATURE_LEVEL feature_level = m_device->GetFeatureLevel();
+
+  m_max_texture_size = D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION;
+  m_max_multisamples = 1;
+  for (u32 multisamples = 2; multisamples < D3D11_MAX_MULTISAMPLE_SAMPLE_COUNT; multisamples++)
+  {
+    UINT num_quality_levels;
+    if (SUCCEEDED(
+          m_device->CheckMultisampleQualityLevels(DXGI_FORMAT_R8G8B8A8_UNORM, multisamples, &num_quality_levels)) &&
+        num_quality_levels > 0)
+    {
+      m_max_multisamples = multisamples;
+    }
+  }
+
+  m_features.dual_source_blend = true;
+  m_features.per_sample_shading = (feature_level >= D3D_FEATURE_LEVEL_10_1);
+  m_features.mipmapped_render_targets = true;
+  m_features.noperspective_interpolation = true;
+  m_features.supports_texture_buffers = true;
+  m_features.texture_buffers_emulated_with_ssbo = false;
+
+  m_allow_tearing_supported = false;
+  ComPtr<IDXGIFactory5> dxgi_factory5;
+  HRESULT hr = m_dxgi_factory.As(&dxgi_factory5);
+  if (SUCCEEDED(hr))
+  {
+    BOOL allow_tearing_supported = false;
+    hr = dxgi_factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing_supported,
+                                            sizeof(allow_tearing_supported));
+    if (SUCCEEDED(hr))
+      m_allow_tearing_supported = (allow_tearing_supported == TRUE);
+  }
 }
 
 bool D3D11Device::MakeCurrent()
@@ -1049,85 +1076,99 @@ std::unique_ptr<GPUFramebuffer> D3D11Device::CreateFramebuffer(GPUTexture* rt, u
 
   if (rt)
   {
-    D3D11_RENDER_TARGET_VIEW_DESC rtv_desc = {};
-    rtv_desc.Format = static_cast<D3D11Texture*>(rt)->GetDXGIFormat();
-    if (rt->IsMultisampled())
+    if (rt_layer == 0 && rt_level == 0)
     {
-      Assert(rt_level == 0);
-      if (rt->GetLayers() > 1)
-      {
-        rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY;
-        rtv_desc.Texture2DMSArray.ArraySize = rt->GetLayers();
-        rtv_desc.Texture2DMSArray.FirstArraySlice = rt_layer;
-      }
-      else
-      {
-        rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMS;
-      }
+      rtv = static_cast<D3D11Texture*>(rt)->GetD3DRTV();
     }
     else
     {
-      if (rt->GetLayers() > 1)
+      D3D11_RENDER_TARGET_VIEW_DESC rtv_desc = {};
+      rtv_desc.Format = static_cast<D3D11Texture*>(rt)->GetDXGIFormat();
+      if (rt->IsMultisampled())
       {
-        rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-        rtv_desc.Texture2DArray.ArraySize = rt->GetLayers();
-        rtv_desc.Texture2DArray.FirstArraySlice = rt_layer;
-        rtv_desc.Texture2DArray.MipSlice = rt_level;
+        Assert(rt_level == 0);
+        if (rt->GetLayers() > 1)
+        {
+          rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY;
+          rtv_desc.Texture2DMSArray.ArraySize = rt->GetLayers();
+          rtv_desc.Texture2DMSArray.FirstArraySlice = rt_layer;
+        }
+        else
+        {
+          rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMS;
+        }
       }
       else
       {
-        rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-        rtv_desc.Texture2D.MipSlice = rt_level;
+        if (rt->GetLayers() > 1)
+        {
+          rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+          rtv_desc.Texture2DArray.ArraySize = rt->GetLayers();
+          rtv_desc.Texture2DArray.FirstArraySlice = rt_layer;
+          rtv_desc.Texture2DArray.MipSlice = rt_level;
+        }
+        else
+        {
+          rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+          rtv_desc.Texture2D.MipSlice = rt_level;
+        }
       }
-    }
 
-    if (FAILED(hr = m_device->CreateRenderTargetView(static_cast<D3D11Texture*>(rt)->GetD3DTexture(), &rtv_desc,
-                                                     rtv.GetAddressOf())))
-    {
-      Log_ErrorPrintf("CreateRenderTargetView() failed: %08X", hr);
-      return {};
+      if (FAILED(hr = m_device->CreateRenderTargetView(static_cast<D3D11Texture*>(rt)->GetD3DTexture(), &rtv_desc,
+                                                       rtv.GetAddressOf())))
+      {
+        Log_ErrorPrintf("CreateRenderTargetView() failed: %08X", hr);
+        return {};
+      }
     }
   }
 
   if (ds)
   {
-    D3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc = {};
-    dsv_desc.Format = static_cast<D3D11Texture*>(ds)->GetDXGIFormat();
-    if (ds->IsMultisampled())
+    if (ds_layer == 0 && ds_level == 0)
     {
-      Assert(rt_level == 0);
-      if (ds->GetLayers() > 1)
-      {
-        dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY;
-        dsv_desc.Texture2DMSArray.ArraySize = ds->GetLayers();
-        dsv_desc.Texture2DMSArray.FirstArraySlice = rt_layer;
-      }
-      else
-      {
-        dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
-      }
+      dsv = static_cast<D3D11Texture*>(ds)->GetD3DDSV();
     }
     else
     {
-      if (ds->GetLayers() > 1)
+      D3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc = {};
+      dsv_desc.Format = static_cast<D3D11Texture*>(ds)->GetDXGIFormat();
+      if (ds->IsMultisampled())
       {
-        dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
-        dsv_desc.Texture2DArray.ArraySize = ds->GetLayers();
-        dsv_desc.Texture2DArray.FirstArraySlice = rt_layer;
-        dsv_desc.Texture2DArray.MipSlice = rt_level;
+        Assert(rt_level == 0);
+        if (ds->GetLayers() > 1)
+        {
+          dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY;
+          dsv_desc.Texture2DMSArray.ArraySize = ds->GetLayers();
+          dsv_desc.Texture2DMSArray.FirstArraySlice = rt_layer;
+        }
+        else
+        {
+          dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
+        }
       }
       else
       {
-        dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-        dsv_desc.Texture2D.MipSlice = rt_level;
+        if (ds->GetLayers() > 1)
+        {
+          dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+          dsv_desc.Texture2DArray.ArraySize = ds->GetLayers();
+          dsv_desc.Texture2DArray.FirstArraySlice = rt_layer;
+          dsv_desc.Texture2DArray.MipSlice = rt_level;
+        }
+        else
+        {
+          dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+          dsv_desc.Texture2D.MipSlice = rt_level;
+        }
       }
-    }
 
-    if (FAILED(hr = m_device->CreateDepthStencilView(static_cast<D3D11Texture*>(ds)->GetD3DTexture(), &dsv_desc,
-                                                     dsv.GetAddressOf())))
-    {
-      Log_ErrorPrintf("CreateDepthStencilView() failed: %08X", hr);
-      return {};
+      if (FAILED(hr = m_device->CreateDepthStencilView(static_cast<D3D11Texture*>(ds)->GetD3DTexture(), &dsv_desc,
+                                                       dsv.GetAddressOf())))
+      {
+        Log_ErrorPrintf("CreateDepthStencilView() failed: %08X", hr);
+        return {};
+      }
     }
   }
 
@@ -1911,6 +1952,56 @@ void D3D11Texture::Destroy()
   ClearBaseProperties();
 }
 
+D3D11TextureBuffer::D3D11TextureBuffer(Format format, u32 size_in_elements) : GPUTextureBuffer(format, size_in_elements)
+{
+}
+
+D3D11TextureBuffer::~D3D11TextureBuffer() = default;
+
+bool D3D11TextureBuffer::CreateBuffer(ID3D11Device* device)
+{
+  if (!m_buffer.Create(device, D3D11_BIND_SHADER_RESOURCE, GetSizeInBytes()))
+    return false;
+
+  static constexpr std::array<DXGI_FORMAT, static_cast<u32>(Format::MaxCount)> dxgi_formats = {{
+    DXGI_FORMAT_R16_UINT,
+  }};
+
+  CD3D11_SHADER_RESOURCE_VIEW_DESC srv_desc(m_buffer.GetD3DBuffer(), dxgi_formats[static_cast<u32>(m_format)], 0,
+                                            m_size_in_elements);
+  const HRESULT hr = device->CreateShaderResourceView(m_buffer.GetD3DBuffer(), &srv_desc, m_srv.GetAddressOf());
+  if (FAILED(hr))
+  {
+    Log_ErrorPrintf("CreateShaderResourceView() failed: %08X", hr);
+    return false;
+  }
+
+  return true;
+}
+
+void* D3D11TextureBuffer::Map(u32 required_elements)
+{
+  const u32 esize = GetElementSize(m_format);
+  const auto res = m_buffer.Map(D3D11Device::GetD3DContext(), esize, esize * required_elements);
+  m_current_position = res.index_aligned;
+  return res.pointer;
+}
+
+void D3D11TextureBuffer::Unmap(u32 used_elements)
+{
+  m_buffer.Unmap(D3D11Device::GetD3DContext(), used_elements * GetElementSize(m_format));
+}
+
+std::unique_ptr<GPUTextureBuffer> D3D11Device::CreateTextureBuffer(GPUTextureBuffer::Format format,
+                                                                   u32 size_in_elements)
+{
+  std::unique_ptr<D3D11TextureBuffer> tb = std::make_unique<D3D11TextureBuffer>(format, size_in_elements);
+  if (!tb->CreateBuffer(m_device.Get()))
+    tb.reset();
+
+  return tb;
+}
+
 void D3D11Device::PushDebugGroup(const char* fmt, ...)
 {
   if (!m_annotation)
@@ -2052,6 +2143,12 @@ void D3D11Device::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* s
   D3D11Sampler* S = static_cast<D3D11Sampler*>(sampler);
   m_context->PSSetShaderResources(0, 1, T->GetD3DSRVArray());
   m_context->PSSetSamplers(0, 1, S->GetSamplerStateArray());
+}
+
+void D3D11Device::SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer)
+{
+  D3D11TextureBuffer* B = static_cast<D3D11TextureBuffer*>(buffer);
+  m_context->PSSetShaderResources(0, 1, B->GetSRVArray());
 }
 
 void D3D11Device::UnbindTexture(D3D11Texture* tex)
