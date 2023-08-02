@@ -4,6 +4,8 @@
 #include "gpu_device.h"
 #include "../settings.h"
 #include "../shadergen.h"
+#include "postprocessing_chain.h"
+
 #include "common/align.h"
 #include "common/assert.h"
 #include "common/file_system.h"
@@ -12,15 +14,18 @@
 #include "common/path.h"
 #include "common/string_util.h"
 #include "common/timer.h"
+
 #include "imgui.h"
 #include "stb_image.h"
 #include "stb_image_resize.h"
 #include "stb_image_write.h"
+
 #include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <thread>
 #include <vector>
+
 Log_SetChannel(GPUDevice);
 
 // FIXME
@@ -42,6 +47,28 @@ GPUFramebuffer::~GPUFramebuffer() = default;
 GPUSampler::GPUSampler() = default;
 
 GPUSampler::~GPUSampler() = default;
+
+GPUSampler::Config GPUSampler::GetNearestConfig()
+{
+  Config config = {};
+  config.address_u = GPUSampler::AddressMode::ClampToEdge;
+  config.address_v = GPUSampler::AddressMode::ClampToEdge;
+  config.address_w = GPUSampler::AddressMode::ClampToEdge;
+  config.min_filter = GPUSampler::Filter::Nearest;
+  config.mag_filter = GPUSampler::Filter::Nearest;
+  return config;
+}
+
+GPUSampler::Config GPUSampler::GetLinearConfig()
+{
+  Config config = {};
+  config.address_u = GPUSampler::AddressMode::ClampToEdge;
+  config.address_v = GPUSampler::AddressMode::ClampToEdge;
+  config.address_w = GPUSampler::AddressMode::ClampToEdge;
+  config.min_filter = GPUSampler::Filter::Linear;
+  config.mag_filter = GPUSampler::Filter::Linear;
+  return config;
+}
 
 GPUShader::GPUShader(GPUShaderStage stage) : m_stage(stage)
 {
@@ -188,32 +215,16 @@ bool GPUDevice::SetupDevice()
 
 bool GPUDevice::CreateResources()
 {
-  GPUSampler::Config spconfig = {};
-  spconfig.address_u = GPUSampler::AddressMode::ClampToEdge;
-  spconfig.address_v = GPUSampler::AddressMode::ClampToEdge;
-  spconfig.address_w = GPUSampler::AddressMode::ClampToEdge;
-  spconfig.min_filter = GPUSampler::Filter::Nearest;
-  spconfig.mag_filter = GPUSampler::Filter::Nearest;
-  if (!(m_point_sampler = CreateSampler(spconfig)))
+  if (!(m_nearest_sampler = CreateSampler(GPUSampler::GetNearestConfig())))
     return false;
 
-  spconfig.min_filter = GPUSampler::Filter::Linear;
-  spconfig.mag_filter = GPUSampler::Filter::Linear;
-  if (!(m_linear_sampler = CreateSampler(spconfig)))
+  if (!(m_linear_sampler = CreateSampler(GPUSampler::GetLinearConfig())))
     return false;
 
-  spconfig.mag_filter = GPUSampler::Filter::Nearest;
-  spconfig.mag_filter = GPUSampler::Filter::Nearest;
-  spconfig.address_u = GPUSampler::AddressMode::ClampToBorder;
-  spconfig.address_v = GPUSampler::AddressMode::ClampToBorder;
-  spconfig.border_color = 0xFF000000u;
-  if (!(m_border_sampler = CreateSampler(spconfig)))
-    return false;
-
-  ShaderGen shadergen(GetRenderAPI(), /*FIXME DSB*/ true);
+  ShaderGen shadergen(GetRenderAPI(), m_features.dual_source_blend);
 
   GPUPipeline::GraphicsConfig plconfig;
-  plconfig.layout = GPUPipeline::Layout::SingleTexture;
+  plconfig.layout = GPUPipeline::Layout::SingleTexturePushConstants;
   plconfig.primitive = GPUPipeline::Primitive::Triangles;
   plconfig.rasterization = GPUPipeline::RasterizationState::GetNoCullState();
   plconfig.depth = GPUPipeline::DepthState::GetNoTestsState();
@@ -235,13 +246,13 @@ bool GPUDevice::CreateResources()
   GL_OBJECT_NAME(cursor_fs, "Cursor Fragment Shader");
 
   plconfig.vertex_shader = display_vs.get();
-  plconfig.pixel_shader = display_fs.get();
+  plconfig.fragment_shader = display_fs.get();
   if (!(m_display_pipeline = CreatePipeline(plconfig)))
     return false;
   GL_OBJECT_NAME(m_display_pipeline, "Display Pipeline");
 
   plconfig.blend = GPUPipeline::BlendState::GetAlphaBlendingState();
-  plconfig.pixel_shader = cursor_fs.get();
+  plconfig.fragment_shader = cursor_fs.get();
   if (!(m_cursor_pipeline = CreatePipeline(plconfig)))
     return false;
   GL_OBJECT_NAME(m_cursor_pipeline, "Cursor Pipeline");
@@ -262,7 +273,7 @@ bool GPUDevice::CreateResources()
   plconfig.input_layout.vertex_attributes = imgui_attributes;
   plconfig.input_layout.vertex_stride = sizeof(ImDrawVert);
   plconfig.vertex_shader = imgui_vs.get();
-  plconfig.pixel_shader = imgui_fs.get();
+  plconfig.fragment_shader = imgui_fs.get();
 
   m_imgui_pipeline = CreatePipeline(plconfig);
   if (!m_imgui_pipeline)
@@ -287,14 +298,33 @@ void GPUDevice::DestroyResources()
   m_imgui_pipeline.reset();
 
   m_linear_sampler.reset();
-  m_point_sampler.reset();
+  m_nearest_sampler.reset();
 
   m_shader_cache.Close();
 }
 
 bool GPUDevice::SetPostProcessingChain(const std::string_view& config)
 {
-  return false;
+  static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8; // TODO FIXME m_window_info.surface_format
+
+  m_post_processing_chain.reset();
+
+  if (config.empty())
+    return true;
+
+  m_post_processing_chain = std::make_unique<PostProcessingChain>();
+  if (!m_post_processing_chain->CreateFromString(config) || !m_post_processing_chain->CompilePipelines(hdformat))
+  {
+    m_post_processing_chain.reset();
+    return false;
+  }
+  else if (m_post_processing_chain->IsEmpty())
+  {
+    m_post_processing_chain.reset();
+    return true;
+  }
+
+  return true;
 }
 
 std::string GPUDevice::GetShaderCacheBaseName(const std::string_view& type, bool debug) const
@@ -862,26 +892,10 @@ bool GPUDevice::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<
     return false;
 
   ClearRenderTarget(render_texture.get(), 0);
-  SetFramebuffer(render_fb.get());
 
-  if (HasDisplayTexture())
-  {
-#if 0
-    if (!m_post_processing_chain.IsEmpty())
-    {
-      ApplyPostProcessingChain(render_texture.GetD3DRTV(), draw_rect.left, draw_rect.top, draw_rect.GetWidth(),
-                               draw_rect.GetHeight(), static_cast<D3D11Texture*>(m_display_texture),
-                               m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
-                               m_display_texture_view_height, width, height);
-    }
-    else
-#endif
-    {
-      RenderDisplay(draw_rect.left, draw_rect.top, draw_rect.GetWidth(), draw_rect.GetHeight(), m_display_texture,
-                    m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
-                    m_display_texture_view_height, IsUsingLinearFiltering());
-    }
-  }
+  RenderDisplay(render_fb.get(), draw_rect.left, draw_rect.top, draw_rect.GetWidth(), draw_rect.GetHeight(),
+                m_display_texture, m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
+                m_display_texture_view_height, IsUsingLinearFiltering());
 
   SetFramebuffer(nullptr);
 
@@ -895,35 +909,27 @@ bool GPUDevice::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<
   return true;
 }
 
-void GPUDevice::RenderDisplay()
+void GPUDevice::RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 width, s32 height, GPUTexture* texture,
+                              s32 texture_view_x, s32 texture_view_y, s32 texture_view_width, s32 texture_view_height,
+                              bool linear_filter)
 {
-  const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
-
-  GL_SCOPE("RenderDisplay: %dx%d at %d,%d", left, top, width, height);
-
-#if 0
-  if (HasDisplayTexture() && !m_post_processing_chain.IsEmpty())
+  static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8; // TODO FIXME m_window_info.surface_format
+  const u32 target_width = target ? target->GetWidth() : m_window_info.surface_width;
+  const u32 target_height = target ? target->GetHeight() : m_window_info.surface_height;
+  const bool postfx =
+    (m_post_processing_chain && m_post_processing_chain->CheckTargets(hdformat, target_width, target_height));
+  if (postfx)
   {
-    ApplyPostProcessingChain(m_swap_chain_rtv.Get(), left, top, width, height,
-                             static_cast<D3D11Texture*>(m_display_texture), m_display_texture_view_x,
-                             m_display_texture_view_y, m_display_texture_view_width, m_display_texture_view_height,
-                             GetWindowWidth(), GetWindowHeight());
-    return;
+    ClearRenderTarget(m_post_processing_chain->GetInputTexture(), 0);
+    SetFramebuffer(m_post_processing_chain->GetInputFramebuffer());
   }
-#endif
+  else
+  {
+    SetFramebuffer(target);
+  }
 
-  if (!HasDisplayTexture())
-    return;
-
-  RenderDisplay(left, top, width, height, m_display_texture, m_display_texture_view_x, m_display_texture_view_y,
-                m_display_texture_view_width, m_display_texture_view_height, IsUsingLinearFiltering());
-}
-
-void GPUDevice::RenderDisplay(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture, s32 texture_view_x,
-                              s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter)
-{
   SetPipeline(m_display_pipeline.get());
-  SetTextureSampler(0, texture, linear_filter ? m_linear_sampler.get() : m_point_sampler.get());
+  SetTextureSampler(0, texture, linear_filter ? m_linear_sampler.get() : m_nearest_sampler.get());
 
   const bool linear = IsUsingLinearFiltering();
   const float position_adjust = linear ? 0.5f : 0.0f;
@@ -937,6 +943,12 @@ void GPUDevice::RenderDisplay(s32 left, s32 top, s32 width, s32 height, GPUTextu
 
   SetViewportAndScissor(left, top, width, height);
   Draw(3, 0);
+
+  if (postfx)
+  {
+    m_post_processing_chain->Apply(target, left, top, width, height, texture_view_width, texture_view_height,
+                                   target_width, target_height);
+  }
 }
 
 void GPUDevice::RenderSoftwareCursor()

@@ -71,7 +71,7 @@ void PostProcessingChainConfigWidget::updateList()
 
   for (u32 i = 0; i < m_chain.GetStageCount(); i++)
   {
-    const FrontendCommon::PostProcessingShader& shader = m_chain.GetShaderStage(i);
+    const PostProcessingShader& shader = m_chain.GetShaderStage(i);
 
     QListWidgetItem* item = new QListWidgetItem(QString::fromStdString(shader.GetName()), m_ui.shaders);
     item->setData(Qt::UserRole, QVariant(i));
@@ -112,7 +112,7 @@ void PostProcessingChainConfigWidget::onAddButtonClicked()
 {
   QMenu menu;
 
-  const std::vector<std::string> shaders(FrontendCommon::PostProcessingChain::GetAvailableShaderNames());
+  const std::vector<std::string> shaders(PostProcessingChain::GetAvailableShaderNames());
   if (shaders.empty())
   {
     menu.addAction(tr("No Shaders Available"))->setEnabled(false);

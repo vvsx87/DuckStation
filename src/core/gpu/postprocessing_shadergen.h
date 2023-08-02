@@ -4,9 +4,6 @@
 #pragma once
 #include "core/shadergen.h"
 #include "postprocessing_shader.h"
-#include <sstream>
-
-namespace FrontendCommon {
 
 class PostProcessingShaderGen : public ShaderGen
 {
@@ -20,5 +17,3 @@ public:
 private:
   void WriteUniformBuffer(std::stringstream& ss, const PostProcessingShader& shader, bool use_push_constants);
 };
-
-} // namespace FrontendCommon

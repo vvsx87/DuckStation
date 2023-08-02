@@ -1,19 +1,21 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "postprocessing_chain.h"
+#include "../host.h"
+#include "../settings.h"
+#include "gpu_device.h"
+
 #include "common/assert.h"
 #include "common/file_system.h"
 #include "common/log.h"
-#include "common/string.h"
 #include "common/path.h"
-#include "core/host.h"
-#include "core/settings.h"
+#include "common/string.h"
+
 #include "fmt/format.h"
 #include <sstream>
-Log_SetChannel(PostProcessingChain);
 
-namespace FrontendCommon {
+Log_SetChannel(PostProcessingChain);
 
 static bool TryLoadingShader(PostProcessingShader* shader, const std::string_view& shader_name)
 {
@@ -24,7 +26,8 @@ static bool TryLoadingShader(PostProcessingShader* shader, const std::string_vie
       return true;
   }
 
-  std::optional<std::string> resource_str(Host::ReadResourceFileToString(fmt::format("shaders" FS_OSPATH_SEPARATOR_STR "{}.glsl", shader_name).c_str()));
+  std::optional<std::string> resource_str(
+    Host::ReadResourceFileToString(fmt::format("shaders" FS_OSPATH_SEPARATOR_STR "{}.glsl", shader_name).c_str()));
   if (resource_str.has_value() && shader->LoadFromString(std::string(shader_name), std::move(resource_str.value())))
     return true;
 
@@ -115,6 +118,20 @@ bool PostProcessingChain::CreateFromString(const std::string_view& chain_config)
   return true;
 }
 
+bool PostProcessingChain::CompilePipelines(GPUTexture::Format target_format)
+{
+  for (PostProcessingShader& stage : m_shaders)
+  {
+    if (!stage.CompilePipeline(target_format))
+    {
+      Log_ErrorPrintf("Failed to compile one or more post-processing shaders, disabling.");
+      return false;
+    }
+  }
+
+  return true;
+}
+
 std::vector<std::string> PostProcessingChain::GetAvailableShaderNames()
 {
   std::vector<std::string> names;
@@ -182,4 +199,93 @@ void PostProcessingChain::ClearStages()
   m_shaders.clear();
 }
 
-} // namespace FrontendCommon
+bool PostProcessingChain::CheckTargets(GPUTexture::Format format, u32 target_width, u32 target_height)
+{
+  if (!m_input_texture || m_input_texture->GetFormat() != format || m_input_texture->GetWidth() != target_width ||
+      m_input_texture->GetHeight() != target_height)
+  {
+    m_input_framebuffer.reset();
+    m_input_texture.reset();
+
+    if (!(m_input_texture = g_host_display->CreateTexture(target_width, target_height, 1, 1, 1,
+                                                          GPUTexture::Type::RenderTarget, format)))
+    {
+      return false;
+    }
+
+    if (!(m_input_framebuffer = g_host_display->CreateFramebuffer(m_input_texture.get())))
+    {
+      m_input_texture.reset();
+      return false;
+    }
+  }
+
+  const PostProcessingShader& final_stage = m_shaders.back();
+  for (PostProcessingShader& shader : m_shaders)
+  {
+    if (&shader == &final_stage)
+      continue;
+
+    if (!shader.ResizeOutput(format, target_width, target_height))
+      return false;
+  }
+
+  if (!m_border_sampler)
+  {
+    GPUSampler::Config config = GPUSampler::GetNearestConfig();
+    config.address_u = GPUSampler::AddressMode::ClampToBorder;
+    config.address_v = GPUSampler::AddressMode::ClampToBorder;
+    config.border_color = 0xFF000000u;
+    if (!(m_border_sampler = g_host_display->CreateSampler(config)))
+      return false;
+  }
+
+  return true;
+}
+
+void PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s32 final_top, s32 final_width,
+                                s32 final_height, s32 orig_width, s32 orig_height, u32 target_width, u32 target_height)
+{
+  const u32 window_width = final_target ? final_target->GetWidth() : g_host_display->GetWindowWidth();
+  const u32 window_height = final_target ? final_target->GetHeight() : g_host_display->GetWindowHeight();
+
+  GL_PUSH("PostProcessingChain Apply");
+
+  g_host_display->SetViewportAndScissor(final_left, final_top, final_width, final_height);
+
+  GPUTexture* input = m_input_texture.get();
+  input->MakeReadyForSampling();
+
+  const PostProcessingShader& final_stage = m_shaders.back();
+  for (PostProcessingShader& stage : m_shaders)
+  {
+    const bool is_final = (&stage == &final_stage);
+
+    GL_SCOPE("PostProcessingShader %s", stage.GetName().c_str());
+
+    // Assumes final stage has been cleared already.
+    if (!is_final)
+      g_host_display->ClearRenderTarget(stage.GetOutputTexture(), 0);
+
+    g_host_display->SetFramebuffer(is_final ? final_target : stage.GetOutputFramebuffer());
+
+    g_host_display->SetPipeline(stage.GetPipeline());
+    g_host_display->SetTextureSampler(0, input, m_border_sampler.get());
+
+    const u32 uniforms_size = stage.GetUniformsSize();
+    void* uniforms = g_host_display->MapUniformBuffer(uniforms_size);
+    stage.FillUniformBuffer(uniforms, input->GetWidth(), input->GetHeight(), final_left, final_top, final_width,
+                            final_height, window_width, window_height, orig_width, orig_height,
+                            static_cast<float>(m_timer.GetTimeSeconds()));
+    g_host_display->UnmapUniformBuffer(uniforms_size);
+    g_host_display->Draw(3, 0);
+
+    if (!is_final)
+    {
+      input = stage.GetOutputTexture();
+      input->MakeReadyForSampling();
+    }
+  }
+
+  GL_POP();
+}

@@ -378,7 +378,7 @@ static std::unique_ptr<GameList::Entry> s_game_settings_entry;
 static std::vector<std::pair<std::string, bool>> s_game_list_directories_cache;
 static std::vector<std::string> s_graphics_adapter_list_cache;
 static std::vector<std::string> s_fullscreen_mode_list_cache;
-static FrontendCommon::PostProcessingChain s_postprocessing_chain;
+static PostProcessingChain s_postprocessing_chain;
 static std::vector<const HotkeyInfo*> s_hotkey_list_cache;
 static std::atomic_bool s_settings_changed{false};
 static std::atomic_bool s_game_settings_changed{false};
@@ -3866,7 +3866,7 @@ void FullscreenUI::DrawPostProcessingSettingsPage()
   if (MenuButton(ICON_FA_PLUS " Add Shader", "Adds a new shader to the chain."))
   {
     ImGuiFullscreen::ChoiceDialogOptions options;
-    for (std::string& name : FrontendCommon::PostProcessingChain::GetAvailableShaderNames())
+    for (std::string& name : PostProcessingChain::GetAvailableShaderNames())
       options.emplace_back(std::move(name), false);
 
     OpenChoiceDialog(
@@ -3912,7 +3912,7 @@ void FullscreenUI::DrawPostProcessingSettingsPage()
   for (u32 stage_index = 0; stage_index < s_postprocessing_chain.GetStageCount(); stage_index++)
   {
     ImGui::PushID(stage_index);
-    FrontendCommon::PostProcessingShader& stage = s_postprocessing_chain.GetShaderStage(stage_index);
+    PostProcessingShader& stage = s_postprocessing_chain.GetShaderStage(stage_index);
     str.Fmt("Stage {}: {}", stage_index + 1, stage.GetName());
     MenuHeading(str);
 
@@ -3936,11 +3936,11 @@ void FullscreenUI::DrawPostProcessingSettingsPage()
       postprocessing_action_index = stage_index;
     }
 
-    for (FrontendCommon::PostProcessingShader::Option& opt : stage.GetOptions())
+    for (PostProcessingShader::Option& opt : stage.GetOptions())
     {
       switch (opt.type)
       {
-        case FrontendCommon::PostProcessingShader::Option::Type::Bool:
+        case PostProcessingShader::Option::Type::Bool:
         {
           bool value = (opt.value[0].int_value != 0);
           tstr.Fmt(ICON_FA_COGS " {}", opt.ui_name);
@@ -3953,7 +3953,7 @@ void FullscreenUI::DrawPostProcessingSettingsPage()
         }
         break;
 
-        case FrontendCommon::PostProcessingShader::Option::Type::Float:
+        case PostProcessingShader::Option::Type::Float:
         {
           tstr.Fmt(ICON_FA_RULER_VERTICAL " {}##{}", opt.ui_name, opt.name);
           str.Fmt("Value: {} | Default: {} | Minimum: {} | Maximum: {}", opt.value[0].float_value,
@@ -4056,7 +4056,7 @@ void FullscreenUI::DrawPostProcessingSettingsPage()
         }
         break;
 
-        case FrontendCommon::PostProcessingShader::Option::Type::Int:
+        case PostProcessingShader::Option::Type::Int:
         {
           tstr.Fmt(ICON_FA_RULER_VERTICAL " {}##{}", opt.ui_name, opt.name);
           str.Fmt("Value: {} | Default: {} | Minimum: {} | Maximum: {}", opt.value[0].int_value,
@@ -4168,7 +4168,7 @@ void FullscreenUI::DrawPostProcessingSettingsPage()
   {
     case POSTPROCESSING_ACTION_REMOVE:
     {
-      FrontendCommon::PostProcessingShader& stage = s_postprocessing_chain.GetShaderStage(postprocessing_action_index);
+      PostProcessingShader& stage = s_postprocessing_chain.GetShaderStage(postprocessing_action_index);
       ShowToast(std::string(), fmt::format("Removed stage {} ({}).", postprocessing_action_index + 1, stage.GetName()));
       s_postprocessing_chain.RemoveStage(postprocessing_action_index);
       SavePostProcessingChain();
@@ -4454,7 +4454,9 @@ void FullscreenUI::DrawAchievementsSettingsPage()
   EndMenuButtons();
 }
 
-void FullscreenUI::DrawAchievementsLoginWindow() {}
+void FullscreenUI::DrawAchievementsLoginWindow()
+{
+}
 
 #endif
 

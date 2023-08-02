@@ -264,10 +264,7 @@ public:
   ~D3D11Device();
 
   RenderAPI GetRenderAPI() const override;
-  void* GetDevice() const override;
-  void* GetContext() const override;
 
-  bool HasDevice() const override;
   bool HasSurface() const override;
 
   bool CreateDevice(const WindowInfo& wi, bool vsync) override;
@@ -353,10 +350,10 @@ private:
   using InputLayoutMap =
     std::unordered_map<GPUPipeline::InputLayout, ComPtr<ID3D11InputLayout>, GPUPipeline::InputLayoutHash>;
 
-  // Currently we don't stream uniforms, instead just re-map the buffer every time and let the driver take care of it.
-  static constexpr u32 MAX_UNIFORM_BUFFER_SIZE = 64;
   static constexpr u32 VERTEX_BUFFER_SIZE = 8 * 1024 * 1024;
   static constexpr u32 INDEX_BUFFER_SIZE = 4 * 1024 * 1024;
+  static constexpr u32 UNIFORM_BUFFER_SIZE = 2 * 1024 * 1024;
+  static constexpr u32 UNIFORM_BUFFER_ALIGNMENT = 256;
   static constexpr u8 NUM_TIMESTAMP_QUERIES = 3;
 
   static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
@@ -384,13 +381,14 @@ private:
   void PopTimestampQuery();
   void KickTimestampQuery();
 
-  ComPtr<ID3D11Device> m_device;
-  ComPtr<ID3D11DeviceContext> m_context;
+  ComPtr<ID3D11Device1> m_device;
+  ComPtr<ID3D11DeviceContext1> m_context;
   ComPtr<ID3DUserDefinedAnnotation> m_annotation;
 
   ComPtr<IDXGIFactory> m_dxgi_factory;
   ComPtr<IDXGISwapChain> m_swap_chain;
-  ComPtr<ID3D11RenderTargetView> m_swap_chain_rtv;
+  std::unique_ptr<D3D11Texture> m_swap_chain_texture;
+  std::unique_ptr<D3D11Framebuffer> m_swap_chain_framebuffer;
 
   RasterizationStateMap m_rasterization_states;
   DepthStateMap m_depth_states;

@@ -29,10 +29,7 @@ public:
   ~D3D12GPUDevice();
 
   RenderAPI GetRenderAPI() const override;
-  void* GetDevice() const override;
-  void* GetContext() const override;
 
-  bool HasDevice() const override;
   bool HasSurface() const override;
 
   bool CreateDevice(const WindowInfo& wi, bool vsync) override;
@@ -70,17 +67,6 @@ public:
   static AdapterAndModeList StaticGetAdapterAndModeList();
 
 protected:
-  struct PostProcessingStage
-  {
-    PostProcessingStage() = default;
-    PostProcessingStage(PostProcessingStage&& move);
-    ~PostProcessingStage();
-
-    ComPtr<ID3D12PipelineState> pipeline;
-    D3D12::Texture output_texture;
-    u32 uniforms_size = 0;
-  };
-
   static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
 
   virtual bool CreateResources() override;
@@ -100,12 +86,6 @@ protected:
   void RenderSoftwareCursor(ID3D12GraphicsCommandList* cmdlist, s32 left, s32 top, s32 width, s32 height,
                             GPUTexture* texture_handle);
 
-  bool CheckPostProcessingRenderTargets(u32 target_width, u32 target_height);
-  void ApplyPostProcessingChain(ID3D12GraphicsCommandList* cmdlist, D3D12::Texture* final_target, s32 final_left,
-                                s32 final_top, s32 final_width, s32 final_height, D3D12::Texture* texture,
-                                s32 texture_view_x, s32 texture_view_y, s32 texture_view_width, s32 texture_view_height,
-                                u32 target_width, u32 target_height);
-
   ComPtr<IDXGIFactory> m_dxgi_factory;
   ComPtr<IDXGISwapChain> m_swap_chain;
   std::vector<D3D12::Texture> m_swap_chain_buffers;
@@ -120,14 +100,6 @@ protected:
 
   D3D12::Texture m_display_pixels_texture;
   D3D12::StagingTexture m_readback_staging_texture;
-
-  ComPtr<ID3D12RootSignature> m_post_processing_root_signature;
-  ComPtr<ID3D12RootSignature> m_post_processing_cb_root_signature;
-  FrontendCommon::PostProcessingChain m_post_processing_chain;
-  D3D12::StreamBuffer m_post_processing_cbuffer;
-  D3D12::Texture m_post_processing_input_texture;
-  std::vector<PostProcessingStage> m_post_processing_stages;
-  Common::Timer m_post_processing_timer;
 
   bool m_allow_tearing_supported = false;
   bool m_using_allow_tearing = false;

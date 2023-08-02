@@ -20,10 +20,7 @@ public:
   ~OpenGLGPUDevice();
 
   RenderAPI GetRenderAPI() const override;
-  void* GetDevice() const override;
-  void* GetContext() const override;
 
-  bool HasDevice() const override;
   bool HasSurface() const override;
 
   bool CreateDevice(const WindowInfo& wi, bool vsync) override;
@@ -82,18 +79,6 @@ protected:
                      s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter);
   void RenderSoftwareCursor(s32 left, s32 bottom, s32 width, s32 height, GPUTexture* texture_handle);
 
-  struct PostProcessingStage
-  {
-    GL::Program program;
-    GL::Texture output_texture;
-    u32 uniforms_size;
-  };
-
-  bool CheckPostProcessingRenderTargets(u32 target_width, u32 target_height);
-  void ApplyPostProcessingChain(GLuint final_target, s32 final_left, s32 final_top, s32 final_width, s32 final_height,
-                                GL::Texture* texture, s32 texture_view_x, s32 texture_view_y, s32 texture_view_width,
-                                s32 texture_view_height, u32 target_width, u32 target_height);
-
   void CreateTimestampQueries();
   void DestroyTimestampQueries();
   void PopTimestampQuery();
@@ -112,12 +97,6 @@ protected:
   std::unique_ptr<GL::StreamBuffer> m_texture_stream_buffer;
   std::vector<u8> m_texture_repack_buffer;
   u32 m_texture_stream_buffer_offset = 0;
-
-  FrontendCommon::PostProcessingChain m_post_processing_chain;
-  GL::Texture m_post_processing_input_texture;
-  std::unique_ptr<GL::StreamBuffer> m_post_processing_ubo;
-  std::vector<PostProcessingStage> m_post_processing_stages;
-  Common::Timer m_post_processing_timer;
 
   std::array<GLuint, NUM_TIMESTAMP_QUERIES> m_timestamp_queries = {};
   float m_accumulated_gpu_time = 0.0f;

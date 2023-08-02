@@ -37,16 +37,6 @@ RenderAPI OpenGLGPUDevice::GetRenderAPI() const
   return m_gl_context->IsGLES() ? RenderAPI::OpenGLES : RenderAPI::OpenGL;
 }
 
-void* OpenGLGPUDevice::GetDevice() const
-{
-  return nullptr;
-}
-
-void* OpenGLGPUDevice::GetContext() const
-{
-  return m_gl_context.get();
-}
-
 std::unique_ptr<GPUTexture> OpenGLGPUDevice::CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                                            GPUTexture::Type type, GPUTexture::Format format,
                                                            const void* data, u32 data_stride,
@@ -271,11 +261,6 @@ static void APIENTRY GLDebugCallback(GLenum source, GLenum type, GLuint id, GLen
       // Log_DebugPrint(message);
       break;
   }
-}
-
-bool OpenGLGPUDevice::HasDevice() const
-{
-  return static_cast<bool>(m_gl_context);
 }
 
 bool OpenGLGPUDevice::HasSurface() const
@@ -623,10 +608,12 @@ void OpenGLGPUDevice::DestroyResources()
 {
   GPUDevice::DestroyResources();
 
+#if 0
   m_post_processing_chain.ClearStages();
   m_post_processing_input_texture.Destroy();
   m_post_processing_ubo.reset();
   m_post_processing_stages.clear();
+#endif
 
   if (m_display_vao != 0)
   {
@@ -695,6 +682,7 @@ void OpenGLGPUDevice::RenderDisplay()
 {
   const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
 
+#if 0
   if (HasDisplayTexture() && !m_post_processing_chain.IsEmpty())
   {
     ApplyPostProcessingChain(0, left, GetWindowHeight() - top - height, width, height,
@@ -703,6 +691,7 @@ void OpenGLGPUDevice::RenderDisplay()
                              GetWindowWidth(), GetWindowHeight());
     return;
   }
+#endif
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glClear(GL_COLOR_BUFFER_BIT);
@@ -817,6 +806,7 @@ void OpenGLGPUDevice::RenderSoftwareCursor(s32 left, s32 bottom, s32 width, s32 
 
 bool OpenGLGPUDevice::SetPostProcessingChain(const std::string_view& config)
 {
+#if 0
   if (config.empty())
   {
     m_post_processing_input_texture.Destroy();
@@ -882,8 +872,12 @@ bool OpenGLGPUDevice::SetPostProcessingChain(const std::string_view& config)
 
   m_post_processing_timer.Reset();
   return true;
+#else
+  return false;
+#endif
 }
 
+#if 0
 bool OpenGLGPUDevice::CheckPostProcessingRenderTargets(u32 target_width, u32 target_height)
 {
   DebugAssert(!m_post_processing_stages.empty());
@@ -973,7 +967,7 @@ void OpenGLGPUDevice::ApplyPostProcessingChain(GLuint final_target, s32 final_le
   glBindSampler(0, 0);
   m_post_processing_ubo->Unbind();
 }
-
+#endif
 void OpenGLGPUDevice::CreateTimestampQueries()
 {
   const bool gles = m_gl_context->IsGLES();

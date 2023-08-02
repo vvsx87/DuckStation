@@ -37,21 +37,6 @@ RenderAPI D3D12GPUDevice::GetRenderAPI() const
   return RenderAPI::D3D12;
 }
 
-void* D3D12GPUDevice::GetDevice() const
-{
-  return g_d3d12_context->GetDevice();
-}
-
-void* D3D12GPUDevice::GetContext() const
-{
-  return g_d3d12_context.get();
-}
-
-bool D3D12GPUDevice::HasDevice() const
-{
-  return static_cast<bool>(g_d3d12_context);
-}
-
 bool D3D12GPUDevice::HasSurface() const
 {
   return static_cast<bool>(m_swap_chain);
@@ -472,6 +457,7 @@ bool D3D12GPUDevice::CreateResources()
   if (!m_display_root_signature)
     return false;
 
+#if 0
   rsbuilder.SetInputAssemblerFlag();
   rsbuilder.Add32BitConstants(0, FrontendCommon::PostProcessingShader::PUSH_CONSTANT_SIZE_THRESHOLD / sizeof(u32),
                               D3D12_SHADER_VISIBILITY_ALL);
@@ -488,6 +474,7 @@ bool D3D12GPUDevice::CreateResources()
   m_post_processing_cb_root_signature = rsbuilder.Create();
   if (!m_post_processing_cb_root_signature)
     return false;
+#endif
 
   D3D12::GraphicsPipelineBuilder gpbuilder;
   gpbuilder.SetPrimitiveTopologyType(D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE);
@@ -546,12 +533,14 @@ void D3D12GPUDevice::DestroyResources()
 {
   GPUDevice::DestroyResources();
 
+#if 0
   m_post_processing_cbuffer.Destroy(false);
   m_post_processing_chain.ClearStages();
   m_post_processing_input_texture.Destroy();
   m_post_processing_stages.clear();
   m_post_processing_cb_root_signature.Reset();
   m_post_processing_root_signature.Reset();
+#endif
 
   m_readback_staging_texture.Destroy(false);
   g_d3d12_context->GetSamplerHeapManager().Free(&m_border_sampler);
@@ -638,6 +627,7 @@ void D3D12GPUDevice::RenderDisplay(ID3D12GraphicsCommandList* cmdlist, D3D12::Te
 {
   const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
 
+#if 0
   if (HasDisplayTexture() && !m_post_processing_chain.IsEmpty())
   {
     ApplyPostProcessingChain(cmdlist, swap_chain_buf, left, top, width, height,
@@ -646,6 +636,7 @@ void D3D12GPUDevice::RenderDisplay(ID3D12GraphicsCommandList* cmdlist, D3D12::Te
                              GetWindowWidth(), GetWindowHeight());
     return;
   }
+#endif
 
   swap_chain_buf->TransitionToState(D3D12_RESOURCE_STATE_RENDER_TARGET);
   cmdlist->ClearRenderTargetView(swap_chain_buf->GetRTVOrDSVDescriptor(), s_clear_color.data(), 0, nullptr);
@@ -787,6 +778,7 @@ GPUDevice::AdapterAndModeList D3D12GPUDevice::GetAdapterAndModeList(IDXGIFactory
   return adapter_info;
 }
 
+#if 0
 D3D12GPUDevice::PostProcessingStage::PostProcessingStage(PostProcessingStage&& move)
   : pipeline(std::move(move.pipeline)), output_texture(std::move(move.output_texture)),
     uniforms_size(move.uniforms_size)
@@ -798,9 +790,11 @@ D3D12GPUDevice::PostProcessingStage::~PostProcessingStage()
 {
   output_texture.Destroy(true);
 }
+#endif
 
 bool D3D12GPUDevice::SetPostProcessingChain(const std::string_view& config)
 {
+#if 0
   g_d3d12_context->ExecuteCommandList(true);
 
   if (config.empty())
@@ -882,8 +876,12 @@ bool D3D12GPUDevice::SetPostProcessingChain(const std::string_view& config)
 
   m_post_processing_timer.Reset();
   return true;
+#else
+  return false;
+#endif
 }
 
+#if 0
 bool D3D12GPUDevice::CheckPostProcessingRenderTargets(u32 target_width, u32 target_height)
 {
   DebugAssert(!m_post_processing_stages.empty());
@@ -1011,3 +1009,4 @@ void D3D12GPUDevice::ApplyPostProcessingChain(ID3D12GraphicsCommandList* cmdlist
     }
   }
 }
+#endif

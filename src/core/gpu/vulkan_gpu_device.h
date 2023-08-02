@@ -24,10 +24,7 @@ public:
   ~VulkanGPUDevice();
 
   RenderAPI GetRenderAPI() const override;
-  void* GetDevice() const override;
-  void* GetContext() const override;
 
-  bool HasDevice() const override;
   bool HasSurface() const override;
 
   bool CreateDevice(const WindowInfo& wi, bool vsync) override;
@@ -71,23 +68,6 @@ protected:
     float src_rect_height;
   };
 
-  struct PostProcessingStage
-  {
-    PostProcessingStage() = default;
-    PostProcessingStage(PostProcessingStage&& move);
-    ~PostProcessingStage();
-
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VkFramebuffer output_framebuffer = VK_NULL_HANDLE;
-    Vulkan::Texture output_texture;
-    u32 uniforms_size = 0;
-  };
-
-  bool CheckPostProcessingRenderTargets(u32 target_width, u32 target_height);
-  void ApplyPostProcessingChain(VkFramebuffer target_fb, s32 final_left, s32 final_top, s32 final_width,
-                                s32 final_height, Vulkan::Texture* texture, s32 texture_view_x, s32 texture_view_y,
-                                s32 texture_view_width, s32 texture_view_height, u32 target_width, u32 target_height);
-
   VkRenderPass GetRenderPassForDisplay() const;
 
   bool CheckStagingBufferSize(u32 required_size);
@@ -125,11 +105,4 @@ protected:
   VkDescriptorSetLayout m_post_process_ubo_descriptor_set_layout = VK_NULL_HANDLE;
   VkPipelineLayout m_post_process_pipeline_layout = VK_NULL_HANDLE;
   VkPipelineLayout m_post_process_ubo_pipeline_layout = VK_NULL_HANDLE;
-
-  FrontendCommon::PostProcessingChain m_post_processing_chain;
-  Vulkan::Texture m_post_processing_input_texture;
-  VkFramebuffer m_post_processing_input_framebuffer = VK_NULL_HANDLE;
-  Vulkan::StreamBuffer m_post_processing_ubo;
-  std::vector<PostProcessingStage> m_post_processing_stages;
-  Common::Timer m_post_processing_timer;
 };

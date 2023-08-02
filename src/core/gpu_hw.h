@@ -58,6 +58,7 @@ public:
 protected:
   enum : u32
   {
+    // TODO: Remove these
     VRAM_UPDATE_TEXTURE_BUFFER_SIZE = 4 * 1024 * 1024,
     VERTEX_BUFFER_SIZE = 4 * 1024 * 1024,
     UNIFORM_BUFFER_SIZE = 2 * 1024 * 1024,
@@ -374,9 +375,9 @@ protected:
   SmoothingUBOData GetSmoothingUBO(u32 level, u32 left, u32 top, u32 width, u32 height, u32 tex_width,
                                    u32 tex_height) const;
 
-  void DownsampleFramebuffer(const GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
-  void DownsampleFramebufferAdaptive(const GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
-  void DownsampleFramebufferBoxFilter(const GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebuffer(GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebufferAdaptive(GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebufferBoxFilter(GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
 
   std::unique_ptr<GPUTexture> m_vram_texture;
   std::unique_ptr<GPUTexture> m_vram_depth_texture;
@@ -458,6 +459,10 @@ protected:
   // TODO: get rid of this, and use image blits instead where supported
   std::unique_ptr<GPUPipeline> m_copy_pipeline;
 
+  std::unique_ptr<GPUTexture> m_downsample_texture;
+  std::unique_ptr<GPUFramebuffer> m_downsample_framebuffer;
+  //std::unique_ptr<GPUTexture> m_downsample_weight_texture;
+  //std::unique_ptr<GPUFramebuffer> m_downsample_weight_framebuffer;
   std::unique_ptr<GPUPipeline> m_downsample_first_pass_pipeline;
   std::unique_ptr<GPUPipeline> m_downsample_mid_pass_pipeline;
   std::unique_ptr<GPUPipeline> m_downsample_blur_pass_pipeline;

@@ -3,8 +3,6 @@
 
 #include "postprocessing_shadergen.h"
 
-namespace FrontendCommon {
-
 PostProcessingShaderGen::PostProcessingShaderGen(RenderAPI render_api, bool supports_dual_source_blend)
   : ShaderGen(render_api, supports_dual_source_blend)
 {
@@ -18,7 +16,7 @@ std::string PostProcessingShaderGen::GeneratePostProcessingVertexShader(const Po
 
   WriteHeader(ss);
   DeclareTexture(ss, "samp0", 0);
-  WriteUniformBuffer(ss, shader, shader.UsePushConstants());
+  WriteUniformBuffer(ss, shader, false);
 
   DeclareVertexEntryPoint(ss, {}, 0, 1, {}, true);
   ss << R"(
@@ -41,7 +39,7 @@ std::string PostProcessingShaderGen::GeneratePostProcessingFragmentShader(const 
 
   WriteHeader(ss);
   DeclareTexture(ss, "samp0", 0);
-  WriteUniformBuffer(ss, shader, shader.UsePushConstants());
+  WriteUniformBuffer(ss, shader, false);
 
   // Rename main, since we need to set up globals
   if (!m_glsl)
@@ -200,5 +198,3 @@ void PostProcessingShaderGen::WriteUniformBuffer(std::stringstream& ss, const Po
 
   ss << "};\n\n";
 }
-
-} // namespace FrontendCommon

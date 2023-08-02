@@ -89,6 +89,9 @@ public:
   virtual ~GPUSampler();
 
   virtual void SetDebugName(const std::string_view& name) = 0;
+
+  static Config GetNearestConfig();
+  static Config GetLinearConfig();
 };
 
 enum class GPUShaderStage : u8
@@ -119,11 +122,11 @@ class GPUPipeline
 public:
   enum class Layout : u8
   {
-    // 128 byte UBO via push constants, 1 texture.
-    SingleTexture,
-
     // 1 streamed UBO, 1 texture in PS.
-    HWBatch,
+    SingleTextureUBO,
+
+    // 128 byte UBO via push constants, 1 texture.
+    SingleTexturePushConstants,
 
     MaxCount
   };
@@ -254,6 +257,7 @@ public:
     MaxCount
   };
 
+  // TODO: purge this?
   union RasterizationState
   {
     BitField<u8, CullMode, 0, 2> cull_mode;
@@ -326,7 +330,7 @@ public:
     BlendState blend;
 
     const GPUShader* vertex_shader;
-    const GPUShader* pixel_shader;
+    const GPUShader* fragment_shader;
 
     GPUTexture::Format color_format;
     GPUTexture::Format depth_format;
@@ -368,6 +372,9 @@ protected:
   u32 m_size_in_elements;
   u32 m_current_position;
 };
+
+// TODO: remove
+class PostProcessingChain;
 
 class GPUDevice
 {
@@ -412,7 +419,7 @@ public:
   ALWAYS_INLINE float GetWindowScale() const { return m_window_info.surface_scale; }
 
   ALWAYS_INLINE GPUSampler* GetLinearSampler() const { return m_linear_sampler.get(); }
-  ALWAYS_INLINE GPUSampler* GetPointSampler() const { return m_point_sampler.get(); }
+  ALWAYS_INLINE GPUSampler* GetNearestSampler() const { return m_nearest_sampler.get(); }
 
   // Position is relative to the top-left corner of the window.
   ALWAYS_INLINE s32 GetMousePositionX() const { return m_mouse_position_x; }
@@ -430,22 +437,21 @@ public:
   ALWAYS_INLINE bool IsGPUTimingEnabled() const { return m_gpu_timing_enabled; }
 
   virtual RenderAPI GetRenderAPI() const = 0;
-  virtual void* GetDevice() const = 0;
-  virtual void* GetContext() const = 0;
-
-  virtual bool HasDevice() const = 0;
-  virtual bool HasSurface() const = 0;
 
   virtual bool CreateDevice(const WindowInfo& wi, bool vsync) = 0;
   virtual bool SetupDevice();
   virtual bool MakeCurrent() = 0;
   virtual bool DoneCurrent() = 0;
+
+  virtual bool HasSurface() const = 0;
   virtual void DestroySurface() = 0;
   virtual bool ChangeWindow(const WindowInfo& wi) = 0;
+
   virtual bool SupportsFullscreen() const = 0;
   virtual bool IsFullscreen() = 0;
   virtual bool SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate) = 0;
   virtual AdapterAndModeList GetAdapterAndModeList() = 0;
+
   virtual bool CreateResources();
   virtual void DestroyResources();
 
@@ -605,11 +611,11 @@ protected:
 
   void RenderImGui();
 
-  void RenderDisplay();
   void RenderSoftwareCursor();
 
-  void RenderDisplay(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture, s32 texture_view_x,
-                     s32 texture_view_y, s32 texture_view_width, s32 texture_view_height, bool linear_filter);
+  void RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 width, s32 height, GPUTexture* texture,
+                     s32 texture_view_x, s32 texture_view_y, s32 texture_view_width, s32 texture_view_height,
+                     bool linear_filter);
   void RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture);
 
   Features m_features = {};
@@ -620,9 +626,8 @@ protected:
 
   GPUShaderCache m_shader_cache;
 
-  std::unique_ptr<GPUSampler> m_point_sampler;
+  std::unique_ptr<GPUSampler> m_nearest_sampler;
   std::unique_ptr<GPUSampler> m_linear_sampler;
-  std::unique_ptr<GPUSampler> m_border_sampler;
 
   u64 m_last_frame_displayed_time = 0;
 
@@ -655,6 +660,8 @@ protected:
   bool m_display_changed = false;
   bool m_gpu_timing_enabled = false;
   bool m_vsync_enabled = false;
+
+  std::unique_ptr<PostProcessingChain> m_post_processing_chain;
 };
 
 /// Returns a pointer to the current host display abstraction. Assumes AcquireHostDisplay() has been called.

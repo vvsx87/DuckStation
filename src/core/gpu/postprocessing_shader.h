@@ -1,24 +1,29 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
 #include "common/rectangle.h"
 #include "core/types.h"
+#include "gpu_device.h"
+
 #include <array>
 #include <string>
 #include <string_view>
 #include <vector>
 
-namespace FrontendCommon {
+class GPUPipeline;
+class GPUTexture;
+
+class PostProcessingChain;
+class PostProcessingShaderGen;
 
 class PostProcessingShader
 {
-public:
-  enum : u32
-  {
-    PUSH_CONSTANT_SIZE_THRESHOLD = 128
-  };
+  friend PostProcessingChain;
+  friend PostProcessingShaderGen;
 
+public:
   struct Option
   {
     enum : u32
@@ -82,11 +87,7 @@ public:
   bool LoadFromFile(std::string name, const char* filename);
   bool LoadFromString(std::string name, std::string code);
 
-  bool UsePushConstants() const;
-  u32 GetUniformsSize() const;
-  void FillUniformBuffer(void* buffer, u32 texture_width, s32 texture_height, s32 texture_view_x, s32 texture_view_y,
-                         s32 texture_view_width, s32 texture_view_height, u32 window_width, u32 window_height,
-                         s32 original_width, s32 original_height, float time) const;
+  bool ResizeOutput(GPUTexture::Format format, u32 width, u32 height);
 
 private:
   struct CommonUniforms
@@ -105,9 +106,21 @@ private:
 
   void LoadOptions();
 
+  ALWAYS_INLINE GPUPipeline* GetPipeline() const { return m_pipeline.get(); }
+  ALWAYS_INLINE GPUTexture* GetOutputTexture() const { return m_output_texture.get(); }
+  ALWAYS_INLINE GPUFramebuffer* GetOutputFramebuffer() const { return m_output_framebuffer.get(); }
+
+  u32 GetUniformsSize() const;
+  void FillUniformBuffer(void* buffer, u32 texture_width, s32 texture_height, s32 texture_view_x, s32 texture_view_y,
+                         s32 texture_view_width, s32 texture_view_height, u32 window_width, u32 window_height,
+                         s32 original_width, s32 original_height, float time) const;
+  bool CompilePipeline(GPUTexture::Format target_format);
+
   std::string m_name;
   std::string m_code;
   std::vector<Option> m_options;
-};
 
-} // namespace FrontendCommon
+  std::unique_ptr<GPUPipeline> m_pipeline;
+  std::unique_ptr<GPUTexture> m_output_texture;
+  std::unique_ptr<GPUFramebuffer> m_output_framebuffer;
+};

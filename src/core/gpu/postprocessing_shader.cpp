@@ -2,18 +2,19 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "postprocessing_shader.h"
+#include "postprocessing_shadergen.h"
+
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/string_util.h"
-#include "core/shadergen.h"
+
 #include <cctype>
 #include <cstring>
 #include <sstream>
+
 Log_SetChannel(PostProcessingShader);
 
-namespace FrontendCommon {
-
-void ParseKeyValue(const std::string_view& line, std::string_view* key, std::string_view* value)
+static void ParseKeyValue(const std::string_view& line, std::string_view* key, std::string_view* value)
 {
   size_t key_start = 0;
   while (key_start < line.size() && std::isspace(line[key_start]))
@@ -49,7 +50,7 @@ void ParseKeyValue(const std::string_view& line, std::string_view* key, std::str
 }
 
 template<typename T>
-u32 ParseVector(const std::string_view& line, PostProcessingShader::Option::ValueVector* values)
+static u32 ParseVector(const std::string_view& line, PostProcessingShader::Option::ValueVector* values)
 {
   u32 index = 0;
   size_t start = 0;
@@ -141,7 +142,7 @@ const PostProcessingShader::Option* PostProcessingShader::GetOptionByName(const 
   return nullptr;
 }
 
-FrontendCommon::PostProcessingShader::Option* PostProcessingShader::GetOptionByName(const std::string_view& name)
+PostProcessingShader::Option* PostProcessingShader::GetOptionByName(const std::string_view& name)
 {
   for (Option& option : m_options)
   {
@@ -238,11 +239,6 @@ void PostProcessingShader::SetConfigString(const std::string_view& str)
   }
 }
 
-bool PostProcessingShader::UsePushConstants() const
-{
-  return GetUniformsSize() <= PUSH_CONSTANT_SIZE_THRESHOLD;
-}
-
 u32 PostProcessingShader::GetUniformsSize() const
 {
   // lazy packing. todo improve.
@@ -293,7 +289,66 @@ void PostProcessingShader::FillUniformBuffer(void* buffer, u32 texture_width, s3
   }
 }
 
-FrontendCommon::PostProcessingShader& PostProcessingShader::operator=(const PostProcessingShader& copy)
+bool PostProcessingShader::CompilePipeline(GPUTexture::Format target_format)
+{
+  if (m_pipeline)
+    m_pipeline.reset();
+
+  PostProcessingShaderGen shadergen(g_host_display->GetRenderAPI(), g_host_display->GetFeatures().dual_source_blend);
+
+  std::unique_ptr<GPUShader> vs =
+    g_host_display->CreateShader(GPUShaderStage::Vertex, shadergen.GeneratePostProcessingVertexShader(*this));
+  std::unique_ptr<GPUShader> fs =
+    g_host_display->CreateShader(GPUShaderStage::Fragment, shadergen.GeneratePostProcessingFragmentShader(*this));
+  if (!vs || !fs)
+    return false;
+
+  GPUPipeline::GraphicsConfig plconfig;
+  plconfig.layout = GPUPipeline::Layout::SingleTextureUBO;
+  plconfig.primitive = GPUPipeline::Primitive::Triangles;
+  plconfig.color_format = target_format;
+  plconfig.depth_format = GPUTexture::Format::Unknown;
+  plconfig.rasterization = GPUPipeline::RasterizationState::GetNoCullState();
+  plconfig.depth = GPUPipeline::DepthState::GetNoTestsState();
+  plconfig.blend = GPUPipeline::BlendState::GetNoBlendingState();
+  plconfig.samples = 1;
+  plconfig.per_sample_shading = false;
+  plconfig.vertex_shader = vs.get();
+  plconfig.fragment_shader = fs.get();
+
+  if (!(m_pipeline = g_host_display->CreatePipeline(plconfig)))
+    return false;
+
+  return true;
+}
+
+bool PostProcessingShader::ResizeOutput(GPUTexture::Format format, u32 width, u32 height)
+{
+  if (m_output_texture && m_output_texture->GetFormat() == format && m_output_texture->GetWidth() == width &&
+      m_output_texture->GetHeight() == height)
+  {
+    return true;
+  }
+
+  m_output_framebuffer.reset();
+  m_output_texture.reset();
+
+  if (!(m_output_texture =
+          g_host_display->CreateTexture(width, height, 1, 1, 1, GPUTexture::Type::RenderTarget, format)))
+  {
+    return false;
+  }
+
+  if (!(m_output_framebuffer = g_host_display->CreateFramebuffer(m_output_texture.get())))
+  {
+    m_output_texture.reset();
+    return false;
+  }
+
+  return true;
+}
+
+PostProcessingShader& PostProcessingShader::operator=(const PostProcessingShader& copy)
 {
   m_name = copy.m_name;
   m_code = copy.m_code;
@@ -301,7 +356,7 @@ FrontendCommon::PostProcessingShader& PostProcessingShader::operator=(const Post
   return *this;
 }
 
-FrontendCommon::PostProcessingShader& PostProcessingShader::operator=(PostProcessingShader& move)
+PostProcessingShader& PostProcessingShader::operator=(PostProcessingShader& move)
 {
   m_name = std::move(move.m_name);
   m_code = std::move(move.m_code);
@@ -434,5 +489,3 @@ void PostProcessingShader::LoadOptions()
     m_options.push_back(std::move(current_option));
   }
 }
-
-} // namespace FrontendCommon

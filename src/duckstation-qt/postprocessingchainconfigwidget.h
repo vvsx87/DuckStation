@@ -22,7 +22,7 @@ public:
   PostProcessingChainConfigWidget(QWidget* parent);
   ~PostProcessingChainConfigWidget();
 
-  ALWAYS_INLINE FrontendCommon::PostProcessingChain& getChain() { return m_chain; }
+  ALWAYS_INLINE PostProcessingChain& getChain() { return m_chain; }
 
   bool setConfigString(const std::string_view& config_string);
   void setOptionsButtonVisible(bool visible);
@@ -51,5 +51,5 @@ private:
 
   Ui::PostProcessingChainConfigWidget m_ui;
 
-  FrontendCommon::PostProcessingChain m_chain;
+  PostProcessingChain m_chain;
 };

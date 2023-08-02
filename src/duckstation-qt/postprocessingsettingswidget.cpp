@@ -71,7 +71,7 @@ void PostProcessingSettingsWidget::updateShaderConfigPanel(s32 index)
   if (index < 0)
     return;
 
-  FrontendCommon::PostProcessingShader& shader = m_ui.widget->getChain().GetShaderStage(static_cast<u32>(index));
+  PostProcessingShader& shader = m_ui.widget->getChain().GetShaderStage(static_cast<u32>(index));
   if (!shader.HasOptions())
     return;
 

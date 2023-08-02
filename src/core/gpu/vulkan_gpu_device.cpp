@@ -46,16 +46,6 @@ RenderAPI VulkanGPUDevice::GetRenderAPI() const
   return RenderAPI::Vulkan;
 }
 
-void* VulkanGPUDevice::GetDevice() const
-{
-  return nullptr;
-}
-
-void* VulkanGPUDevice::GetContext() const
-{
-  return nullptr;
-}
-
 bool VulkanGPUDevice::ChangeWindow(const WindowInfo& new_wi)
 {
   g_vulkan_context->WaitForGPUIdle();
@@ -261,11 +251,6 @@ bool VulkanGPUDevice::SetupDevice()
   return true;
 }
 
-bool VulkanGPUDevice::HasDevice() const
-{
-  return static_cast<bool>(g_vulkan_context);
-}
-
 bool VulkanGPUDevice::HasSurface() const
 {
   return static_cast<bool>(m_swap_chain);
@@ -469,12 +454,14 @@ void main()
   if (m_post_process_descriptor_set_layout == VK_NULL_HANDLE)
     return false;
 
+#if 0
   plbuilder.AddDescriptorSet(m_post_process_descriptor_set_layout);
   plbuilder.AddPushConstants(VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                              FrontendCommon::PostProcessingShader::PUSH_CONSTANT_SIZE_THRESHOLD);
   m_post_process_pipeline_layout = plbuilder.Create(device);
   if (m_post_process_pipeline_layout == VK_NULL_HANDLE)
     return false;
+#endif
 
   dslbuilder.AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1,
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -552,11 +539,13 @@ void VulkanGPUDevice::DestroyResources()
   Vulkan::Util::SafeDestroyPipelineLayout(m_post_process_ubo_pipeline_layout);
   Vulkan::Util::SafeDestroyDescriptorSetLayout(m_post_process_descriptor_set_layout);
   Vulkan::Util::SafeDestroyDescriptorSetLayout(m_post_process_ubo_descriptor_set_layout);
+#if 0
   m_post_processing_input_texture.Destroy(false);
   Vulkan::Util::SafeDestroyFramebuffer(m_post_processing_input_framebuffer);
   m_post_processing_stages.clear();
   m_post_processing_ubo.Destroy(true);
   m_post_processing_chain.ClearStages();
+#endif
 
   Vulkan::Util::SafeDestroyPipeline(m_display_pipeline);
   Vulkan::Util::SafeDestroyPipeline(m_cursor_pipeline);
@@ -708,6 +697,7 @@ void VulkanGPUDevice::RenderDisplay()
 
   const auto [left, top, width, height] = CalculateDrawRect(GetWindowWidth(), GetWindowHeight());
 
+#if 0
   if (!m_post_processing_chain.IsEmpty())
   {
     ApplyPostProcessingChain(m_swap_chain->GetCurrentFramebuffer(), left, top, width, height,
@@ -716,6 +706,7 @@ void VulkanGPUDevice::RenderDisplay()
                              m_swap_chain->GetWidth(), m_swap_chain->GetHeight());
     return;
   }
+#endif
 
   BeginSwapChainRenderPass(m_swap_chain->GetCurrentFramebuffer(), m_swap_chain->GetWidth(), m_swap_chain->GetHeight());
   RenderDisplay(left, top, width, height, static_cast<Vulkan::Texture*>(m_display_texture), m_display_texture_view_x,
@@ -861,6 +852,7 @@ GPUDevice::AdapterAndModeList VulkanGPUDevice::StaticGetAdapterAndModeList(const
   return ret;
 }
 
+#if 0
 VulkanGPUDevice::PostProcessingStage::PostProcessingStage(PostProcessingStage&& move)
   : pipeline(move.pipeline), output_framebuffer(move.output_framebuffer),
     output_texture(std::move(move.output_texture)), uniforms_size(move.uniforms_size)
@@ -879,9 +871,11 @@ VulkanGPUDevice::PostProcessingStage::~PostProcessingStage()
   if (pipeline != VK_NULL_HANDLE)
     g_vulkan_context->DeferPipelineDestruction(pipeline);
 }
+#endif
 
 bool VulkanGPUDevice::SetPostProcessingChain(const std::string_view& config)
 {
+#if 0
   g_vulkan_context->ExecuteCommandBuffer(true);
 
   if (config.empty())
@@ -966,7 +960,12 @@ bool VulkanGPUDevice::SetPostProcessingChain(const std::string_view& config)
                               "Post Processing Uniform Buffer");
   m_post_processing_timer.Reset();
   return true;
+#else
+  return false;
+#endif
 }
+
+#if 0
 
 bool VulkanGPUDevice::CheckPostProcessingRenderTargets(u32 target_width, u32 target_height)
 {
@@ -1141,3 +1140,4 @@ void VulkanGPUDevice::ApplyPostProcessingChain(VkFramebuffer target_fb, s32 fina
     }
   }
 }
+#endif
