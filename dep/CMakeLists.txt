@@ -35,3 +35,6 @@ if(${CPU_ARCH} STREQUAL "aarch32" OR ${CPU_ARCH} STREQUAL "aarch64")
   add_subdirectory(vixl)
 endif()
 
+if(APPLE)
+  add_subdirectory(spirv-cross)
+endif()
