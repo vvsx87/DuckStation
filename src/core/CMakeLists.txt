@@ -283,6 +283,17 @@ if(ENABLE_OPENGL)
   endif()
 endif()
 
+if(ENABLE_VULKAN OR APPLE)
+  target_sources(core PRIVATE
+    gpu/spirv_compiler.cpp
+    gpu/spirv_compiler.h
+  )
+  target_link_libraries(core PRIVATE glslang)
+  if(APPLE)
+    target_link_libraries(core PRIVATE spirv-cross)
+  endif()
+endif()
+
 if(ENABLE_VULKAN)
   target_sources(core PRIVATE
     gpu/vulkan/builders.cpp
