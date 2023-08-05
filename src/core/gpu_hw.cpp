@@ -2654,6 +2654,24 @@ std::unique_ptr<GPU> GPU::CreateHardwareD3D11Renderer()
 
 #endif
 
+#ifdef __APPLE__
+
+std::unique_ptr<GPU> GPU::CreateHardwareMetalRenderer()
+{
+  if (!Host::AcquireHostDisplay(RenderAPI::Metal))
+  {
+    Log_ErrorPrintf("Host render API is incompatible");
+    return nullptr;
+  }
+
+  std::unique_ptr<GPU_HW> gpu(std::make_unique<GPU_HW>());
+  if (!gpu->Initialize())
+    return nullptr;
+
+  return gpu;
+}
+
+#endif
 
 std::unique_ptr<GPU> GPU::CreateHardwareOpenGLRenderer()
 {

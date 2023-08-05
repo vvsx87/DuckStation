@@ -15,6 +15,7 @@ Log_SetChannel(ShaderGen);
 
 ShaderGen::ShaderGen(RenderAPI render_api, bool supports_dual_source_blend)
   : m_render_api(render_api), m_glsl(render_api != RenderAPI::D3D11 && render_api != RenderAPI::D3D12),
+    m_spirv(render_api == RenderAPI::Vulkan || render_api == RenderAPI::Metal),
     m_supports_dual_source_blend(supports_dual_source_blend), m_use_glsl_interface_blocks(false)
 {
 #if defined(WITH_OPENGL) || defined(WITH_VULKAN)
@@ -24,8 +25,8 @@ ShaderGen::ShaderGen(RenderAPI render_api, bool supports_dual_source_blend)
     if (m_render_api == RenderAPI::OpenGL || m_render_api == RenderAPI::OpenGLES)
       SetGLSLVersionString();
 
-    m_use_glsl_interface_blocks = (IsVulkan() || GLAD_GL_ES_VERSION_3_2 || GLAD_GL_VERSION_3_2);
-    m_use_glsl_binding_layout = (IsVulkan() || UseGLSLBindingLayout());
+    m_use_glsl_interface_blocks = (IsVulkan() || IsMetal() || GLAD_GL_ES_VERSION_3_2 || GLAD_GL_VERSION_3_2);
+    m_use_glsl_binding_layout = (IsVulkan() || IsMetal() || UseGLSLBindingLayout());
 
     if (m_render_api == RenderAPI::OpenGL)
     {
@@ -109,7 +110,7 @@ void ShaderGen::WriteHeader(std::stringstream& ss)
 {
   if (m_render_api == RenderAPI::OpenGL || m_render_api == RenderAPI::OpenGLES)
     ss << m_glsl_version_string << "\n\n";
-  else if (m_render_api == RenderAPI::Vulkan)
+  else if (m_spirv)
     ss << "#version 450 core\n\n";
 
 #ifdef WITH_OPENGL
@@ -157,6 +158,7 @@ void ShaderGen::WriteHeader(std::stringstream& ss)
   DefineMacro(ss, "API_D3D11", m_render_api == RenderAPI::D3D11);
   DefineMacro(ss, "API_D3D12", m_render_api == RenderAPI::D3D12);
   DefineMacro(ss, "API_VULKAN", m_render_api == RenderAPI::Vulkan);
+  DefineMacro(ss, "API_METAL", m_render_api == RenderAPI::Metal);
 
 #ifdef WITH_OPENGL
   if (m_render_api == RenderAPI::OpenGLES)
@@ -275,6 +277,10 @@ void ShaderGen::WriteUniformBufferDeclaration(std::stringstream& ss, bool push_c
     else
       ss << "layout(std140, set = 0, binding = 0) uniform UBOBlock\n";
   }
+  else if (IsMetal())
+  {
+    ss << "layout(std140, set = 0, binding = 0) uniform UBOBlock\n";
+  }
   else if (m_glsl)
   {
     if (m_use_glsl_binding_layout)
@@ -343,7 +349,7 @@ const char* ShaderGen::GetInterpolationQualifier(bool interface_block, bool cent
 #else
   const bool shading_language_420pack = false;
 #endif
-  if (m_glsl && interface_block && (!IsVulkan() && !shading_language_420pack))
+  if (m_glsl && interface_block && (!m_spirv && !shading_language_420pack))
   {
     return (sample_interpolation ? (is_out ? "sample out " : "sample in ") :
                                    (centroid_interpolation ? (is_out ? "centroid out " : "centroid in ") : ""));
@@ -381,7 +387,7 @@ void ShaderGen::DeclareVertexEntryPoint(
     {
       const char* qualifier = GetInterpolationQualifier(true, msaa, ssaa, true);
 
-      if (IsVulkan())
+      if (m_spirv)
         ss << "layout(location = 0) ";
 
       ss << "out VertexData" << output_block_suffix << " {\n";
@@ -418,7 +424,7 @@ void ShaderGen::DeclareVertexEntryPoint(
     ss << "#define v_pos gl_Position\n\n";
     if (declare_vertex_id)
     {
-      if (IsVulkan())
+      if (m_spirv)
         ss << "#define v_id uint(gl_VertexIndex)\n";
       else
         ss << "#define v_id uint(gl_VertexID)\n";
@@ -475,7 +481,7 @@ void ShaderGen::DeclareFragmentEntryPoint(
     {
       const char* qualifier = GetInterpolationQualifier(true, msaa, ssaa, false);
 
-      if (IsVulkan())
+      if (m_spirv)
         ss << "layout(location = 0) ";
 
       ss << "in VertexData {\n";

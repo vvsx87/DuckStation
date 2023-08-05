@@ -1644,6 +1644,12 @@ bool System::CreateGPU(GPURenderer renderer)
       break;
 #endif
 
+#ifdef __APPLE__
+    case GPURenderer::HardwareMetal:
+      g_gpu = GPU::CreateHardwareMetalRenderer();
+      break;
+#endif
+
     case GPURenderer::Software:
     default:
       g_gpu = GPU::CreateSoftwareRenderer();

@@ -34,6 +34,10 @@ Log_SetChannel(GPUDevice);
 #include "d3d12_gpu_device.h"
 #endif
 
+#ifdef __APPLE__
+extern std::unique_ptr<GPUDevice> WrapNewMetalDevice();
+#endif
+
 #ifdef WITH_OPENGL
 #include "opengl_device.h"
 #endif
@@ -202,7 +206,7 @@ RenderAPI GPUDevice::GetPreferredAPI()
 #ifdef _WIN32___ // TODO remove me
   return RenderAPI::D3D11;
 #else
-  return RenderAPI::OpenGL;
+  return RenderAPI::Metal;
 #endif
 }
 
@@ -1548,13 +1552,18 @@ std::unique_ptr<GPUDevice> Host::CreateDisplayForAPI(RenderAPI api)
       return std::make_unique<D3D11Device>();
 #endif
 
+#ifdef __APPLE__
+    case RenderAPI::Metal:
+      return WrapNewMetalDevice();
+#endif
+
     default:
 #if defined(_WIN32) && defined(_M_ARM64)
       return std::make_unique<D3D12GPUDevice>();
 #elif defined(_WIN32)
       return std::make_unique<D3D11Device>();
 #elif defined(__APPLE__)
-			return WrapNewMetalDevice();
+      return WrapNewMetalDevice();
 #elif defined(WITH_OPENGL)
       return std::make_unique<OpenGLDevice>();
 #elif defined(WITH_VULKAN)

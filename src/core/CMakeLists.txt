@@ -171,6 +171,18 @@ if(WIN32)
   target_link_libraries(core PRIVATE winmm.lib)
 endif()
 
+if(APPLE)
+  target_sources(core PRIVATE
+    gpu/metal_device.h
+    gpu/metal_device.mm
+    gpu/metal_stream_buffer.h
+    gpu/metal_stream_buffer.mm
+  )
+  find_library(METAL_LIBRARY Metal)
+  find_library(QUARTZCORE_LIBRARY QuartzCore)
+  target_link_libraries(core PRIVATE ${METAL_LIBRARY} ${QUARTZCORE_LIBRARY})
+endif()
+
 if(USE_X11)
   target_sources(common PRIVATE
       gl/x11_window.cpp

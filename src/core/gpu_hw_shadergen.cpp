@@ -1162,6 +1162,8 @@ std::string GPU_HW_ShaderGen::GenerateVRAMWriteFragmentShader(bool use_ssbo)
     ss << "layout(std430";
     if (IsVulkan())
       ss << ", set = 0, binding = 0";
+    else if (IsMetal())
+      ss << ", set = 0, binding = 1";
     else if (m_use_glsl_binding_layout)
       ss << ", binding = 0";
 

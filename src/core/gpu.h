@@ -167,6 +167,10 @@ public:
   static std::unique_ptr<GPU> CreateHardwareD3D12Renderer();
 #endif
 
+#ifdef __APPLE__
+  static std::unique_ptr<GPU> CreateHardwareMetalRenderer();
+#endif
+
 #ifdef WITH_OPENGL
   // gpu_hw_opengl.cpp
   static std::unique_ptr<GPU> CreateHardwareOpenGLRenderer();

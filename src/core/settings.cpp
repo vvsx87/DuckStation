@@ -883,6 +883,9 @@ static constexpr auto s_gpu_renderer_names = make_array(
 #ifdef _WIN32
   "D3D11", "D3D12",
 #endif
+#ifdef __APPLE__
+  "Metal",
+#endif
 #ifdef WITH_VULKAN
   "Vulkan",
 #endif
@@ -893,6 +896,9 @@ static constexpr auto s_gpu_renderer_names = make_array(
 static constexpr auto s_gpu_renderer_display_names = make_array(
 #ifdef _WIN32
   TRANSLATABLE("GPURenderer", "Hardware (D3D11)"), TRANSLATABLE("GPURenderer", "Hardware (D3D12)"),
+#endif
+#ifdef __APPLE__
+  TRANSLATABLE("GPURenderer", "Hardware (Metal)"),
 #endif
 #ifdef WITH_VULKAN
   TRANSLATABLE("GPURenderer", "Hardware (Vulkan)"),

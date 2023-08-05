@@ -26,7 +26,8 @@ enum class RenderAPI : u32
   D3D12,
   Vulkan,
   OpenGL,
-  OpenGLES
+  OpenGLES,
+  Metal
 };
 
 class GPUFramebuffer

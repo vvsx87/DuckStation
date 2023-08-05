@@ -28,6 +28,7 @@ public:
 
 protected:
   ALWAYS_INLINE bool IsVulkan() const { return (m_render_api == RenderAPI::Vulkan); }
+  ALWAYS_INLINE bool IsMetal() const { return (m_render_api == RenderAPI::Metal); }
 
   const char* GetInterpolationQualifier(bool interface_block, bool centroid_interpolation, bool sample_interpolation,
                                         bool is_out) const;
@@ -56,6 +57,7 @@ protected:
 
   RenderAPI m_render_api;
   bool m_glsl;
+  bool m_spirv;
   bool m_supports_dual_source_blend;
   bool m_use_glsl_interface_blocks;
   bool m_use_glsl_binding_layout;
