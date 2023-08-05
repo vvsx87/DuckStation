@@ -8,8 +8,9 @@ Log_SetChannel(GPUTexture);
 
 GPUTexture::GPUTexture() = default;
 
-GPUTexture::GPUTexture(u16 width, u16 height, u8 layers, u8 levels, u8 samples, GPUTexture::Format format)
-  : m_width(width), m_height(height), m_layers(layers), m_levels(levels), m_samples(samples), m_format(format)
+GPUTexture::GPUTexture(u16 width, u16 height, u8 layers, u8 levels, u8 samples, Type type, Format format)
+  : m_width(width), m_height(height), m_layers(layers), m_levels(levels), m_samples(samples), m_type(type),
+    m_format(format)
 {
 }
 
@@ -22,6 +23,7 @@ void GPUTexture::ClearBaseProperties()
   m_layers = 0;
   m_levels = 0;
   m_samples = 0;
+  m_type = GPUTexture::Type::Unknown;
   m_format = GPUTexture::Format::Unknown;
   m_state = State::Dirty;
 }

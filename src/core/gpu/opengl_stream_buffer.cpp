@@ -46,7 +46,7 @@ namespace {
 class BufferSubDataStreamBuffer final : public OpenGLStreamBuffer
 {
 public:
-  ~BufferSubDataStreamBuffer() override { _aligned_free(m_cpu_buffer); }
+  ~BufferSubDataStreamBuffer() override { Common::AlignedFree(m_cpu_buffer); }
 
   MappingResult Map(u32 alignment, u32 min_size) override
   {
@@ -88,7 +88,7 @@ public:
 private:
   BufferSubDataStreamBuffer(GLenum target, GLuint buffer_id, u32 size) : OpenGLStreamBuffer(target, buffer_id, size)
   {
-    m_cpu_buffer = static_cast<u8*>(_aligned_malloc(size, 32));
+    m_cpu_buffer = static_cast<u8*>(Common::AlignedMalloc(size, 32));
     if (!m_cpu_buffer)
       Panic("Failed to allocate CPU storage for GL buffer");
   }
@@ -100,7 +100,7 @@ private:
 class BufferDataStreamBuffer final : public OpenGLStreamBuffer
 {
 public:
-  ~BufferDataStreamBuffer() override { _aligned_free(m_cpu_buffer); }
+  ~BufferDataStreamBuffer() override { Common::AlignedFree(m_cpu_buffer); }
 
   MappingResult Map(u32 alignment, u32 min_size) override
   {
@@ -142,7 +142,7 @@ public:
 private:
   BufferDataStreamBuffer(GLenum target, GLuint buffer_id, u32 size) : OpenGLStreamBuffer(target, buffer_id, size)
   {
-    m_cpu_buffer = static_cast<u8*>(_aligned_malloc(size, 32));
+    m_cpu_buffer = static_cast<u8*>(Common::AlignedMalloc(size, 32));
     if (!m_cpu_buffer)
       Panic("Failed to allocate CPU storage for GL buffer");
   }

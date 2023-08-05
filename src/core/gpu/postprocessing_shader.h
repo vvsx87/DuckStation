@@ -4,7 +4,7 @@
 #pragma once
 
 #include "common/rectangle.h"
-#include "core/types.h"
+#include "common/types.h"
 #include "gpu_device.h"
 
 #include <array>

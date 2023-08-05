@@ -128,7 +128,7 @@ public:
 
 protected:
   GPUTexture();
-  GPUTexture(u16 width, u16 height, u8 layers, u8 levels, u8 samples, Format format);
+  GPUTexture(u16 width, u16 height, u8 layers, u8 levels, u8 samples, Type type, Format format);
 
   void ClearBaseProperties();
 

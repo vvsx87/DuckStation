@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "context_agl.h"
-#include "../assert.h"
-#include "../log.h"
-#include "loader.h"
+#include "common/assert.h"
+#include "common/log.h"
 #include <dlfcn.h>
 Log_SetChannel(GL::ContextAGL);
 

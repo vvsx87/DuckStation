@@ -545,6 +545,7 @@ void GPU_HW::DestroyBuffers()
 
 bool GPU_HW::CompilePipelines()
 {
+  const GPUDevice::Features features = g_host_display->GetFeatures();
   GPU_HW_ShaderGen shadergen(g_host_display->GetRenderAPI(), m_resolution_scale, m_multisamples, m_per_sample_shading,
                              m_true_color, m_scaled_dithering, m_texture_filtering, m_using_uv_limits,
                              m_pgxp_depth_buffer, m_disable_color_perspective, m_supports_dual_source_blend);
@@ -778,8 +779,9 @@ bool GPU_HW::CompilePipelines()
   // VRAM write
   // TODO: SSBO path here...
   {
+    const bool use_ssbo = features.texture_buffers_emulated_with_ssbo;
     std::unique_ptr<GPUShader> fs = g_host_display->CreateShader(
-      GPUShaderStage::Fragment, shadergen.GenerateVRAMWriteFragmentShader(false /*m_use_ssbos_for_vram_writes*/));
+      GPUShaderStage::Fragment, shadergen.GenerateVRAMWriteFragmentShader(use_ssbo));
     if (!fs)
       return false;
 
@@ -2631,6 +2633,10 @@ void GPU_HW::ShaderCompileProgressTracker::Increment()
   }
 }
 
+// TODO: Combine all these..
+
+#ifdef _WIN32
+
 std::unique_ptr<GPU> GPU::CreateHardwareD3D11Renderer()
 {
   if (!Host::AcquireHostDisplay(RenderAPI::D3D11))
@@ -2645,6 +2651,8 @@ std::unique_ptr<GPU> GPU::CreateHardwareD3D11Renderer()
 
   return gpu;
 }
+
+#endif
 
 
 std::unique_ptr<GPU> GPU::CreateHardwareOpenGLRenderer()

@@ -3,7 +3,7 @@
 
 #pragma once
 #include "context.h"
-#include "loader.h"
+#include "../opengl_loader.h"
 
 #if defined(__APPLE__) && defined(__OBJC__)
 #import <AppKit/AppKit.h>

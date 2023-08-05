@@ -188,18 +188,19 @@ public:
 
     static constexpr VertexAttribute Make(u8 index, Type type, u8 components, u8 offset)
     {
-      VertexAttribute ret = {};
 #if 0
+      VertexAttribute ret = {};
       ret.index = index;
       ret.type = type;
       ret.components = components;
       ret.offset = offset;
+      return ret;
 #else
       // Nasty :/ can't access an inactive element of a union here..
-      ret.key = (static_cast<u32>(index) & 0xf) | ((static_cast<u32>(type) & 0xf) << 4) |
-                ((static_cast<u32>(components) & 0x7) << 8) | ((static_cast<u32>(offset) & 0xffff) << 16);
+      return VertexAttribute{{(static_cast<u32>(index) & 0xf) | ((static_cast<u32>(type) & 0xf) << 4) |
+                              ((static_cast<u32>(components) & 0x7) << 8) |
+                              ((static_cast<u32>(offset) & 0xffff) << 16)}};
 #endif
-      return ret;
     }
   };
 

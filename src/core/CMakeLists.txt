@@ -123,8 +123,8 @@ target_link_libraries(core PRIVATE stb xxhash imgui rapidjson tinyxml2)
 target_sources(core PRIVATE
   gpu/gpu_device.cpp
   gpu/gpu_device.h
-  gpu/gpu_pipeline.h
-  gpu/gpu_shader.h
+  gpu/gpu_shader_cache.cpp
+  gpu/gpu_shader_cache.h
   gpu/gpu_texture.cpp
   gpu/gpu_texture.h
   gpu/postprocessing_chain.cpp
@@ -196,37 +196,38 @@ if(USE_DRMKMS)
 endif()
 
 if(ENABLE_OPENGL)
-  target_sources(common PRIVATE
+  target_sources(core PRIVATE
     gpu/gl/context.cpp
     gpu/gl/context.h
-    gpu/gl/program.cpp
-    gpu/gl/program.h
-    gpu/gl/shader_cache.cpp
-    gpu/gl/shader_cache.h
-    gpu/gl/stream_buffer.cpp
-    gpu/gl/stream_buffer.h
-    gpu/gl/texture.cpp
-    gpu/gl/texture.h
+    gpu/opengl_device.cpp
+    gpu/opengl_device.h
+    gpu/opengl_loader.h
+    gpu/opengl_pipeline.cpp
+    gpu/opengl_pipeline.h
+    gpu/opengl_stream_buffer.cpp
+    gpu/opengl_stream_buffer.h
+    gpu/opengl_texture.cpp
+    gpu/opengl_texture.h
   )
-  target_compile_definitions(common PUBLIC "WITH_OPENGL=1")
-  target_link_libraries(common PRIVATE glad)
+  target_compile_definitions(core PUBLIC "WITH_OPENGL=1")
+  target_link_libraries(core PRIVATE glad)
 
   if(WIN32)
-    target_sources(common PRIVATE
+    target_sources(core PRIVATE
       gl/context_wgl.cpp
       gl/context_wgl.h
     )
   endif()
 
   if(USE_EGL)
-    target_sources(common PRIVATE
+    target_sources(core PRIVATE
       gl/context_egl.cpp
       gl/context_egl.h
     )
-    target_compile_definitions(common PRIVATE "-DUSE_EGL=1")
+    target_compile_definitions(core PRIVATE "-DUSE_EGL=1")
 
     if(USE_X11)
-      target_sources(common PRIVATE
+      target_sources(core PRIVATE
         gl/context_egl_x11.cpp
         gl/context_egl_x11.h
       )
@@ -234,25 +235,25 @@ if(ENABLE_OPENGL)
       # We set EGL_NO_X11 because otherwise X comes in with its macros and breaks
       # a bunch of files from compiling, if we include the EGL headers. This just
       # makes the data types opaque, we can still use it with X11 if needed.
-      target_compile_definitions(common PRIVATE "-DEGL_NO_X11=1")
+      target_compile_definitions(core PRIVATE "-DEGL_NO_X11=1")
     endif()
     if(ANDROID AND USE_EGL)
-      target_sources(common PRIVATE
+      target_sources(core PRIVATE
         gl/context_egl_android.cpp
         gl/context_egl_android.h
       )
     endif()
     if(USE_DRMKMS)
-      target_compile_definitions(common PRIVATE "-DUSE_GBM=1")
-      target_sources(common PRIVATE
+      target_compile_definitions(core PRIVATE "-DUSE_GBM=1")
+      target_sources(core PRIVATE
         gl/context_egl_gbm.cpp
         gl/context_egl_gbm.h
       )
-      target_link_libraries(common PUBLIC GBM::GBM)
+      target_link_libraries(core PUBLIC GBM::GBM)
     endif()
     if(USE_FBDEV)
-      target_compile_definitions(common PRIVATE "-DUSE_FBDEV=1")
-      target_sources(common PRIVATE
+      target_compile_definitions(core PRIVATE "-DUSE_FBDEV=1")
+      target_sources(core PRIVATE
         gl/context_egl_fbdev.cpp
         gl/context_egl_fbdev.h
       )
@@ -260,37 +261,30 @@ if(ENABLE_OPENGL)
   endif()
 
   if(USE_X11)
-    target_sources(common PRIVATE
+    target_sources(core PRIVATE
       gl/context_glx.cpp
       gl/context_glx.h
     )
-    target_compile_definitions(common PRIVATE "-DUSE_GLX=1")
+    target_compile_definitions(core PRIVATE "-DUSE_GLX=1")
   endif()
 
   if(USE_WAYLAND)
-    target_sources(common PRIVATE
+    target_sources(core PRIVATE
       gl/context_egl_wayland.cpp
       gl/context_egl_wayland.h
     )
   endif()
 
   if(APPLE)
-    target_sources(common PRIVATE
+    target_sources(core PRIVATE
       gpu/gl/context_agl.mm
       gpu/gl/context_agl.h
     )
   endif()
 endif()
-if(ENABLE_OPENGL)
-  target_sources(core PRIVATE
-    gpu_hw_opengl.cpp
-    gpu_hw_opengl.h
-  )
-  target_link_libraries(core PRIVATE glad)
-endif()
 
 if(ENABLE_VULKAN)
-  target_sources(common PRIVATE
+  target_sources(core PRIVATE
     gpu/vulkan/builders.cpp
     gpu/vulkan/builders.h
     gpu/vulkan/context.cpp
@@ -309,13 +303,17 @@ if(ENABLE_VULKAN)
     gpu/vulkan/texture.h
     gpu/vulkan/util.cpp
     gpu/vulkan/util.h
+    gpu/vulkan_gpu_device.cpp
+    gpu/vulkan_gpu_device.h
+    gpu/imgui_impl_vulkan.cpp
+    gpu/imgui_impl_vulkan.h
   )
-  target_compile_definitions(common PUBLIC "WITH_VULKAN=1")
-  target_link_libraries(common PRIVATE glslang)
+  target_compile_definitions(core PUBLIC "WITH_VULKAN=1")
+  target_link_libraries(core PRIVATE glslang)
 
   if(APPLE)
     # Needed for Vulkan Swap Chain.
-    target_link_libraries(common PRIVATE "objc")
+    target_link_libraries(core PRIVATE "objc")
   endif()
 endif()
 if(ENABLE_VULKAN)

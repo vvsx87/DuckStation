@@ -225,8 +225,8 @@ protected:
   void MapBatchVertexPointer(u32 required_vertices);
   void UnmapBatchVertexPointer(u32 used_vertices);
   void DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32 num_vertices);
-  void ClearDisplay();
-  void UpdateDisplay();
+  void ClearDisplay() override;
+  void UpdateDisplay() override;
 
   u32 CalculateResolutionScale() const;
   GPUDownsampleMode GetDownsampleMode(u32 resolution_scale) const;

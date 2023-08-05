@@ -22,8 +22,7 @@ class GPUTexture;
 
 class TimingEvent;
 
-namespace Threading
-{
+namespace Threading {
 class Thread;
 }
 

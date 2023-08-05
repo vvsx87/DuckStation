@@ -28,8 +28,19 @@
 
 Log_SetChannel(GPUDevice);
 
-// FIXME
+#ifdef _WIN32
 #include "common/windows_headers.h"
+#include "d3d11_device.h"
+#include "d3d12_gpu_device.h"
+#endif
+
+#ifdef WITH_OPENGL
+#include "opengl_device.h"
+#endif
+
+#ifdef WITH_VULKAN
+#include "vulkan_gpu_device.h"
+#endif
 
 // TODO: default sampler mode, create a persistent descriptor set in Vulkan for textures
 // TODO: input layout => VAO in GL, buffer might change
@@ -1512,4 +1523,44 @@ bool GPUDevice::WriteScreenshotToFile(std::string filename, bool internal_resolu
                               UsesLowerLeftOrigin(), width, height, std::move(pixels), pixels_stride, pixels_format);
   compress_thread.detach();
   return true;
+}
+
+std::unique_ptr<GPUDevice> Host::CreateDisplayForAPI(RenderAPI api)
+{
+  switch (api)
+  {
+#ifdef WITH_VULKAN
+    case RenderAPI::Vulkan:
+      return std::make_unique<VulkanGPUDevice>();
+#endif
+
+#ifdef WITH_OPENGL
+    case RenderAPI::OpenGL:
+    case RenderAPI::OpenGLES:
+      return std::make_unique<OpenGLDevice>();
+#endif
+
+#ifdef _WIN32
+    case RenderAPI::D3D12:
+      return std::make_unique<D3D12GPUDevice>();
+
+    case RenderAPI::D3D11:
+      return std::make_unique<D3D11Device>();
+#endif
+
+    default:
+#if defined(_WIN32) && defined(_M_ARM64)
+      return std::make_unique<D3D12GPUDevice>();
+#elif defined(_WIN32)
+      return std::make_unique<D3D11Device>();
+#elif defined(__APPLE__)
+			return WrapNewMetalDevice();
+#elif defined(WITH_OPENGL)
+      return std::make_unique<OpenGLDevice>();
+#elif defined(WITH_VULKAN)
+      return std::make_unique<VulkanGPUDevice>();
+#else
+      return {};
+#endif
+  }
 }
