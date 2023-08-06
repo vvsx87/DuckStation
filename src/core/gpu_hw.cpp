@@ -46,6 +46,41 @@ ALWAYS_INLINE static bool ShouldDisableColorPerspective()
   return g_settings.gpu_pgxp_enable && g_settings.gpu_pgxp_texture_correction && !g_settings.gpu_pgxp_color_correction;
 }
 
+namespace {
+class ShaderCompileProgressTracker
+{
+public:
+  ShaderCompileProgressTracker(std::string title, u32 total)
+    : m_title(std::move(title)), m_min_time(Common::Timer::ConvertSecondsToValue(1.0)),
+      m_update_interval(Common::Timer::ConvertSecondsToValue(0.1)), m_start_time(Common::Timer::GetCurrentValue()),
+      m_last_update_time(0), m_progress(0), m_total(total)
+  {
+  }
+  ~ShaderCompileProgressTracker() = default;
+
+  void Increment()
+  {
+    m_progress++;
+
+    const u64 tv = Common::Timer::GetCurrentValue();
+    if ((tv - m_start_time) >= m_min_time && (tv - m_last_update_time) >= m_update_interval)
+    {
+      Host::DisplayLoadingScreen(m_title.c_str(), 0, static_cast<int>(m_total), static_cast<int>(m_progress));
+      m_last_update_time = tv;
+    }
+  }
+
+private:
+  std::string m_title;
+  u64 m_min_time;
+  u64 m_update_interval;
+  u64 m_start_time;
+  u64 m_last_update_time;
+  u32 m_progress;
+  u32 m_total;
+};
+} // namespace
+
 GPU_HW::GPU_HW() : GPU()
 {
   m_vram_ptr = m_vram_shadow.data();
@@ -2361,6 +2396,7 @@ void GPU_HW::UpdateDisplay()
   }
   else
   {
+    // TODO: use a dynamically sized texture
     g_gpu_device->SetDisplayParameters(m_crtc_state.display_width, m_crtc_state.display_height,
                                        m_crtc_state.display_origin_left, m_crtc_state.display_origin_top,
                                        m_crtc_state.display_vram_width, m_crtc_state.display_vram_height,
@@ -2607,25 +2643,6 @@ void GPU_HW::DrawRendererStats(bool is_idle_frame)
     ImGui::NextColumn();
 
     ImGui::Columns(1);
-  }
-}
-
-GPU_HW::ShaderCompileProgressTracker::ShaderCompileProgressTracker(std::string title, u32 total)
-  : m_title(std::move(title)), m_min_time(Common::Timer::ConvertSecondsToValue(1.0)),
-    m_update_interval(Common::Timer::ConvertSecondsToValue(0.1)), m_start_time(Common::Timer::GetCurrentValue()),
-    m_last_update_time(0), m_progress(0), m_total(total)
-{
-}
-
-void GPU_HW::ShaderCompileProgressTracker::Increment()
-{
-  m_progress++;
-
-  const u64 tv = Common::Timer::GetCurrentValue();
-  if ((tv - m_start_time) >= m_min_time && (tv - m_last_update_time) >= m_update_interval)
-  {
-    Host::DisplayLoadingScreen(m_title.c_str(), 0, static_cast<int>(m_total), static_cast<int>(m_progress));
-    m_last_update_time = tv;
   }
 }
 

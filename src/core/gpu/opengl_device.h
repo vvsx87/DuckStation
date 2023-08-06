@@ -12,8 +12,9 @@
 #include "postprocessing_chain.h"
 
 #include <memory>
+#include <tuple>
 
-#include "common/timer.h"
+#include "common/rectangle.h"
 #include "common/window_info.h"
 
 // TODO: build a cache for programs on top of the pipeline cache idea
@@ -124,6 +125,10 @@ public:
   void UnbindPipeline(const OpenGLPipeline* pl);
 
 protected:
+  bool CreateDevice(const std::string_view& adapter) override;
+  void DestroyDevice() override;
+
+private:
   static constexpr u8 NUM_TIMESTAMP_QUERIES = 3;
 
   static constexpr GLenum UPDATE_TEXTURE_UNIT = GL_TEXTURE8;
@@ -133,45 +138,45 @@ protected:
   static constexpr u32 UNIFORM_BUFFER_SIZE = 2 * 1024 * 1024;
   static constexpr u32 TEXTURE_STREAM_BUFFER_SIZE = 16 * 1024 * 1024;
 
-  // TODO: pass in file instead of blob for pipeline cache
-  OpenGLPipeline::VertexArrayCache m_vao_cache;
-  OpenGLPipeline::ProgramCache m_program_cache;
-
-  bool CreateDevice(const std::string_view& adapter) override;
-  void DestroyDevice() override;
-
+  bool CheckFeatures();
   bool CreateBuffers();
   void DestroyBuffers();
 
   void SetSwapInterval();
+  void RenderBlankFrame();
+
+  std::tuple<s32, s32, s32, s32> GetFlippedViewportScissor(const Common::Rectangle<s32>& rc) const;
+  void UpdateViewport();
+  void UpdateScissor();
 
   void CreateTimestampQueries();
   void DestroyTimestampQueries();
   void PopTimestampQuery();
   void KickTimestampQuery();
 
-  bool CheckFeatures();
-
-  void PreDrawCheck();
-
   std::unique_ptr<GL::Context> m_gl_context;
   std::unique_ptr<OpenGLFramebuffer> m_window_framebuffer;
-
-  GLuint m_uniform_buffer_alignment = 1;
 
   std::unique_ptr<OpenGLStreamBuffer> m_vertex_buffer;
   std::unique_ptr<OpenGLStreamBuffer> m_index_buffer;
   std::unique_ptr<OpenGLStreamBuffer> m_uniform_buffer;
   std::unique_ptr<OpenGLStreamBuffer> m_texture_stream_buffer;
 
+  // TODO: pass in file instead of blob for pipeline cache
+  OpenGLPipeline::VertexArrayCache m_vao_cache;
+  OpenGLPipeline::ProgramCache m_program_cache;
+
   // VAO cache - fixed max as key
   GPUPipeline::RasterizationState m_last_rasterization_state = {};
   GPUPipeline::DepthState m_last_depth_state = {};
   GPUPipeline::BlendState m_last_blend_state = {};
+  GLuint m_uniform_buffer_alignment = 1;
   GLuint m_last_program = 0;
   GLuint m_last_vao = 0;
   u32 m_last_texture_unit = 0;
   std::array<std::pair<GLuint, GLuint>, MAX_TEXTURE_SAMPLERS> m_last_samplers = {};
+  Common::Rectangle<s32> m_last_viewport{0, 0, 1, 1};
+  Common::Rectangle<s32> m_last_scissor{0, 0, 1, 1};
 
   // Misc framebuffers
   GLuint m_read_fbo = 0;

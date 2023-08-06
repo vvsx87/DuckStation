@@ -490,6 +490,7 @@ ALWAYS_INLINE static void ApplyBlendState(const GPUPipeline::BlendState& bs)
   }};
 
   // TODO: driver bugs
+  // TODO: rdoc and look for redundant calls
 
   bs.enable ? glEnable(GL_BLEND) : glDisable(GL_BLEND);
 

@@ -407,6 +407,7 @@ class GPUDevice
 {
 public:
   // TODO: drop virtuals
+  // TODO: make windowinfo use GPUTexture format
   using DrawIndex = u16;
 
   struct Features

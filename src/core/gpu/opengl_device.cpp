@@ -317,6 +317,10 @@ bool OpenGLDevice::CreateDevice(const std::string_view& adapter)
   }
 #endif
 
+  SetSwapInterval();
+  if (HasSurface())
+    RenderBlankFrame();
+
   OpenGLTexture::s_use_pbo_for_uploads = true;
   if (m_gl_context->IsGLES())
   {
@@ -453,7 +457,7 @@ bool OpenGLDevice::UpdateWindow()
   {
     // reset vsync rate, since it (usually) gets lost
     SetSwapInterval();
-    // TODO RenderBlankFrame();
+    RenderBlankFrame();
   }
 
   return true;
@@ -487,6 +491,17 @@ void OpenGLDevice::SetSwapInterval()
     Log_WarningPrintf("Failed to set swap interval to %d", interval);
 
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, current_fbo);
+}
+
+void OpenGLDevice::RenderBlankFrame()
+{
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+  glDisable(GL_SCISSOR_TEST);
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+  m_gl_context->SwapBuffers();
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_current_framebuffer ? m_current_framebuffer->GetGLId() : 0);
+  glEnable(GL_SCISSOR_TEST);
 }
 
 GPUDevice::AdapterAndModeList OpenGLDevice::GetAdapterAndModeList()
@@ -595,7 +610,13 @@ bool OpenGLDevice::BeginPresent(bool skip_present)
   glClear(GL_COLOR_BUFFER_BIT);
   glEnable(GL_SCISSOR_TEST);
 
+  const Common::Rectangle<s32> window_rc =
+    Common::Rectangle<s32>::FromExtents(0, 0, m_window_info.surface_width, m_window_info.surface_height);
   m_current_framebuffer = nullptr;
+  m_last_viewport = window_rc;
+  m_last_scissor = window_rc;
+  UpdateViewport();
+  UpdateScissor();
   return true;
 }
 
@@ -611,48 +632,6 @@ void OpenGLDevice::EndPresent()
   if (m_gpu_timing_enabled)
     KickTimestampQuery();
 }
-
-#if 0
-
-void OpenGLDevice::RenderDisplay(s32 left, s32 bottom, s32 width, s32 height, OpenGLTexture* texture,
-                                 s32 texture_view_x, s32 texture_view_y, s32 texture_view_width,
-                                 s32 texture_view_height, bool linear_filter)
-{
-  glViewport(left, bottom, width, height);
-  glDisable(GL_BLEND);
-  glDisable(GL_CULL_FACE);
-  glDisable(GL_DEPTH_TEST);
-  glDepthMask(GL_FALSE);
-  m_display_program.Bind();
-  texture->Bind();
-
-  const bool linear = IsUsingLinearFiltering();
-
-  if (!m_use_gles2_draw_path)
-  {
-    const float position_adjust = linear ? 0.5f : 0.0f;
-    const float size_adjust = linear ? 1.0f : 0.0f;
-    const float flip_adjust = (texture_view_height < 0) ? -1.0f : 1.0f;
-    m_display_program.Uniform4f(
-      0, (static_cast<float>(texture_view_x) + position_adjust) / static_cast<float>(texture->GetWidth()),
-      (static_cast<float>(texture_view_y) + (position_adjust * flip_adjust)) / static_cast<float>(texture->GetHeight()),
-      (static_cast<float>(texture_view_width) - size_adjust) / static_cast<float>(texture->GetWidth()),
-      (static_cast<float>(texture_view_height) - (size_adjust * flip_adjust)) /
-        static_cast<float>(texture->GetHeight()));
-    glBindSampler(0, linear_filter ? m_display_linear_sampler : m_display_nearest_sampler);
-    glBindVertexArray(m_display_vao);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindSampler(0, 0);
-  }
-  else
-  {
-    texture->SetLinearFilter(linear_filter);
-
-    DrawFullscreenQuadES2(m_display_texture_view_x, m_display_texture_view_y, m_display_texture_view_width,
-                          m_display_texture_view_height, texture->GetWidth(), texture->GetHeight());
-  }
-}
-#endif
 
 void OpenGLDevice::CreateTimestampQueries()
 {
@@ -834,23 +813,13 @@ void OpenGLDevice::UnbindPipeline(const OpenGLPipeline* pl)
   }
 }
 
-void OpenGLDevice::PreDrawCheck()
-{
-  DebugAssert(m_current_pipeline);
-  if (m_current_framebuffer)
-    CommitClear(m_current_framebuffer);
-}
-
 void OpenGLDevice::Draw(u32 vertex_count, u32 base_vertex)
 {
-  PreDrawCheck();
   glDrawArrays(m_current_pipeline->GetTopology(), base_vertex, vertex_count);
 }
 
 void OpenGLDevice::DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex)
 {
-  PreDrawCheck();
-
   const void* indices = reinterpret_cast<const void*>(static_cast<uintptr_t>(base_index) * sizeof(u16));
   glDrawElementsBaseVertex(m_current_pipeline->GetTopology(), index_count, GL_UNSIGNED_SHORT, indices, base_vertex);
 }
@@ -907,9 +876,17 @@ void OpenGLDevice::SetFramebuffer(GPUFramebuffer* fb)
   if (m_current_framebuffer == fb)
     return;
 
-  // TODO: maybe move clear check here? gets rid of the per-draw overhead
-  m_current_framebuffer = static_cast<OpenGLFramebuffer*>(fb);
-  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_current_framebuffer ? m_current_framebuffer->GetGLId() : 0);
+  OpenGLFramebuffer* FB = static_cast<OpenGLFramebuffer*>(fb);
+  const bool prev_was_window = (m_current_framebuffer == nullptr);
+  const bool new_is_window = (FB == nullptr);
+  m_current_framebuffer = FB;
+
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FB ? FB->GetGLId() : 0);
+  if (prev_was_window != new_is_window)
+  {
+    UpdateViewport();
+    UpdateScissor();
+  }
 }
 
 void OpenGLDevice::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler)
@@ -957,14 +934,56 @@ void OpenGLDevice::SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer)
 
 void OpenGLDevice::SetViewport(s32 x, s32 y, s32 width, s32 height)
 {
-  // TODO: cache this
-  // TODO: lower-left origin flip for window fb?
-  glViewport(x, y, width, height);
+  const Common::Rectangle<s32> rc = Common::Rectangle<s32>::FromExtents(x, y, width, height);
+  if (m_last_viewport == rc)
+    return;
+
+  m_last_viewport = rc;
+  UpdateViewport();
 }
 
 void OpenGLDevice::SetScissor(s32 x, s32 y, s32 width, s32 height)
 {
-  // TODO: cache this
-  // TODO: lower-left origin flip for window fb?
+  const Common::Rectangle<s32> rc = Common::Rectangle<s32>::FromExtents(x, y, width, height);
+  if (m_last_scissor == rc)
+    return;
+
+  m_last_scissor = rc;
+  UpdateScissor();
+}
+
+std::tuple<s32, s32, s32, s32> OpenGLDevice::GetFlippedViewportScissor(const Common::Rectangle<s32>& rc) const
+{
+  // Only when rendering to window framebuffer.
+  // We draw everything else upside-down.
+  s32 x, y, width, height;
+  if (!m_current_framebuffer)
+  {
+    const s32 sh = static_cast<s32>(m_window_info.surface_height);
+    const s32 rh = rc.GetHeight();
+    x = rc.left;
+    y = sh - rc.top - rh;
+    width = rc.GetWidth();
+    height = rh;
+  }
+  else
+  {
+    x = rc.left;
+    y = rc.top;
+    width = rc.GetWidth();
+    height = rc.GetHeight();
+  }
+  return std::tie(x, y, width, height);
+}
+
+void OpenGLDevice::UpdateViewport()
+{
+  const auto& [x, y, width, height] = GetFlippedViewportScissor(m_last_viewport);
+  glViewport(x, y, width, height);
+}
+
+void OpenGLDevice::UpdateScissor()
+{
+  const auto& [x, y, width, height] = GetFlippedViewportScissor(m_last_scissor);
   glScissor(x, y, width, height);
 }

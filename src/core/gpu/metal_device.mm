@@ -143,6 +143,8 @@ bool MetalDevice::CreateDevice(const std::string_view& adapter, bool debug_devic
 
     CreateCommandBuffer();
 
+    Panic("Render blank frame!");
+
     if (!CreateBuffers())
     {
       Log_ErrorPrintf("Failed to create buffers.");

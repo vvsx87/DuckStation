@@ -407,9 +407,9 @@ void ImGuiManager::DrawPerformanceOverlay()
 
 void ImGuiManager::DrawEnhancementsOverlay()
 {
-  // TODO: Fix device type name
   LargeString text;
-  text.AppendFmtString("{} {}", Settings::GetConsoleRegionName(System::GetRegion()),
+  text.AppendFmtString("{} {}-{}", Settings::GetConsoleRegionName(System::GetRegion()),
+                       GPUDevice::RenderAPIToString(g_gpu_device->GetRenderAPI()),
                        g_gpu->IsHardwareRenderer() ? "HW" : "SW");
 
   if (g_settings.rewind_enable)

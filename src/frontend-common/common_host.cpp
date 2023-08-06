@@ -477,7 +477,10 @@ void Host::DisplayLoadingScreen(const char* message, int progress_min /*= -1*/, 
   }
   ImGui::End();
 
-  ImGui::SetNextWindowSize(ImVec2(width, (has_progress ? 50.0f : 30.0f) * scale), ImGuiCond_Always);
+  const float padding_and_rounding = 15.0f * scale;
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, padding_and_rounding);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding_and_rounding, padding_and_rounding));
+  ImGui::SetNextWindowSize(ImVec2(width, (has_progress ? 80.0f : 50.0f) * scale), ImGuiCond_Always);
   ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, (io.DisplaySize.y * 0.5f) + (100.0f * scale)),
                           ImGuiCond_Always, ImVec2(0.5f, 0.0f));
   if (ImGui::Begin("LoadingScreen", nullptr,
@@ -487,7 +490,17 @@ void Host::DisplayLoadingScreen(const char* message, int progress_min /*= -1*/, 
   {
     if (has_progress)
     {
-      ImGui::Text("%s: %d/%d", message, progress_value, progress_max);
+      ImGui::TextUnformatted(message);
+
+      TinyString buf;
+      buf.Fmt("{}/{}", progress_value, progress_max);
+
+      const ImVec2 prog_size = ImGui::CalcTextSize(buf.GetCharArray(), buf.GetCharArray() + buf.GetLength());
+      ImGui::SameLine();
+      ImGui::SetCursorPosX(width - padding_and_rounding - prog_size.x);
+      ImGui::TextUnformatted(buf.GetCharArray(), buf.GetCharArray() + buf.GetLength());
+      ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5.0f);
+
       ImGui::ProgressBar(static_cast<float>(progress_value) / static_cast<float>(progress_max - progress_min),
                          ImVec2(-1.0f, 0.0f), "");
       Log_InfoPrintf("%s: %d/%d", message, progress_value, progress_max);
@@ -501,6 +514,7 @@ void Host::DisplayLoadingScreen(const char* message, int progress_min /*= -1*/, 
     }
   }
   ImGui::End();
+  ImGui::PopStyleVar(2);
 
   ImGui::EndFrame();
   g_gpu_device->Render(false);

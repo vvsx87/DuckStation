@@ -471,7 +471,7 @@ void GPUDevice::RenderImGui()
       const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
       DebugAssert(!pcmd->UserCallback);
 
-      if (pcmd->ElemCount == 0 || pcmd->ClipRect.z <= pcmd->ClipRect.x || pcmd->ClipRect.w <= pcmd->ClipRect.x)
+      if (pcmd->ElemCount == 0 || pcmd->ClipRect.z <= pcmd->ClipRect.x || pcmd->ClipRect.w <= pcmd->ClipRect.y)
         continue;
 
       SetScissor(static_cast<s32>(pcmd->ClipRect.x), static_cast<s32>(pcmd->ClipRect.y),
