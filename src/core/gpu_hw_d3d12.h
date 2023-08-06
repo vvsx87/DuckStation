@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+#if 0
 #include "common/dimensional_array.h"
 #include "gpu/d3d12/staging_texture.h"
 #include "gpu/d3d12/stream_buffer.h"
@@ -101,3 +103,5 @@ private:
   D3D12::Texture m_vram_write_replacement_texture;
   D3D12::StreamBuffer m_texture_replacment_stream_buffer;
 };
+
+#endif

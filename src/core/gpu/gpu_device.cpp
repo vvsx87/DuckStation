@@ -237,6 +237,7 @@ bool GPUDevice::Create(const std::string_view& adapter, const std::string_view& 
                        bool vsync)
 {
   m_vsync_enabled = vsync;
+  m_debug_device = debug_device;
 
   if (!AcquireWindow(true))
   {
@@ -244,14 +245,14 @@ bool GPUDevice::Create(const std::string_view& adapter, const std::string_view& 
     return false;
   }
 
-  if (!CreateDevice(adapter, debug_device))
+  if (!CreateDevice(adapter))
   {
     Log_ErrorPrintf("Failed to create device.");
     return false;
   }
 
   if (!shader_cache_path.empty())
-    OpenShaderCache(shader_cache_path, debug_device);
+    OpenShaderCache(shader_cache_path);
   else
     Log_WarningPrintf("Shader cache is disabled.");
 
@@ -284,10 +285,10 @@ bool GPUDevice::SupportsExclusiveFullscreen() const
   return false;
 }
 
-void GPUDevice::OpenShaderCache(const std::string_view& base_path, bool debug)
+void GPUDevice::OpenShaderCache(const std::string_view& base_path)
 {
   // TODO: option to disable shader cache
-  const std::string basename = GetShaderCacheBaseName("shaders", debug);
+  const std::string basename = GetShaderCacheBaseName("shaders");
   const std::string filename = Path::Combine(base_path, basename);
   if (!m_shader_cache.Open(filename.c_str()))
     Log_WarningPrintf("Failed to open shader cache.");
@@ -418,7 +419,7 @@ bool GPUDevice::SetPostProcessingChain(const std::string_view& config)
   return true;
 }
 
-std::string GPUDevice::GetShaderCacheBaseName(const std::string_view& type, bool debug) const
+std::string GPUDevice::GetShaderCacheBaseName(const std::string_view& type) const
 {
   Panic("Not implemented");
   return {};
@@ -648,7 +649,7 @@ void GPUDevice::InvalidateRenderTarget(GPUTexture* t)
   t->SetState(GPUTexture::State::Invalidated);
 }
 
-bool GPUDevice::CreateDevice(const std::string_view& adapter, bool debug_device)
+bool GPUDevice::CreateDevice(const std::string_view& adapter)
 {
   // TODO: REMOVE ME
   UnreachableCode();
@@ -809,6 +810,13 @@ std::string GPUDevice::GetFullscreenModeString(u32 width, u32 height, float refr
 std::string GPUDevice::GetShaderDumpPath(const std::string_view& name)
 {
   return Path::Combine(EmuFolders::Dumps, name);
+}
+
+std::array<float, 4> GPUDevice::RGBA8ToFloat(u32 rgba)
+{
+  return std::array<float, 4>{static_cast<float>(rgba & 0xFF) / 255.0f, static_cast<float>((rgba >> 8) & 0xFF) / 255.0f,
+                              static_cast<float>((rgba >> 16) & 0xFF) / 255.0f,
+                              static_cast<float>((rgba >> 24) & 0xFF) / 255.0f};
 }
 
 bool GPUDevice::UpdateImGuiFontTexture()

@@ -447,6 +447,9 @@ public:
   /// Returns the directory bad shaders are saved to.
   static std::string GetShaderDumpPath(const std::string_view& name);
 
+  /// Converts a RGBA8 value to 4 floating-point values.
+  static std::array<float, 4> RGBA8ToFloat(u32 rgba);
+
   ALWAYS_INLINE const Features& GetFeatures() const { return m_features; }
   ALWAYS_INLINE u32 GetMaxTextureSize() const { return m_max_texture_size; }
   ALWAYS_INLINE u32 GetMaxMultisamples() const { return m_max_multisamples; }
@@ -489,7 +492,7 @@ public:
 
   virtual bool SetPostProcessingChain(const std::string_view& config);
 
-  virtual std::string GetShaderCacheBaseName(const std::string_view& type, bool debug) const;
+  virtual std::string GetShaderCacheBaseName(const std::string_view& type) const;
 
   /// Call when the window size changes externally to recreate any resources.
   virtual void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale);
@@ -509,9 +512,9 @@ public:
   virtual void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
                                     GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
                                     u32 height);
-  void ClearRenderTarget(GPUTexture* t, u32 c);
-  void ClearDepth(GPUTexture* t, float d);
-  void InvalidateRenderTarget(GPUTexture* t);
+  virtual void ClearRenderTarget(GPUTexture* t, u32 c);
+  virtual void ClearDepth(GPUTexture* t, float d);
+  virtual void InvalidateRenderTarget(GPUTexture* t);
 
   /// Framebuffer abstraction.
   virtual std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt = nullptr, u32 rt_layer = 0,
@@ -627,7 +630,7 @@ public:
   bool WriteScreenshotToFile(std::string filename, bool internal_resolution = false, bool compress_on_thread = false);
 
 protected:
-  virtual bool CreateDevice(const std::string_view& adapter, bool debug_device);
+  virtual bool CreateDevice(const std::string_view& adapter);
   virtual void DestroyDevice();
 
   virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data);
@@ -649,12 +652,13 @@ protected:
 
   bool m_gpu_timing_enabled = false;
   bool m_vsync_enabled = false;
+  bool m_debug_device = false;
 
 private:
   ALWAYS_INLINE bool HasSoftwareCursor() const { return static_cast<bool>(m_cursor_texture); }
   ALWAYS_INLINE bool HasDisplayTexture() const { return (m_display_texture != nullptr); }
 
-  void OpenShaderCache(const std::string_view& base_path, bool debug);
+  void OpenShaderCache(const std::string_view& base_path);
   bool CreateResources();
   void DestroyResources();
 

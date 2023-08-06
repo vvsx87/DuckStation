@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
+#if 0
+
 #include "gpu_hw_d3d12.h"
 #include "common/align.h"
 #include "common/assert.h"
@@ -1164,4 +1166,6 @@ std::unique_ptr<GPU> GPU::CreateHardwareD3D12Renderer()
 
   return gpu;
 }
+#endif
+
 #endif

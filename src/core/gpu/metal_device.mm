@@ -1292,10 +1292,10 @@ void MetalDevice::CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 d
 {
   DebugAssert(src_level < src->GetLevels() && src_layer < src->GetLayers());
   DebugAssert((src_x + width) <= src->GetMipWidth(src_level));
-  DebugAssert((src_y + height) <= src->GetMipWidth(src_level));
+  DebugAssert((src_y + height) <= src->GetMipHeight(src_level));
   DebugAssert(dst_level < dst->GetLevels() && dst_layer < dst->GetLayers());
   DebugAssert((dst_x + width) <= dst->GetMipWidth(dst_level));
-  DebugAssert((dst_y + height) <= dst->GetMipWidth(dst_level));
+  DebugAssert((dst_y + height) <= dst->GetMipHeight(dst_level));
 
   MetalTexture* D = static_cast<MetalTexture*>(dst);
   MetalTexture* S = static_cast<MetalTexture*>(src);
@@ -1349,10 +1349,10 @@ void MetalDevice::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u3
 #if 0
 	DebugAssert(src_level < src->GetLevels() && src_layer < src->GetLayers());
 	DebugAssert((src_x + width) <= src->GetMipWidth(src_level));
-	DebugAssert((src_y + height) <= src->GetMipWidth(src_level));
+	DebugAssert((src_y + height) <= src->GetMipHeight(src_level));
 	DebugAssert(dst_level < dst->GetLevels() && dst_layer < dst->GetLayers());
 	DebugAssert((dst_x + width) <= dst->GetMipWidth(dst_level));
-	DebugAssert((dst_y + height) <= dst->GetMipWidth(dst_level));
+	DebugAssert((dst_y + height) <= dst->GetMipHeight(dst_level));
 	DebugAssert(!dst->IsMultisampled() && src->IsMultisampled());
 
 	// DX11 can't resolve partial rects.

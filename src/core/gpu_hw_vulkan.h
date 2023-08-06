@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+#if 0
+
 #include "common/dimensional_array.h"
 #include "gpu/vulkan/stream_buffer.h"
 #include "gpu/vulkan/texture.h"
@@ -155,3 +158,5 @@ private:
   VkPipeline m_downsample_blur_pass_pipeline = VK_NULL_HANDLE;
   VkPipeline m_downsample_composite_pass_pipeline = VK_NULL_HANDLE;
 };
+
+#endif

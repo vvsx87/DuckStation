@@ -52,7 +52,7 @@ static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view
 namespace Host {
 extern bool IsFullscreen();
 extern void SetFullscreen(bool enabled);
-}
+} // namespace Host
 
 D3D11StreamBuffer::D3D11StreamBuffer() : m_size(0), m_position(0)
 {
@@ -127,7 +127,7 @@ void D3D11StreamBuffer::Release()
   m_buffer.Reset();
 }
 
-D3D11StreamBuffer::MappingResult D3D11StreamBuffer::Map(ID3D11DeviceContext* context, u32 alignment, u32 min_size)
+D3D11StreamBuffer::MappingResult D3D11StreamBuffer::Map(ID3D11DeviceContext1* context, u32 alignment, u32 min_size)
 {
   m_position = Common::AlignUp(m_position, alignment);
   if ((m_position + min_size) >= m_size || !m_use_map_no_overwrite)
@@ -151,7 +151,7 @@ D3D11StreamBuffer::MappingResult D3D11StreamBuffer::Map(ID3D11DeviceContext* con
                        (m_size - m_position) / alignment};
 }
 
-void D3D11StreamBuffer::Unmap(ID3D11DeviceContext* context, u32 used_size)
+void D3D11StreamBuffer::Unmap(ID3D11DeviceContext1* context, u32 used_size)
 {
   context->Unmap(m_buffer.Get(), 0);
   m_position += used_size;
@@ -255,10 +255,10 @@ void D3D11Device::CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 d
 {
   DebugAssert(src_level < src->GetLevels() && src_layer < src->GetLayers());
   DebugAssert((src_x + width) <= src->GetMipWidth(src_level));
-  DebugAssert((src_y + height) <= src->GetMipWidth(src_level));
+  DebugAssert((src_y + height) <= src->GetMipHeight(src_level));
   DebugAssert(dst_level < dst->GetLevels() && dst_layer < dst->GetLayers());
   DebugAssert((dst_x + width) <= dst->GetMipWidth(dst_level));
-  DebugAssert((dst_y + height) <= dst->GetMipWidth(dst_level));
+  DebugAssert((dst_y + height) <= dst->GetMipHeight(dst_level));
 
   D3D11Texture* dst11 = static_cast<D3D11Texture*>(dst);
   D3D11Texture* src11 = static_cast<D3D11Texture*>(src);
@@ -300,10 +300,10 @@ void D3D11Device::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u3
 {
   DebugAssert(src_level < src->GetLevels() && src_layer < src->GetLayers());
   DebugAssert((src_x + width) <= src->GetMipWidth(src_level));
-  DebugAssert((src_y + height) <= src->GetMipWidth(src_level));
+  DebugAssert((src_y + height) <= src->GetMipHeight(src_level));
   DebugAssert(dst_level < dst->GetLevels() && dst_layer < dst->GetLayers());
   DebugAssert((dst_x + width) <= dst->GetMipWidth(dst_level));
-  DebugAssert((dst_y + height) <= dst->GetMipWidth(dst_level));
+  DebugAssert((dst_y + height) <= dst->GetMipHeight(dst_level));
   DebugAssert(!dst->IsMultisampled() && src->IsMultisampled());
 
   // DX11 can't resolve partial rects.
@@ -318,6 +318,27 @@ void D3D11Device::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u3
   m_context->ResolveSubresource(dst11->GetD3DTexture(), D3D11CalcSubresource(dst_level, dst_layer, dst->GetLevels()),
                                 src11->GetD3DTexture(), D3D11CalcSubresource(src_level, src_layer, src->GetLevels()),
                                 dst11->GetDXGIFormat());
+}
+
+void D3D11Device::ClearRenderTarget(GPUTexture* t, u32 c)
+{
+  GPUDevice::ClearRenderTarget(t, c);
+  if (m_current_framebuffer && m_current_framebuffer->GetRT() == t)
+    static_cast<D3D11Texture*>(t)->CommitClear(m_context.Get());
+}
+
+void D3D11Device::ClearDepth(GPUTexture* t, float d)
+{
+  GPUDevice::ClearDepth(t, d);
+  if (m_current_framebuffer && m_current_framebuffer->GetDS() == t)
+    static_cast<D3D11Texture*>(t)->CommitClear(m_context.Get());
+}
+
+void D3D11Device::InvalidateRenderTarget(GPUTexture* t)
+{
+  GPUDevice::InvalidateRenderTarget(t);
+  if (m_current_framebuffer && (m_current_framebuffer->GetRT() == t || m_current_framebuffer->GetDS() == t))
+    static_cast<D3D11Texture*>(t)->CommitClear(m_context.Get());
 }
 
 bool D3D11Device::GetHostRefreshRate(float* refresh_rate)
@@ -344,10 +365,10 @@ void D3D11Device::SetVSync(bool enabled)
   m_vsync_enabled = enabled;
 }
 
-bool D3D11Device::CreateDevice(const std::string_view& adapter, bool debug_device)
+bool D3D11Device::CreateDevice(const std::string_view& adapter)
 {
   UINT create_flags = 0;
-  if (debug_device)
+  if (m_debug_device)
     create_flags |= D3D11_CREATE_DEVICE_DEBUG;
 
   ComPtr<IDXGIFactory> temp_dxgi_factory;
@@ -410,7 +431,7 @@ bool D3D11Device::CreateDevice(const std::string_view& adapter, bool debug_devic
     return false;
   }
 
-  if (debug_device && IsDebuggerPresent())
+  if (m_debug_device && IsDebuggerPresent())
   {
     ComPtr<ID3D11InfoQueue> info;
     hr = m_device.As(&info);
@@ -422,7 +443,7 @@ bool D3D11Device::CreateDevice(const std::string_view& adapter, bool debug_devic
   }
 
 #ifdef _DEBUG
-  if (debug_device)
+  if (m_debug_device)
     m_context.As(&m_annotation);
 #endif
 
@@ -778,7 +799,7 @@ void D3D11Device::DestroySurface()
   DestroySwapChain();
 }
 
-std::string D3D11Device::GetShaderCacheBaseName(const std::string_view& type, bool debug) const
+std::string D3D11Device::GetShaderCacheBaseName(const std::string_view& type) const
 {
   std::string_view flname;
   switch (m_device->GetFeatureLevel())
@@ -790,7 +811,7 @@ std::string D3D11Device::GetShaderCacheBaseName(const std::string_view& type, bo
       // clang-format on
   }
 
-  return fmt::format("d3d_{}_{}{}", type, flname, debug ? "_debug" : "");
+  return fmt::format("d3d_{}_{}{}", type, flname, m_debug_device ? "_debug" : "");
 }
 
 void D3D11Device::ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale)
@@ -832,6 +853,8 @@ bool D3D11Device::CreateBuffers()
     return false;
   }
 
+  // Index buffer never changes :)
+  m_context->IASetIndexBuffer(m_index_buffer.GetD3DBuffer(), DXGI_FORMAT_R16_UINT, 0);
   return true;
 }
 
@@ -1095,7 +1118,10 @@ D3D11Framebuffer::D3D11Framebuffer(GPUTexture* rt, GPUTexture* ds, u32 width, u3
 {
 }
 
-D3D11Framebuffer::~D3D11Framebuffer() = default;
+D3D11Framebuffer::~D3D11Framebuffer()
+{
+  D3D11Device::GetInstance().UnbindFramebuffer(this);
+}
 
 void D3D11Framebuffer::SetDebugName(const std::string_view& name)
 {
@@ -1105,12 +1131,12 @@ void D3D11Framebuffer::SetDebugName(const std::string_view& name)
     SetD3DDebugObjectName(m_dsv.Get(), fmt::format("{} DSV", name));
 }
 
-void D3D11Framebuffer::CommitClear(ID3D11DeviceContext* context)
+void D3D11Framebuffer::CommitClear(ID3D11DeviceContext1* context)
 {
   if (UNLIKELY(m_rt && m_rt->GetState() != GPUTexture::State::Dirty))
   {
     if (m_rt->GetState() == GPUTexture::State::Invalidated)
-      ; // m_context->DiscardView(m_rtv.Get());
+      context->DiscardView(m_rtv.Get());
     else
       context->ClearRenderTargetView(m_rtv.Get(), m_rt->GetUNormClearColor().data());
 
@@ -1120,7 +1146,7 @@ void D3D11Framebuffer::CommitClear(ID3D11DeviceContext* context)
   if (UNLIKELY(m_ds && m_ds->GetState() != GPUTexture::State::Dirty))
   {
     if (m_ds->GetState() == GPUTexture::State::Invalidated)
-      ; // m_context->DiscardView(m_dsv.Get());
+      context->DiscardView(m_dsv.Get());
     else
       context->ClearDepthStencilView(m_dsv.Get(), D3D11_CLEAR_DEPTH, m_ds->GetClearDepth(), 0);
 
@@ -1379,13 +1405,6 @@ std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromBinary(GPUShaderStage st
 std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
                                                                std::vector<u8>* out_binary /* = nullptr */)
 {
-  // TODO: This shouldn't be dependent on build type.
-#ifdef _DEBUG
-  constexpr bool debug = true;
-#else
-  constexpr bool debug = false;
-#endif
-
   const char* target;
   switch (m_device->GetFeatureLevel())
   {
@@ -1426,7 +1445,7 @@ std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromSource(GPUShaderStage st
   ComPtr<ID3DBlob> error_blob;
   const HRESULT hr =
     D3DCompile(source.data(), source.size(), "0", nullptr, nullptr, "main", target,
-               debug ? flags_debug : flags_non_debug, 0, blob.GetAddressOf(), error_blob.GetAddressOf());
+               m_debug_device ? flags_debug : flags_non_debug, 0, blob.GetAddressOf(), error_blob.GetAddressOf());
 
   std::string error_string;
   if (error_blob)
@@ -1467,29 +1486,22 @@ std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromSource(GPUShaderStage st
 
 D3D11Pipeline::D3D11Pipeline(ComPtr<ID3D11RasterizerState> rs, ComPtr<ID3D11DepthStencilState> ds,
                              ComPtr<ID3D11BlendState> bs, ComPtr<ID3D11InputLayout> il, ComPtr<ID3D11VertexShader> vs,
-                             ComPtr<ID3D11PixelShader> ps, D3D11_PRIMITIVE_TOPOLOGY topology)
+                             ComPtr<ID3D11PixelShader> ps, D3D11_PRIMITIVE_TOPOLOGY topology, u32 vertex_stride,
+                             u32 blend_factor)
   : m_rs(std::move(rs)), m_ds(std::move(ds)), m_bs(std::move(bs)), m_il(std::move(il)), m_vs(std::move(vs)),
-    m_ps(std::move(ps)), m_topology(topology)
+    m_ps(std::move(ps)), m_topology(topology), m_vertex_stride(vertex_stride), m_blend_factor(blend_factor),
+    m_blend_factor_float(GPUDevice::RGBA8ToFloat(blend_factor))
 {
 }
 
-D3D11Pipeline::~D3D11Pipeline() = default;
+D3D11Pipeline::~D3D11Pipeline()
+{
+  D3D11Device::GetInstance().UnbindPipeline(this);
+}
 
 void D3D11Pipeline::SetDebugName(const std::string_view& name)
 {
   // can't label this directly
-}
-
-void D3D11Pipeline::Bind(ID3D11DeviceContext* context)
-{
-  // TODO: constant blend factor
-  context->IASetInputLayout(GetInputLayout());
-  context->IASetPrimitiveTopology(GetPrimitiveTopology());
-  context->RSSetState(GetRasterizerState());
-  context->OMSetDepthStencilState(GetDepthStencilState(), 0);
-  context->OMSetBlendState(GetBlendState(), nullptr, 0xFFFFFFFFu);
-  context->VSSetShader(GetVertexShader(), nullptr, 0);
-  context->PSSetShader(GetPixelShader(), nullptr, 0);
 }
 
 D3D11Device::ComPtr<ID3D11RasterizerState> D3D11Device::GetRasterizationState(const GPUPipeline::RasterizationState& rs)
@@ -1627,12 +1639,6 @@ D3D11Device::ComPtr<ID3D11InputLayout> D3D11Device::GetInputLayout(const GPUPipe
     return dil;
   }
 
-#if 0
-  static constexpr std::array<const char*, static_cast<u32>(GPUPipeline::VertexAttribute::MaxAttributes)> semantics = {
-    {"ATTR0", "ATTR1", "ATTR2", "ATTR3", "ATTR4", "ATTR5", "ATTR6", "ATTR7", "ATTR8", "ATTR9", "ATTR10", "ATTR11",
-     "ATTR12", "ATTR13", "ATTR14", "ATTR15"}};
-#endif
-
   static constexpr u32 MAX_COMPONENTS = 4;
   static constexpr const DXGI_FORMAT
     format_mapping[static_cast<u8>(GPUPipeline::VertexAttribute::Type::MaxCount)][MAX_COMPONENTS] = {
@@ -1683,9 +1689,11 @@ std::unique_ptr<GPUPipeline> D3D11Device::CreatePipeline(const GPUPipeline::Grap
     return {};
 
   ComPtr<ID3D11InputLayout> il;
+  u32 vertex_stride = 0;
   if (!config.input_layout.vertex_attributes.empty())
   {
     il = GetInputLayout(config.input_layout, static_cast<const D3D11Shader*>(config.vertex_shader));
+    vertex_stride = config.input_layout.vertex_stride;
     if (!il)
       return {};
   }
@@ -1702,7 +1710,7 @@ std::unique_ptr<GPUPipeline> D3D11Device::CreatePipeline(const GPUPipeline::Grap
     new D3D11Pipeline(std::move(rs), std::move(ds), std::move(bs), std::move(il),
                       static_cast<const D3D11Shader*>(config.vertex_shader)->GetVertexShader(),
                       static_cast<const D3D11Shader*>(config.fragment_shader)->GetPixelShader(),
-                      primitives[static_cast<u8>(config.primitive)]));
+                      primitives[static_cast<u8>(config.primitive)], vertex_stride, config.blend.constant));
 }
 
 D3D11Texture::D3D11Texture() = default;
@@ -1748,23 +1756,22 @@ D3D11_TEXTURE2D_DESC D3D11Texture::GetDesc() const
   return desc;
 }
 
-void D3D11Texture::CommitClear(ID3D11DeviceContext* context)
+void D3D11Texture::CommitClear(ID3D11DeviceContext1* context)
 {
   if (m_state == GPUTexture::State::Dirty)
     return;
 
-  // TODO: 11.1
   if (IsDepthStencil())
   {
     if (m_state == GPUTexture::State::Invalidated)
-      ; // context->DiscardView(GetD3DDSV());
+      context->DiscardView(GetD3DDSV());
     else
       context->ClearDepthStencilView(GetD3DDSV(), D3D11_CLEAR_DEPTH, GetClearDepth(), 0);
   }
   else if (IsRenderTarget())
   {
     if (m_state == GPUTexture::State::Invalidated)
-      ; // context->DiscardView(GetD3DRTV());
+      context->DiscardView(GetD3DRTV());
     else
       context->ClearRenderTargetView(GetD3DRTV(), GetUNormClearColor().data());
   }
@@ -1796,7 +1803,7 @@ bool D3D11Texture::Update(u32 x, u32 y, u32 width, u32 height, const void* data,
                        static_cast<LONG>(y + height), 1);
   const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
 
-  ID3D11DeviceContext* context = D3D11Device::GetD3DContext();
+  ID3D11DeviceContext1* context = D3D11Device::GetD3DContext();
   CommitClear(context);
   context->UpdateSubresource(m_texture.Get(), srnum, &box, data, pitch, 0);
   m_state = GPUTexture::State::Dirty;
@@ -1815,7 +1822,7 @@ bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32
   const bool discard = (width == m_width && height == m_height);
   const u32 srnum = D3D11CalcSubresource(level, layer, m_levels);
 
-  ID3D11DeviceContext* context = D3D11Device::GetD3DContext();
+  ID3D11DeviceContext1* context = D3D11Device::GetD3DContext();
   CommitClear(context);
 
   D3D11_MAPPED_SUBRESOURCE sr;
@@ -1950,6 +1957,7 @@ bool D3D11Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 layer
   m_layers = static_cast<u8>(layers);
   m_levels = static_cast<u8>(levels);
   m_samples = static_cast<u8>(samples);
+  m_type = type;
   m_format = format;
   m_dynamic = dynamic;
   return true;
@@ -2021,6 +2029,7 @@ bool D3D11Texture::Adopt(ID3D11Device* device, ComPtr<ID3D11Texture2D> texture)
 
 void D3D11Texture::Destroy()
 {
+  D3D11Device::GetInstance().UnbindTexture(this);
   m_rtv_dsv.Reset();
   m_srv.Reset();
   m_texture.Reset();
@@ -2130,10 +2139,6 @@ void D3D11Device::MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_
 void D3D11Device::UnmapVertexBuffer(u32 vertex_size, u32 vertex_count)
 {
   m_vertex_buffer.Unmap(m_context.Get(), vertex_size * vertex_count);
-
-  // TODO: cache - should come from pipeline
-  const UINT offset = 0;
-  m_context->IASetVertexBuffers(0, 1, m_vertex_buffer.GetD3DBufferArray(), &vertex_size, &offset);
 }
 
 void D3D11Device::MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index)
@@ -2147,7 +2152,6 @@ void D3D11Device::MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_
 void D3D11Device::UnmapIndexBuffer(u32 used_index_count)
 {
   m_index_buffer.Unmap(m_context.Get(), sizeof(DrawIndex) * used_index_count);
-  m_context->IASetIndexBuffer(m_index_buffer.GetD3DBuffer(), DXGI_FORMAT_R16_UINT, 0);
 }
 
 void D3D11Device::PushUniformBuffer(const void* data, u32 data_size)
@@ -2193,6 +2197,33 @@ void D3D11Device::SetFramebuffer(GPUFramebuffer* fb)
     return;
   }
 
+  // Make sure textures aren't bound.
+  if (D3D11Texture* rt = static_cast<D3D11Texture*>(fb->GetRT()); rt)
+  {
+    const ID3D11ShaderResourceView* srv = rt->GetD3DSRV();
+    for (u32 i = 0; i < MAX_TEXTURE_SAMPLERS; i++)
+    {
+      if (m_current_textures[i] == srv)
+      {
+        m_current_textures[i] = nullptr;
+        m_context->PSSetShaderResources(i, 1, &m_current_textures[i]);
+      }
+    }
+  }
+  if (D3D11Texture* ds = static_cast<D3D11Texture*>(fb->GetDS()); ds)
+  {
+    const ID3D11ShaderResourceView* srv = ds->GetD3DSRV();
+    for (u32 i = 0; i < MAX_TEXTURE_SAMPLERS; i++)
+    {
+      if (m_current_textures[i] == srv)
+      {
+        m_current_textures[i] = nullptr;
+        m_context->PSSetShaderResources(i, 1, &m_current_textures[i]);
+      }
+    }
+  }
+
+  m_current_framebuffer->CommitClear(m_context.Get());
   m_context->OMSetRenderTargets(m_current_framebuffer->GetNumRTVs(), m_current_framebuffer->GetRTVArray(),
                                 m_current_framebuffer->GetDSV());
 }
@@ -2208,10 +2239,62 @@ void D3D11Device::UnbindFramebuffer(D3D11Framebuffer* fb)
 
 void D3D11Device::SetPipeline(GPUPipeline* pipeline)
 {
-  D3D11Pipeline* PL = static_cast<D3D11Pipeline*>(pipeline);
+  if (m_current_pipeline == pipeline)
+    return;
 
-  // TODO: cache
-  PL->Bind(m_context.Get());
+  D3D11Pipeline* const PL = static_cast<D3D11Pipeline*>(pipeline);
+  m_current_pipeline = PL;
+
+  if (ID3D11InputLayout* il = PL->GetInputLayout(); m_current_input_layout != il)
+  {
+    m_current_input_layout = il;
+    m_context->IASetInputLayout(il);
+  }
+
+  if (const u32 vertex_stride = PL->GetVertexStride(); m_current_vertex_stride != vertex_stride)
+  {
+    const UINT offset = 0;
+    m_current_vertex_stride = PL->GetVertexStride();
+    m_context->IASetVertexBuffers(0, 1, m_vertex_buffer.GetD3DBufferArray(), &m_current_vertex_stride, &offset);
+  }
+
+  if (D3D_PRIMITIVE_TOPOLOGY topology = PL->GetPrimitiveTopology(); m_current_primitive_topology != topology)
+  {
+    m_current_primitive_topology = topology;
+    m_context->IASetPrimitiveTopology(topology);
+  }
+
+  if (ID3D11VertexShader* vs = PL->GetVertexShader(); m_current_vertex_shader != vs)
+  {
+    m_current_vertex_shader = vs;
+    m_context->VSSetShader(vs, nullptr, 0);
+  }
+
+  if (ID3D11PixelShader* ps = PL->GetPixelShader(); m_current_pixel_shader != ps)
+  {
+    m_current_pixel_shader = ps;
+    m_context->PSSetShader(ps, nullptr, 0);
+  }
+
+  if (ID3D11RasterizerState* rs = PL->GetRasterizerState(); m_current_rasterizer_state != rs)
+  {
+    m_current_rasterizer_state = rs;
+    m_context->RSSetState(rs);
+  }
+
+  if (ID3D11DepthStencilState* ds = PL->GetDepthStencilState(); m_current_depth_state != ds)
+  {
+    m_current_depth_state = ds;
+    m_context->OMSetDepthStencilState(ds, 0);
+  }
+
+  if (ID3D11BlendState* bs = PL->GetBlendState();
+      m_current_blend_state != bs || m_current_blend_factor != PL->GetBlendFactor())
+  {
+    m_current_blend_state = bs;
+    m_current_blend_factor = PL->GetBlendFactor();
+    m_context->OMSetBlendState(bs, RGBA8ToFloat(m_current_blend_factor).data(), 0xFFFFFFFFu);
+  }
 }
 
 void D3D11Device::UnbindPipeline(D3D11Pipeline* pl)
@@ -2219,27 +2302,57 @@ void D3D11Device::UnbindPipeline(D3D11Pipeline* pl)
   if (m_current_pipeline != pl)
     return;
 
+  // Let the runtime deal with the dead objects...
   m_current_pipeline = nullptr;
 }
 
 void D3D11Device::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler)
 {
-  // TODO: cache when old rt == tex
-  D3D11Texture* T = static_cast<D3D11Texture*>(texture);
-  D3D11Sampler* S = static_cast<D3D11Sampler*>(sampler);
-  m_context->PSSetShaderResources(0, 1, T->GetD3DSRVArray());
-  m_context->PSSetSamplers(0, 1, S->GetSamplerStateArray());
+  ID3D11ShaderResourceView* T = texture ? static_cast<D3D11Texture*>(texture)->GetD3DSRV() : nullptr;
+  ID3D11SamplerState* S = sampler ? static_cast<D3D11Sampler*>(sampler)->GetSamplerState() : nullptr;
+
+  // Runtime will null these if we don't...
+  DebugAssert(!m_current_framebuffer || !texture ||
+              (m_current_framebuffer->GetRT() != texture && m_current_framebuffer->GetDS() != texture));
+
+  if (m_current_textures[slot] != T)
+  {
+    m_current_textures[slot] = T;
+    m_context->PSSetShaderResources(slot, 1, &T);
+  }
+  if (m_current_samplers[slot] != S)
+  {
+    m_current_samplers[slot] = S;
+    m_context->PSSetSamplers(slot, 1, &S);
+  }
 }
 
 void D3D11Device::SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer)
 {
-  D3D11TextureBuffer* B = static_cast<D3D11TextureBuffer*>(buffer);
-  m_context->PSSetShaderResources(0, 1, B->GetSRVArray());
+  ID3D11ShaderResourceView* B = buffer ? static_cast<D3D11TextureBuffer*>(buffer)->GetSRV() : nullptr;
+  if (m_current_textures[slot] != B)
+  {
+    m_current_textures[slot] = B;
+    m_context->PSSetShaderResources(slot, 1, &B);
+  }
 }
 
 void D3D11Device::UnbindTexture(D3D11Texture* tex)
 {
-  // TODO
+  if (const ID3D11ShaderResourceView* srv = tex->GetD3DSRV(); srv)
+  {
+    for (u32 i = 0; i < MAX_TEXTURE_SAMPLERS; i++)
+    {
+      if (m_current_textures[i] == srv)
+      {
+        m_current_textures[i] = nullptr;
+        m_context->PSSetShaderResources(i, 1, &m_current_textures[i]);
+      }
+    }
+  }
+
+  if (m_current_framebuffer && m_current_framebuffer->GetRT() == tex)
+    SetFramebuffer(nullptr);
 }
 
 void D3D11Device::SetViewport(s32 x, s32 y, s32 width, s32 height)
@@ -2255,20 +2368,12 @@ void D3D11Device::SetScissor(s32 x, s32 y, s32 width, s32 height)
   m_context->RSSetScissorRects(1, &rc);
 }
 
-void D3D11Device::PreDrawCheck()
-{
-  if (m_current_framebuffer)
-    m_current_framebuffer->CommitClear(m_context.Get());
-}
-
 void D3D11Device::Draw(u32 vertex_count, u32 base_vertex)
 {
-  PreDrawCheck();
   m_context->Draw(vertex_count, base_vertex);
 }
 
 void D3D11Device::DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex)
 {
-  PreDrawCheck();
   m_context->DrawIndexed(index_count, base_index, base_vertex);
 }

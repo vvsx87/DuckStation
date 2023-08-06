@@ -208,6 +208,9 @@ public:
                          u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
   void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
                             u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
+  void ClearRenderTarget(GPUTexture* t, u32 c) override;
+  void ClearDepth(GPUTexture* t, float d) override;
+  void InvalidateRenderTarget(GPUTexture* t) override;
 
   std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt = nullptr, u32 rt_layer = 0, u32 rt_level = 0,
                                                     GPUTexture* ds = nullptr, u32 ds_layer = 0,

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
+#if 0
+
 #include "gpu_hw_vulkan.h"
 #include "common/assert.h"
 #include "common/log.h"
@@ -1858,3 +1860,5 @@ void GPU_HW_Vulkan::DownsampleFramebufferAdaptive(Vulkan::Texture& source, u32 l
 
   g_gpu_device->SetDisplayTexture(&m_display_texture, left, top, width, height);
 }
+
+#endif

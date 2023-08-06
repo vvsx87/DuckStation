@@ -458,8 +458,10 @@ void EmuThread::startFullscreenUI()
   setInitialState(s_start_fullscreen_ui_fullscreen ? std::optional<bool>(true) : std::optional<bool>());
   m_run_fullscreen_ui = true;
 
-  if (!Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer)))
+  if (!Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer)) || !FullscreenUI::Initialize())
   {
+    Host::ReleaseGPUDevice();
+    Host::ReleaseRenderWindow();
     m_run_fullscreen_ui = false;
     return;
   }

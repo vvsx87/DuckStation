@@ -48,8 +48,8 @@ public:
     u32 space_aligned; // remaining space / alignment
   };
 
-  MappingResult Map(ID3D11DeviceContext* context, u32 alignment, u32 min_size);
-  void Unmap(ID3D11DeviceContext* context, u32 used_size);
+  MappingResult Map(ID3D11DeviceContext1* context, u32 alignment, u32 min_size);
+  void Unmap(ID3D11DeviceContext1* context, u32 used_size);
 
 private:
   ComPtr<ID3D11Buffer> m_buffer;
@@ -74,7 +74,7 @@ public:
   ALWAYS_INLINE ID3D11DepthStencilView* GetDSV() const { return m_dsv.Get(); }
 
   void SetDebugName(const std::string_view& name) override;
-  void CommitClear(ID3D11DeviceContext* context);
+  void CommitClear(ID3D11DeviceContext1* context);
 
 private:
   D3D11Framebuffer(GPUTexture* rt, GPUTexture* ds, u32 width, u32 height, ComPtr<ID3D11RenderTargetView> rtv,
@@ -146,13 +146,14 @@ public:
   ALWAYS_INLINE ID3D11VertexShader* GetVertexShader() const { return m_vs.Get(); }
   ALWAYS_INLINE ID3D11PixelShader* GetPixelShader() const { return m_ps.Get(); }
   ALWAYS_INLINE D3D11_PRIMITIVE_TOPOLOGY GetPrimitiveTopology() const { return m_topology; }
-
-  void Bind(ID3D11DeviceContext* context);
+  ALWAYS_INLINE u32 GetVertexStride() const { return m_vertex_stride; }
+  ALWAYS_INLINE u32 GetBlendFactor() const { return m_blend_factor; }
+  ALWAYS_INLINE const std::array<float, 4>& GetBlendFactorFloat() const { return m_blend_factor_float; }
 
 private:
   D3D11Pipeline(ComPtr<ID3D11RasterizerState> rs, ComPtr<ID3D11DepthStencilState> ds, ComPtr<ID3D11BlendState> bs,
                 ComPtr<ID3D11InputLayout> il, ComPtr<ID3D11VertexShader> vs, ComPtr<ID3D11PixelShader> ps,
-                D3D11_PRIMITIVE_TOPOLOGY topology);
+                D3D11_PRIMITIVE_TOPOLOGY topology, u32 vertex_stride, u32 blend_factor);
 
   ComPtr<ID3D11RasterizerState> m_rs;
   ComPtr<ID3D11DepthStencilState> m_ds;
@@ -161,6 +162,9 @@ private:
   ComPtr<ID3D11VertexShader> m_vs;
   ComPtr<ID3D11PixelShader> m_ps;
   D3D11_PRIMITIVE_TOPOLOGY m_topology;
+  u32 m_vertex_stride;
+  u32 m_blend_factor;
+  std::array<float, 4> m_blend_factor_float;
 };
 
 class D3D11Texture final : public GPUTexture
@@ -215,7 +219,7 @@ public:
   void Destroy();
 
   D3D11_TEXTURE2D_DESC GetDesc() const;
-  void CommitClear(ID3D11DeviceContext* context);
+  void CommitClear(ID3D11DeviceContext1* context);
 
   bool IsValid() const override;
 
@@ -265,7 +269,7 @@ public:
 
   ALWAYS_INLINE static D3D11Device& GetInstance() { return *static_cast<D3D11Device*>(g_gpu_device.get()); }
   ALWAYS_INLINE static ID3D11Device* GetD3DDevice() { return GetInstance().m_device.Get(); }
-  ALWAYS_INLINE static ID3D11DeviceContext* GetD3DContext() { return GetInstance().m_context.Get(); }
+  ALWAYS_INLINE static ID3D11DeviceContext1* GetD3DContext() { return GetInstance().m_context.Get(); }
 
   // returns the fullscreen mode to use for the specified dimensions
   static bool GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, const RECT& window_rect, u32 width,
@@ -282,7 +286,7 @@ public:
   AdapterAndModeList GetAdapterAndModeList() override;
   void DestroySurface() override;
 
-  std::string GetShaderCacheBaseName(const std::string_view& type, bool debug) const override;
+  std::string GetShaderCacheBaseName(const std::string_view& type) const override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                             GPUTexture::Type type, GPUTexture::Format format,
@@ -298,6 +302,9 @@ public:
                          u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
   void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
                             u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
+  void ClearRenderTarget(GPUTexture* t, u32 c) override;
+  void ClearDepth(GPUTexture* t, float d) override;
+  void InvalidateRenderTarget(GPUTexture* t) override;
 
   std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt = nullptr, u32 rt_layer = 0, u32 rt_level = 0,
                                                     GPUTexture* ds = nullptr, u32 ds_layer = 0,
@@ -346,7 +353,7 @@ public:
   static AdapterAndModeList StaticGetAdapterAndModeList();
 
 protected:
-  bool CreateDevice(const std::string_view& adapter, bool debug_device) override;
+  bool CreateDevice(const std::string_view& adapter) override;
   void DestroyDevice() override;
 
 private:
@@ -365,8 +372,6 @@ private:
   static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
 
   void SetFeatures();
-
-  void PreDrawCheck();
 
   bool CheckStagingBufferSize(u32 width, u32 height, DXGI_FORMAT format);
   void DestroyStagingBuffer();
@@ -417,6 +422,19 @@ private:
 
   D3D11Framebuffer* m_current_framebuffer = nullptr;
   D3D11Pipeline* m_current_pipeline = nullptr;
+
+  ID3D11InputLayout* m_current_input_layout = nullptr;
+  ID3D11VertexShader* m_current_vertex_shader = nullptr;
+  ID3D11PixelShader* m_current_pixel_shader = nullptr;
+  ID3D11RasterizerState* m_current_rasterizer_state = nullptr;
+  ID3D11DepthStencilState* m_current_depth_state = nullptr;
+  ID3D11BlendState* m_current_blend_state = nullptr;
+  D3D_PRIMITIVE_TOPOLOGY m_current_primitive_topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+  u32 m_current_vertex_stride = 0;
+  u32 m_current_blend_factor = 0;
+
+  std::array<ID3D11ShaderResourceView*, MAX_TEXTURE_SAMPLERS> m_current_textures = {};
+  std::array<ID3D11SamplerState*, MAX_TEXTURE_SAMPLERS> m_current_samplers = {};
 
   std::array<std::array<ComPtr<ID3D11Query>, 3>, NUM_TIMESTAMP_QUERIES> m_timestamp_queries = {};
   u8 m_read_timestamp_query = 0;

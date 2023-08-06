@@ -48,7 +48,7 @@ public:
 
   AdapterAndModeList GetAdapterAndModeList() override;
 
-  std::string GetShaderCacheBaseName(const std::string_view& type, bool debug) const override;
+  std::string GetShaderCacheBaseName(const std::string_view& type) const override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                             GPUTexture::Type type, GPUTexture::Format format,
@@ -64,6 +64,9 @@ public:
                          u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
   void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
                             u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) override;
+  void ClearRenderTarget(GPUTexture* t, u32 c) override;
+  void ClearDepth(GPUTexture* t, float d) override;
+  void InvalidateRenderTarget(GPUTexture* t) override;
 
   std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt = nullptr, u32 rt_layer = 0, u32 rt_level = 0,
                                                     GPUTexture* ds = nullptr, u32 ds_layer = 0,
@@ -134,7 +137,7 @@ protected:
   OpenGLPipeline::VertexArrayCache m_vao_cache;
   OpenGLPipeline::ProgramCache m_program_cache;
 
-  bool CreateDevice(const std::string_view& adapter, bool debug_device) override;
+  bool CreateDevice(const std::string_view& adapter) override;
   void DestroyDevice() override;
 
   bool CreateBuffers();

@@ -191,6 +191,27 @@ void OpenGLDevice::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 }
 
+void OpenGLDevice::ClearRenderTarget(GPUTexture* t, u32 c)
+{
+  GPUDevice::ClearRenderTarget(t, c);
+  if (m_current_framebuffer && m_current_framebuffer->GetRT() == t)
+    CommitClear(m_current_framebuffer);
+}
+
+void OpenGLDevice::ClearDepth(GPUTexture* t, float d)
+{
+  GPUDevice::ClearDepth(t, d);
+  if (m_current_framebuffer && m_current_framebuffer->GetDS() == t)
+    CommitClear(m_current_framebuffer);
+}
+
+void OpenGLDevice::InvalidateRenderTarget(GPUTexture* t)
+{
+  GPUDevice::InvalidateRenderTarget(t);
+  if (m_current_framebuffer && (m_current_framebuffer->GetRT() == t || m_current_framebuffer->GetDS() == t))
+    CommitClear(m_current_framebuffer);
+}
+
 void OpenGLDevice::PushDebugGroup(const char* fmt, ...)
 {
 #ifdef _DEBUG
@@ -268,7 +289,7 @@ bool OpenGLDevice::HasSurface() const
   return m_window_info.type != WindowInfo::Type::Surfaceless;
 }
 
-bool OpenGLDevice::CreateDevice(const std::string_view& adapter, bool debug_device)
+bool OpenGLDevice::CreateDevice(const std::string_view& adapter)
 {
   m_gl_context = GL::Context::Create(m_window_info);
   if (!m_gl_context)
@@ -307,7 +328,7 @@ bool OpenGLDevice::CreateDevice(const std::string_view& adapter, bool debug_devi
 
   Log_VerbosePrintf("Using PBO for uploads: %s", OpenGLTexture::s_use_pbo_for_uploads ? "yes" : "no");
 
-  if (debug_device && GLAD_GL_KHR_debug)
+  if (m_debug_device && GLAD_GL_KHR_debug)
   {
     if (m_gl_context->IsGLES())
       glDebugMessageCallbackKHR(GLDebugCallback, nullptr);
@@ -493,9 +514,9 @@ void OpenGLDevice::DestroySurface()
     Log_ErrorPrintf("Failed to switch to surfaceless");
 }
 
-std::string OpenGLDevice::GetShaderCacheBaseName(const std::string_view& type, bool debug) const
+std::string OpenGLDevice::GetShaderCacheBaseName(const std::string_view& type) const
 {
-  return fmt::format("opengl_{}{}", type, debug ? "_debug" : "");
+  return fmt::format("opengl_{}{}", type, m_debug_device ? "_debug" : "");
 }
 
 bool OpenGLDevice::CreateBuffers()

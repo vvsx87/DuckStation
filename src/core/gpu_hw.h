@@ -20,7 +20,7 @@ class GPU_SW_Backend;
 struct GPUBackendCommand;
 struct GPUBackendDrawCommand;
 
-class GPU_HW : public GPU
+class GPU_HW final : public GPU
 {
 public:
   enum class BatchRenderMode : u8
@@ -208,8 +208,6 @@ protected:
                            static_cast<float>((rgba >> 16) & UINT32_C(0xFF)) * (1.0f / 255.0f),
                            static_cast<float>(rgba >> 24) * (1.0f / 255.0f));
   }
-
-  void UpdateHWSettings(bool* framebuffer_changed, bool* shaders_changed);
 
   bool CreateBuffers();
   void ClearFramebuffer();
@@ -461,8 +459,8 @@ protected:
 
   std::unique_ptr<GPUTexture> m_downsample_texture;
   std::unique_ptr<GPUFramebuffer> m_downsample_framebuffer;
-  //std::unique_ptr<GPUTexture> m_downsample_weight_texture;
-  //std::unique_ptr<GPUFramebuffer> m_downsample_weight_framebuffer;
+  // std::unique_ptr<GPUTexture> m_downsample_weight_texture;
+  // std::unique_ptr<GPUFramebuffer> m_downsample_weight_framebuffer;
   std::unique_ptr<GPUPipeline> m_downsample_first_pass_pipeline;
   std::unique_ptr<GPUPipeline> m_downsample_mid_pass_pipeline;
   std::unique_ptr<GPUPipeline> m_downsample_blur_pass_pipeline;
