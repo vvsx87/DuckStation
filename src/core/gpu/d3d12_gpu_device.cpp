@@ -28,7 +28,7 @@ D3D12GPUDevice::~D3D12GPUDevice()
 
   // DestroyRenderSurface() will exec the command list.
   DestroySurface();
-  DestroyResources();
+  //DestroyResources();
   g_d3d12_context->Destroy();
 }
 
@@ -108,6 +108,7 @@ bool D3D12GPUDevice::SupportsTextureFormat(GPUTexture::Format format) const
 
 bool D3D12GPUDevice::GetHostRefreshRate(float* refresh_rate)
 {
+#if 0
   if (m_swap_chain && IsFullscreen())
   {
     DXGI_SWAP_CHAIN_DESC desc;
@@ -121,6 +122,7 @@ bool D3D12GPUDevice::GetHostRefreshRate(float* refresh_rate)
       return true;
     }
   }
+#endif
 
   return GPUDevice::GetHostRefreshRate(refresh_rate);
 }
@@ -130,6 +132,7 @@ void D3D12GPUDevice::SetVSync(bool enabled)
   m_vsync_enabled = enabled;
 }
 
+#if 0
 bool D3D12GPUDevice::CreateDevice(const WindowInfo& wi, bool vsync)
 {
   ComPtr<IDXGIFactory> temp_dxgi_factory;
@@ -214,6 +217,7 @@ bool D3D12GPUDevice::DoneCurrent()
 {
   return true;
 }
+#endif
 
 bool D3D12GPUDevice::CreateSwapChain(const DXGI_MODE_DESC* fullscreen_mode)
 {
@@ -327,6 +331,8 @@ void D3D12GPUDevice::DestroySwapChainRTVs()
   m_current_swap_chain_buffer = 0;
 }
 
+#if 0
+
 bool D3D12GPUDevice::ChangeWindow(const WindowInfo& new_wi)
 {
   DestroySurface();
@@ -334,6 +340,7 @@ bool D3D12GPUDevice::ChangeWindow(const WindowInfo& new_wi)
   m_window_info = new_wi;
   return CreateSwapChain(nullptr);
 }
+#endif
 
 void D3D12GPUDevice::DestroySurface()
 {
@@ -342,12 +349,15 @@ void D3D12GPUDevice::DestroySurface()
   // For some reason if we don't execute the command list here, the swap chain is in use.. not sure where.
   g_d3d12_context->ExecuteCommandList(true);
 
+#if 0
   if (IsFullscreen())
     SetFullscreen(false, 0, 0, 0.0f);
+#endif
 
   DestroySwapChainRTVs();
   m_swap_chain.Reset();
 }
+#if 0
 
 void D3D12GPUDevice::ResizeWindow(s32 new_window_width, s32 new_window_height)
 {
@@ -441,11 +451,13 @@ bool D3D12GPUDevice::SetFullscreen(bool fullscreen, u32 width, u32 height, float
 
   return true;
 }
-
+#endif
 GPUDevice::AdapterAndModeList D3D12GPUDevice::GetAdapterAndModeList()
 {
   return GetAdapterAndModeList(m_dxgi_factory.Get());
 }
+
+#if 0
 
 bool D3D12GPUDevice::CreateResources()
 {
@@ -550,6 +562,7 @@ void D3D12GPUDevice::DestroyResources()
   m_display_pipeline.Reset();
   m_display_root_signature.Reset();
 }
+#endif
 
 #if 0
 bool D3D12GPUDevice::CreateImGuiContext()
@@ -618,6 +631,8 @@ float D3D12GPUDevice::GetAndResetAccumulatedGPUTime()
 {
   return g_d3d12_context->GetAndResetAccumulatedGPUTime();
 }
+
+#if 0
 
 void D3D12GPUDevice::RenderImGui(ID3D12GraphicsCommandList* cmdlist)
 {
@@ -701,6 +716,8 @@ void D3D12GPUDevice::RenderSoftwareCursor(ID3D12GraphicsCommandList* cmdlist, s3
   cmdlist->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   cmdlist->DrawInstanced(3, 1, 0, 0);
 }
+
+#endif
 
 GPUDevice::AdapterAndModeList D3D12GPUDevice::StaticGetAdapterAndModeList()
 {

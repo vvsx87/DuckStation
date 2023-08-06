@@ -129,14 +129,86 @@ void CommonHost::PumpMessagesOnCPUThread()
 #endif
 }
 
-bool CommonHost::CreateHostDisplayResources()
+bool Host::CreateGPUDevice(RenderAPI api)
 {
+  DebugAssert(!g_host_display);
+
+  Log_InfoPrintf("Trying to create a %s GPU device...", GPUDevice::RenderAPIToString(api));
+  g_host_display = GPUDevice::CreateDeviceForAPI(api);
+
+  // TODO: option to disable shader cache
+  // TODO: FSUI should always use vsync..
+  const bool vsync = System::IsValid() ? System::ShouldUseVSync() : g_settings.video_sync_enabled;
+  if (!g_host_display ||
+      !g_host_display->Create(g_settings.gpu_adapter, EmuFolders::Cache, g_settings.gpu_use_debug_device, vsync))
+  {
+    Log_ErrorPrintf("Failed to initialize GPU device.");
+    if (g_host_display)
+      g_host_display->Destroy();
+    g_host_display.reset();
+    return false;
+  }
+
+  if (!ImGuiManager::Initialize())
+  {
+    Log_ErrorPrintf("Failed to initialize ImGuiManager.");
+    g_host_display->Destroy();
+    g_host_display.reset();
+    return false;
+  }
+
   return true;
 }
 
-void CommonHost::ReleaseHostDisplayResources()
+void Host::UpdateDisplayWindow()
 {
+  if (!g_host_display)
+    return;
+
+  if (!g_host_display->UpdateWindow())
+  {
+    Host::ReportErrorAsync("Error", "Failed to change window after update. The log may contain more information.");
+    return;
+  }
+
+  ImGuiManager::WindowResized();
+
+  // If we're paused, re-present the current frame at the new window size.
+  if (System::IsValid() && System::IsPaused())
+    RenderDisplay(false);
+}
+
+void Host::ResizeDisplayWindow(s32 width, s32 height, float scale)
+{
+  if (!g_host_display)
+    return;
+
+  Log_DevPrintf("Display window resized to %dx%d", width, height);
+
+  g_host_display->ResizeWindow(width, height, scale);
+  ImGuiManager::WindowResized();
+
+  // If we're paused, re-present the current frame at the new window size.
+  if (System::IsValid())
+  {
+    if (System::IsPaused())
+      RenderDisplay(false);
+
+    System::HostDisplayResized();
+  }
+}
+
+void Host::ReleaseGPUDevice()
+{
+  if (!g_host_display)
+    return;
+
   SaveStateSelectorUI::DestroyTextures();
+  ImGuiManager::Shutdown();
+
+  Log_InfoPrintf("Destroying %s GPU device...", GPUDevice::RenderAPIToString(g_host_display->GetRenderAPI()));
+  g_host_display->Destroy();
+  g_host_display.reset();
 }
 
 #ifndef __ANDROID__

@@ -498,6 +498,18 @@ void RequestExit(bool allow_confirm);
 /// Requests shut down of the current virtual machine.
 void RequestSystemShutdown(bool allow_confirm, bool save_state);
 
+/// Attempts to create the rendering device backend.
+bool CreateGPUDevice(RenderAPI api);
+
+/// Handles fullscreen transitions and such.
+void UpdateDisplayWindow();
+
+/// Called when the window is resized.
+void ResizeDisplayWindow(s32 width, s32 height, float scale);
+
+/// Destroys any active rendering device.
+void ReleaseGPUDevice();
+
 /// Returns true if the hosting application is currently fullscreen.
 bool IsFullscreen();
 

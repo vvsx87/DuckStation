@@ -95,9 +95,9 @@ public:
   ALWAYS_INLINE bool isSurfaceless() const { return m_is_surfaceless; }
   ALWAYS_INLINE bool isRunningFullscreenUI() const { return m_run_fullscreen_ui; }
 
-  bool acquireHostDisplay(RenderAPI api);
+  std::optional<WindowInfo> acquireRenderWindow(bool recreate_window);
   void connectDisplaySignals(DisplayWidget* widget);
-  void releaseHostDisplay();
+  void releaseRenderWindow();
   void renderDisplay(bool skip_present);
 
   void startBackgroundControllerPollTimer();
@@ -132,11 +132,11 @@ Q_SIGNALS:
   void systemPaused();
   void systemResumed();
   void gameListRefreshed();
-  bool createDisplayRequested(bool fullscreen, bool render_to_main);
-  bool updateDisplayRequested(bool fullscreen, bool render_to_main, bool surfaceless);
-  void displaySizeRequested(qint32 width, qint32 height);
+  std::optional<WindowInfo> onAcquireRenderWindowRequested(bool recreate_window, bool fullscreen, bool render_to_main,
+                                                           bool surfaceless, bool use_main_window_pos);
+  void onResizeRenderWindowRequested(qint32 width, qint32 height);
+  void onReleaseRenderWindowRequested();
   void focusDisplayWidgetRequested();
-  void destroyDisplayRequested();
   void runningGameChanged(const QString& filename, const QString& game_serial, const QString& game_title);
   void inputProfileLoaded();
   void mouseModeRequested(bool relative, bool hide_cursor);
@@ -180,7 +180,7 @@ public Q_SLOTS:
   void saveScreenshot();
   void redrawDisplayWindow();
   void toggleFullscreen();
-  void setFullscreen(bool fullscreen);
+  void setFullscreen(bool fullscreen, bool allow_render_to_main);
   void setSurfaceless(bool surfaceless);
   void requestDisplaySize(float scale);
   void loadCheatList(const QString& filename);
@@ -194,7 +194,7 @@ private Q_SLOTS:
   void onDisplayWindowMouseMoveEvent(bool relative, float x, float y);
   void onDisplayWindowMouseButtonEvent(int button, bool pressed);
   void onDisplayWindowMouseWheelEvent(const QPoint& delta_angle);
-  void onDisplayWindowResized(int width, int height);
+  void onDisplayWindowResized(int width, int height, float scale);
   void onDisplayWindowKeyEvent(int key, bool pressed);
   void onDisplayWindowTextEntered(const QString& text);
   void doBackgroundControllerPoll();
@@ -210,7 +210,6 @@ private:
   void createBackgroundControllerPollTimer();
   void destroyBackgroundControllerPollTimer();
   void setInitialState(std::optional<bool> override_fullscreen);
-  void updateDisplayState();
 
   QThread* m_ui_thread;
   QSemaphore m_started_semaphore;
@@ -233,7 +232,8 @@ private:
   float m_last_video_fps = std::numeric_limits<float>::infinity();
   u32 m_last_render_width = std::numeric_limits<u32>::max();
   u32 m_last_render_height = std::numeric_limits<u32>::max();
-  GPURenderer m_last_renderer = GPURenderer::Count;
+  RenderAPI m_last_render_api = RenderAPI::None;
+  bool m_last_hardware_renderer = false;
 };
 
 extern EmuThread* g_emu_thread;

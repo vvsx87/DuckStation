@@ -1149,7 +1149,6 @@ void GPU_HW_D3D12::ClearDepthBuffer()
   cmdlist->ClearDepthStencilView(m_vram_depth_texture.GetRTVOrDSVDescriptor(), D3D12_CLEAR_FLAG_DEPTH,
                                  m_pgxp_depth_buffer ? 1.0f : 0.0f, 0, 0, nullptr);
 }
-#endif
 
 std::unique_ptr<GPU> GPU::CreateHardwareD3D12Renderer()
 {
@@ -1165,3 +1164,4 @@ std::unique_ptr<GPU> GPU::CreateHardwareD3D12Renderer()
 
   return gpu;
 }
+#endif

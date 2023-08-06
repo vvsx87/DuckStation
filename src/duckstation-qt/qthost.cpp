@@ -100,7 +100,9 @@ static bool s_start_fullscreen_ui_fullscreen = false;
 EmuThread* g_emu_thread;
 GDBServer* g_gdb_server;
 
-EmuThread::EmuThread(QThread* ui_thread) : QThread(), m_ui_thread(ui_thread) {}
+EmuThread::EmuThread(QThread* ui_thread) : QThread(), m_ui_thread(ui_thread)
+{
+}
 
 EmuThread::~EmuThread() = default;
 
@@ -329,22 +331,29 @@ void EmuThread::setInitialState(std::optional<bool> override_fullscreen)
   m_is_surfaceless = false;
 }
 
+void EmuThread::checkForSettingsChanges(const Settings& old_settings)
+{
+  if (g_main_window)
+  {
+    QMetaObject::invokeMethod(g_main_window, &MainWindow::checkForSettingChanges, Qt::QueuedConnection);
+    updatePerformanceCounters();
+  }
+
+  if (g_host_display)
+  {
+    const bool render_to_main = shouldRenderToMain();
+    if (m_is_rendering_to_main != render_to_main)
+    {
+      m_is_rendering_to_main = render_to_main;
+      g_host_display->UpdateWindow();
+    }
+  }
+}
+
 void Host::CheckForSettingsChanges(const Settings& old_settings)
 {
   CommonHost::CheckForSettingsChanges(old_settings);
   g_emu_thread->checkForSettingsChanges(old_settings);
-}
-
-void EmuThread::checkForSettingsChanges(const Settings& old_settings)
-{
-  const bool render_to_main = shouldRenderToMain();
-  if (m_is_rendering_to_main != render_to_main)
-  {
-    m_is_rendering_to_main = render_to_main;
-    updateDisplayState();
-  }
-
-  QMetaObject::invokeMethod(g_main_window, &MainWindow::checkForSettingChanges, Qt::QueuedConnection);
 }
 
 void EmuThread::setDefaultSettings(bool system /* = true */, bool controller /* = true */)
@@ -392,7 +401,7 @@ void Host::RequestResizeHostDisplay(s32 new_window_width, s32 new_window_height)
   if (g_emu_thread->isFullscreen())
     return;
 
-  emit g_emu_thread->displaySizeRequested(new_window_width, new_window_height);
+  emit g_emu_thread->onResizeRenderWindowRequested(new_window_width, new_window_height);
 }
 
 void EmuThread::applySettings(bool display_osd_messages /* = false */)
@@ -449,7 +458,7 @@ void EmuThread::startFullscreenUI()
   setInitialState(s_start_fullscreen_ui_fullscreen ? std::optional<bool>(true) : std::optional<bool>());
   m_run_fullscreen_ui = true;
 
-  if (!acquireHostDisplay(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer)))
+  if (!Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer)))
   {
     m_run_fullscreen_ui = false;
     return;
@@ -481,7 +490,8 @@ void EmuThread::stopFullscreenUI()
     return;
 
   m_run_fullscreen_ui = false;
-  releaseHostDisplay();
+  Host::ReleaseGPUDevice();
+  Host::ReleaseRenderWindow();
 }
 
 void EmuThread::bootSystem(std::shared_ptr<SystemBootParameters> params)
@@ -605,33 +615,9 @@ void EmuThread::onDisplayWindowMouseWheelEvent(const QPoint& delta_angle)
     InputManager::UpdatePointerRelativeDelta(0, InputPointerAxis::WheelY, dy);
 }
 
-void EmuThread::onDisplayWindowResized(int width, int height)
+void EmuThread::onDisplayWindowResized(int width, int height, float scale)
 {
-  // this can be null if it was destroyed and the main thread is late catching up
-  if (!g_host_display)
-    return;
-
-  Log_DevPrintf("Display window resized to %dx%d", width, height);
-  g_host_display->ResizeWindow(width, height);
-  ImGuiManager::WindowResized();
-  System::HostDisplayResized();
-
-  // re-render the display, since otherwise it will be out of date and stretched if paused
-  if (System::IsValid())
-  {
-    if (m_is_exclusive_fullscreen && !g_host_display->IsFullscreen())
-    {
-      // we lost exclusive fullscreen, switch to borderless
-      Host::AddOSDMessage(Host::TranslateStdString("OSDMessage", "Lost exclusive fullscreen."), 10.0f);
-      m_is_exclusive_fullscreen = false;
-      m_is_fullscreen = false;
-      m_lost_exclusive_fullscreen = true;
-    }
-
-    // force redraw if we're paused
-    if (!System::IsRunning() && !FullscreenUI::HasActiveWindow())
-      renderDisplay(false);
-  }
+  Host::ResizeDisplayWindow(width, height, scale);
 }
 
 void EmuThread::redrawDisplayWindow()
@@ -656,14 +642,15 @@ void EmuThread::toggleFullscreen()
     return;
   }
 
-  setFullscreen(!m_is_fullscreen);
+  setFullscreen(!m_is_fullscreen, true);
 }
 
-void EmuThread::setFullscreen(bool fullscreen)
+void EmuThread::setFullscreen(bool fullscreen, bool allow_render_to_main)
 {
   if (!isOnThread())
   {
-    QMetaObject::invokeMethod(this, "setFullscreen", Qt::QueuedConnection, Q_ARG(bool, fullscreen));
+    QMetaObject::invokeMethod(this, "setFullscreen", Qt::QueuedConnection, Q_ARG(bool, fullscreen),
+                              Q_ARG(bool, allow_render_to_main));
     return;
   }
 
@@ -671,7 +658,8 @@ void EmuThread::setFullscreen(bool fullscreen)
     return;
 
   m_is_fullscreen = fullscreen;
-  updateDisplayState();
+  m_is_rendering_to_main = allow_render_to_main && shouldRenderToMain();
+  Host::UpdateDisplayWindow();
 }
 
 bool Host::IsFullscreen()
@@ -681,7 +669,7 @@ bool Host::IsFullscreen()
 
 void Host::SetFullscreen(bool enabled)
 {
-  g_emu_thread->setFullscreen(enabled);
+  g_emu_thread->setFullscreen(enabled, true);
 }
 
 void EmuThread::setSurfaceless(bool surfaceless)
@@ -696,7 +684,7 @@ void EmuThread::setSurfaceless(bool surfaceless)
     return;
 
   m_is_surfaceless = surfaceless;
-  updateDisplayState();
+  Host::UpdateDisplayWindow();
 }
 
 void EmuThread::requestDisplaySize(float scale)
@@ -713,52 +701,25 @@ void EmuThread::requestDisplaySize(float scale)
   System::RequestDisplaySize(scale);
 }
 
-bool EmuThread::acquireHostDisplay(RenderAPI api)
+std::optional<WindowInfo> EmuThread::acquireRenderWindow(bool recreate_window)
 {
-  if (g_host_display)
-  {
-    if (g_host_display->GetRenderAPI() == api)
-    {
-      // current is fine
-      return true;
-    }
+  DebugAssert(g_host_display);
+  u32 fs_width, fs_height;
+  float fs_refresh_rate;
+  m_is_exclusive_fullscreen = (m_is_fullscreen && g_host_display->SupportsExclusiveFullscreen() &&
+                               GPUDevice::GetRequestedExclusiveFullscreenMode(&fs_width, &fs_height, &fs_refresh_rate));
 
-    // otherwise we need to switch
-    releaseHostDisplay();
-  }
+  const bool window_fullscreen = m_is_fullscreen && !m_is_exclusive_fullscreen;
+  const bool render_to_main = !m_is_exclusive_fullscreen && !window_fullscreen && m_is_rendering_to_main;
+  const bool use_main_window_pos = m_is_exclusive_fullscreen && shouldRenderToMain();
 
-  g_host_display = Host::CreateDisplayForAPI(api);
-  if (!g_host_display)
-    return false;
+  return emit onAcquireRenderWindowRequested(recreate_window, window_fullscreen, render_to_main, m_is_surfaceless,
+                                             use_main_window_pos);
+}
 
-  if (!createDisplayRequested(m_is_fullscreen, m_is_rendering_to_main))
-  {
-    emit destroyDisplayRequested();
-    g_host_display.reset();
-    return false;
-  }
-
-  if (!g_host_display->MakeCurrent() || !g_host_display->SetupDevice() || !ImGuiManager::Initialize() ||
-      !CommonHost::CreateHostDisplayResources())
-  {
-    ImGuiManager::Shutdown();
-    CommonHost::ReleaseHostDisplayResources();
-    g_host_display.reset();
-    emit destroyDisplayRequested();
-    return false;
-  }
-
-  m_is_exclusive_fullscreen = g_host_display->IsFullscreen();
-
-  if (m_run_fullscreen_ui && !FullscreenUI::Initialize())
-  {
-    Log_ErrorPrint("Failed to initialize fullscreen UI");
-    releaseHostDisplay();
-    m_run_fullscreen_ui = false;
-    return false;
-  }
-
-  return true;
+void EmuThread::releaseRenderWindow()
+{
+  emit onReleaseRenderWindowRequested();
 }
 
 void EmuThread::connectDisplaySignals(DisplayWidget* widget)
@@ -772,45 +733,6 @@ void EmuThread::connectDisplaySignals(DisplayWidget* widget)
   connect(widget, &DisplayWidget::windowMouseMoveEvent, this, &EmuThread::onDisplayWindowMouseMoveEvent);
   connect(widget, &DisplayWidget::windowMouseButtonEvent, this, &EmuThread::onDisplayWindowMouseButtonEvent);
   connect(widget, &DisplayWidget::windowMouseWheelEvent, this, &EmuThread::onDisplayWindowMouseWheelEvent);
-}
-
-void EmuThread::updateDisplayState()
-{
-  if (!g_host_display)
-    return;
-
-  // this expects the context to get moved back to us afterwards
-  g_host_display->DoneCurrent();
-
-  updateDisplayRequested(m_is_fullscreen, m_is_rendering_to_main && !m_is_fullscreen, m_is_surfaceless);
-  if (!g_host_display->MakeCurrent())
-    Panic("Failed to make device context current after updating");
-
-  m_is_exclusive_fullscreen = g_host_display->IsFullscreen();
-  ImGuiManager::WindowResized();
-  System::HostDisplayResized();
-
-  if (!System::IsShutdown())
-  {
-    System::UpdateSoftwareCursor();
-
-    if (!FullscreenUI::IsInitialized() || System::IsPaused())
-      redrawDisplayWindow();
-  }
-
-  System::UpdateSpeedLimiterState();
-}
-
-void EmuThread::releaseHostDisplay()
-{
-  if (!g_host_display)
-    return;
-
-  CommonHost::ReleaseHostDisplayResources();
-  ImGuiManager::Shutdown();
-  g_host_display.reset();
-  emit destroyDisplayRequested();
-  m_is_fullscreen = false;
 }
 
 void Host::OnSystemStarting()
@@ -1610,40 +1532,34 @@ void Host::CommitBaseSettingChanges()
     QtHost::QueueSettingsSave();
 }
 
-bool Host::AcquireHostDisplay(RenderAPI api)
+std::optional<WindowInfo> Host::AcquireRenderWindow(bool recreate_window)
 {
-  return g_emu_thread->acquireHostDisplay(api);
+  return g_emu_thread->acquireRenderWindow(recreate_window);
 }
 
-void Host::ReleaseHostDisplay()
+void Host::ReleaseRenderWindow()
 {
-  if (g_emu_thread->isRunningFullscreenUI())
-  {
-    // keep display alive when running fsui
-    return;
-  }
-
-  g_emu_thread->releaseHostDisplay();
+  g_emu_thread->releaseRenderWindow();
 }
 
 void EmuThread::updatePerformanceCounters()
 {
-  GPURenderer renderer = GPURenderer::Count;
+  const RenderAPI render_api = g_host_display ? g_host_display->GetRenderAPI() : RenderAPI::None;
+  const bool hardware_renderer = g_gpu && g_gpu->IsHardwareRenderer();
   u32 render_width = 0;
   u32 render_height = 0;
 
   if (g_gpu)
-  {
-    // TODO: Fix renderer type
-    renderer = g_gpu->IsHardwareRenderer() ? GPURenderer::HardwareOpenGL : GPURenderer::Software;
     std::tie(render_width, render_height) = g_gpu->GetEffectiveDisplayResolution();
-  }
 
-  if (renderer != m_last_renderer)
+  if (render_api != m_last_render_api || hardware_renderer != m_last_hardware_renderer)
   {
+    const QString renderer_str = hardware_renderer ? QString::fromUtf8(GPUDevice::RenderAPIToString(render_api)) :
+                                                     qApp->translate("GPURenderer", "Software");
     QMetaObject::invokeMethod(g_main_window->getStatusRendererWidget(), "setText", Qt::QueuedConnection,
-                              Q_ARG(const QString&, QString::fromUtf8(Settings::GetRendererName(renderer))));
-    m_last_renderer = renderer;
+                              Q_ARG(const QString&, renderer_str));
+    m_last_render_api = render_api;
+    m_last_hardware_renderer = hardware_renderer;
   }
   if (render_width != m_last_render_width || render_height != m_last_render_height)
   {
@@ -1680,7 +1596,8 @@ void EmuThread::resetPerformanceCounters()
   m_last_video_fps = std::numeric_limits<float>::infinity();
   m_last_render_width = std::numeric_limits<u32>::max();
   m_last_render_height = std::numeric_limits<u32>::max();
-  m_last_renderer = GPURenderer::Count;
+  m_last_render_api = RenderAPI::None;
+  m_last_hardware_renderer = false;
 
   QString blank;
   QMetaObject::invokeMethod(g_main_window->getStatusRendererWidget(), "setText", Qt::QueuedConnection,

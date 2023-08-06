@@ -1858,19 +1858,3 @@ void GPU_HW_Vulkan::DownsampleFramebufferAdaptive(Vulkan::Texture& source, u32 l
 
   g_host_display->SetDisplayTexture(&m_display_texture, left, top, width, height);
 }
-
-std::unique_ptr<GPU> GPU::CreateHardwareVulkanRenderer()
-{
-  if (!Host::AcquireHostDisplay(RenderAPI::Vulkan))
-  {
-    Log_ErrorPrintf("Host render API is incompatible");
-    return nullptr;
-  }
-
-  Assert(g_vulkan_shader_cache);
-  std::unique_ptr<GPU_HW_Vulkan> gpu(std::make_unique<GPU_HW_Vulkan>());
-  if (!gpu->Initialize())
-    return nullptr;
-
-  return gpu;
-}

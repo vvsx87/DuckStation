@@ -31,7 +31,7 @@ VulkanGPUDevice::~VulkanGPUDevice()
   g_vulkan_context->WaitForGPUIdle();
 
   DestroyStagingBuffer();
-  DestroyResources();
+  //DestroyResources();
 
   Vulkan::ShaderCache::Destroy();
   m_swap_chain.reset();
@@ -45,6 +45,8 @@ RenderAPI VulkanGPUDevice::GetRenderAPI() const
 {
   return RenderAPI::Vulkan;
 }
+
+#if 0
 
 bool VulkanGPUDevice::ChangeWindow(const WindowInfo& new_wi)
 {
@@ -117,6 +119,8 @@ bool VulkanGPUDevice::SetFullscreen(bool fullscreen, u32 width, u32 height, floa
 {
   return false;
 }
+
+#endif
 
 GPUDevice::AdapterAndModeList VulkanGPUDevice::GetAdapterAndModeList()
 {
@@ -211,6 +215,8 @@ void VulkanGPUDevice::SetVSync(bool enabled)
   m_vsync_enabled = m_swap_chain->IsVSyncEnabled();
 }
 
+#if 0
+
 bool VulkanGPUDevice::CreateDevice(const WindowInfo& wi, bool vsync)
 {
   WindowInfo local_wi(wi);
@@ -250,6 +256,8 @@ bool VulkanGPUDevice::SetupDevice()
 
   return true;
 }
+
+#endif
 
 bool VulkanGPUDevice::HasSurface() const
 {
@@ -384,6 +392,8 @@ bool VulkanGPUDevice::CheckStagingBufferSize(u32 required_size)
   m_readback_staging_buffer_map = static_cast<u8*>(ai.pMappedData);
   return true;
 }
+
+#if 0
 
 bool VulkanGPUDevice::CreateResources()
 {
@@ -556,7 +566,6 @@ void VulkanGPUDevice::DestroyResources()
   Vulkan::Util::SafeDestroySampler(m_linear_sampler);
 }
 
-#if 0
 bool VulkanGPUDevice::CreateImGuiContext()
 {
   const VkRenderPass render_pass =
@@ -581,7 +590,6 @@ bool VulkanGPUDevice::UpdateImGuiFontTexture()
   g_vulkan_context->ExecuteCommandBuffer(true);
   return ImGui_ImplVulkan_CreateFontsTexture();
 }
-#endif
 
 bool VulkanGPUDevice::MakeCurrent()
 {
@@ -593,7 +601,6 @@ bool VulkanGPUDevice::DoneCurrent()
   return true;
 }
 
-#if 0
 bool VulkanGPUDevice::Render(bool skip_present)
 {
   if (skip_present || !m_swap_chain)
@@ -686,6 +693,7 @@ void VulkanGPUDevice::BeginSwapChainRenderPass(VkFramebuffer framebuffer, u32 wi
   vkCmdBeginRenderPass(g_vulkan_context->GetCurrentCommandBuffer(), &rp, VK_SUBPASS_CONTENTS_INLINE);
 }
 
+#if 0
 void VulkanGPUDevice::RenderDisplay()
 {
   const Vulkan::Util::DebugScope debugScope(g_vulkan_context->GetCurrentCommandBuffer(),
@@ -797,6 +805,7 @@ void VulkanGPUDevice::RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 hei
   Vulkan::Util::SetViewportAndClampScissor(cmdbuffer, left, top, width, height);
   vkCmdDraw(cmdbuffer, 3, 1, 0, 0);
 }
+#endif
 
 bool VulkanGPUDevice::SetGPUTimingEnabled(bool enabled)
 {

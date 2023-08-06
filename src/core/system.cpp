@@ -71,7 +71,9 @@ SystemBootParameters::SystemBootParameters(const SystemBootParameters&) = defaul
 
 SystemBootParameters::SystemBootParameters(SystemBootParameters&& other) = default;
 
-SystemBootParameters::SystemBootParameters(std::string filename_) : filename(std::move(filename_)) {}
+SystemBootParameters::SystemBootParameters(std::string filename_) : filename(std::move(filename_))
+{
+}
 
 SystemBootParameters::~SystemBootParameters() = default;
 
@@ -135,6 +137,7 @@ static std::string s_input_profile_name;
 
 static System::State s_state = System::State::Shutdown;
 static std::atomic_bool s_startup_cancelled{false};
+static bool s_keep_gpu_device_on_shutdown = false;
 
 static ConsoleRegion s_region = ConsoleRegion::NTSC_U;
 TickCount System::g_ticks_per_second = System::MASTER_CLOCK;
@@ -802,7 +805,7 @@ bool System::RecreateGPU(GPURenderer renderer, bool force_recreate_display, bool
   // create new renderer
   g_gpu.reset();
   if (force_recreate_display)
-    Host::ReleaseHostDisplay();
+    Host::ReleaseGPUDevice();
 
   if (!CreateGPU(renderer))
   {
@@ -1131,6 +1134,7 @@ bool System::BootSystem(SystemBootParameters parameters)
   Assert(s_state == State::Shutdown);
   s_state = State::Starting;
   s_startup_cancelled.store(false);
+  s_keep_gpu_device_on_shutdown = static_cast<bool>(g_host_display);
   s_region = g_settings.region;
   Host::OnSystemStarting();
 
@@ -1421,7 +1425,11 @@ bool System::Initialize(bool force_software_renderer)
   if (IsStartupCancelled())
   {
     g_gpu.reset();
-    Host::ReleaseHostDisplay();
+    if (!s_keep_gpu_device_on_shutdown)
+    {
+      Host::ReleaseGPUDevice();
+      Host::ReleaseRenderWindow();
+    }
     if (g_settings.gpu_pgxp_enable)
       PGXP::Shutdown();
     CPU::Shutdown();
@@ -1515,11 +1523,15 @@ void System::DestroySystem()
   ClearRunningGame();
 
   // Restore present-all-frames behavior.
-  if (g_host_display)
+  if (s_keep_gpu_device_on_shutdown && g_host_display)
   {
     g_host_display->SetDisplayMaxFPS(0.0f);
     UpdateSoftwareCursor();
-    Host::ReleaseHostDisplay();
+  }
+  else
+  {
+    Host::ReleaseGPUDevice();
+    Host::ReleaseRenderWindow();
   }
 
   s_bios_hash = {};
@@ -1621,40 +1633,25 @@ void System::RecreateSystem()
 
 bool System::CreateGPU(GPURenderer renderer)
 {
-  switch (renderer)
+  const RenderAPI api = Settings::GetRenderAPIForRenderer(renderer);
+
+  if (!g_host_display || g_host_display->GetRenderAPI() != api)
   {
-#ifdef WITH_OPENGL
-    case GPURenderer::HardwareOpenGL:
-      g_gpu = GPU::CreateHardwareOpenGLRenderer();
-      break;
-#endif
+    if (g_host_display)
+    {
+      Log_WarningPrintf("Recreating GPU device, expecting %s got %s", GPUDevice::RenderAPIToString(api),
+                        GPUDevice::RenderAPIToString(g_host_display->GetRenderAPI()));
+    }
 
-#ifdef WITH_VULKAN
-    case GPURenderer::HardwareVulkan:
-      g_gpu = GPU::CreateHardwareVulkanRenderer();
-      break;
-#endif
-
-#ifdef _WIN32
-    case GPURenderer::HardwareD3D11:
-      g_gpu = GPU::CreateHardwareD3D11Renderer();
-      break;
-    case GPURenderer::HardwareD3D12:
-      g_gpu = GPU::CreateHardwareD3D12Renderer();
-      break;
-#endif
-
-#ifdef __APPLE__
-    case GPURenderer::HardwareMetal:
-      g_gpu = GPU::CreateHardwareMetalRenderer();
-      break;
-#endif
-
-    case GPURenderer::Software:
-    default:
-      g_gpu = GPU::CreateSoftwareRenderer();
-      break;
+    Host::ReleaseGPUDevice();
+    if (!Host::CreateGPUDevice(api))
+      return false;
   }
+
+  if (renderer == GPURenderer::Software)
+    g_gpu = GPU::CreateSoftwareRenderer();
+  else
+    g_gpu = GPU::CreateHardwareRenderer();
 
   if (!g_gpu)
   {
@@ -1669,6 +1666,11 @@ bool System::CreateGPU(GPURenderer renderer)
     if (!g_gpu)
     {
       Log_ErrorPrintf("Failed to create fallback software renderer.");
+      if (!s_keep_gpu_device_on_shutdown)
+      {
+        Host::ReleaseGPUDevice();
+        Host::ReleaseRenderWindow();
+      }
       return false;
     }
   }

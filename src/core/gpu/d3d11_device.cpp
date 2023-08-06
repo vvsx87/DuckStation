@@ -3,7 +3,6 @@
 
 #include "d3d11_device.h"
 #include "../host_settings.h"
-#include "../settings.h"
 #include "../shader_cache_version.h"
 
 #include "common/align.h"
@@ -11,6 +10,7 @@
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/path.h"
+#include "common/rectangle.h"
 #include "common/string_util.h"
 
 #include "fmt/format.h"
@@ -46,6 +46,12 @@ static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view
   const std::wstring wname = StringUtil::UTF8StringToWideString(name);
   obj->SetPrivateData(guid, static_cast<UINT>(wname.length()) * 2u, wname.c_str());
 #endif
+}
+
+// TODO: FIXME
+namespace Host {
+extern bool IsFullscreen();
+extern void SetFullscreen(bool enabled);
 }
 
 D3D11StreamBuffer::D3D11StreamBuffer() : m_size(0), m_position(0)
@@ -155,13 +161,8 @@ D3D11Device::D3D11Device() = default;
 
 D3D11Device::~D3D11Device()
 {
-  // TODO: Make virtual Destroy() method instead due to order of shit..
-  DestroyStagingBuffer();
-  DestroyResources();
-  DestroyBuffers();
-  DestroySurface();
-  m_context.Reset();
-  m_device.Reset();
+  // Should all be torn down by now.
+  Assert(!m_device);
 }
 
 RenderAPI D3D11Device::GetRenderAPI() const
@@ -321,7 +322,7 @@ void D3D11Device::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u3
 
 bool D3D11Device::GetHostRefreshRate(float* refresh_rate)
 {
-  if (m_swap_chain && IsFullscreen())
+  if (m_swap_chain && m_is_exclusive_fullscreen)
   {
     DXGI_SWAP_CHAIN_DESC desc;
     if (SUCCEEDED(m_swap_chain->GetDesc(&desc)) && desc.BufferDesc.RefreshRate.Numerator > 0 &&
@@ -343,10 +344,10 @@ void D3D11Device::SetVSync(bool enabled)
   m_vsync_enabled = enabled;
 }
 
-bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
+bool D3D11Device::CreateDevice(const std::string_view& adapter, bool debug_device)
 {
   UINT create_flags = 0;
-  if (g_settings.gpu_use_debug_device)
+  if (debug_device)
     create_flags |= D3D11_CREATE_DEVICE_DEBUG;
 
   ComPtr<IDXGIFactory> temp_dxgi_factory;
@@ -358,18 +359,19 @@ bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
   }
 
   u32 adapter_index;
-  if (!g_settings.gpu_adapter.empty())
+  if (!adapter.empty())
   {
     AdapterAndModeList adapter_info(GetAdapterAndModeList(temp_dxgi_factory.Get()));
     for (adapter_index = 0; adapter_index < static_cast<u32>(adapter_info.adapter_names.size()); adapter_index++)
     {
-      if (g_settings.gpu_adapter == adapter_info.adapter_names[adapter_index])
+      if (adapter == adapter_info.adapter_names[adapter_index])
         break;
     }
     if (adapter_index == static_cast<u32>(adapter_info.adapter_names.size()))
     {
-      Log_WarningPrintf("Could not find adapter '%s', using first (%s)", g_settings.gpu_adapter.c_str(),
-                        adapter_info.adapter_names[0].c_str());
+      // TODO: Log_Fmt
+      Log_WarningPrintf(
+        fmt::format("Could not find adapter '{}', using first ({})", adapter, adapter_info.adapter_names[0]).c_str());
       adapter_index = 0;
     }
   }
@@ -408,7 +410,7 @@ bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
     return false;
   }
 
-  if (g_settings.gpu_use_debug_device && IsDebuggerPresent())
+  if (debug_device && IsDebuggerPresent())
   {
     ComPtr<ID3D11InfoQueue> info;
     hr = m_device.As(&info);
@@ -420,7 +422,7 @@ bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
   }
 
 #ifdef _DEBUG
-  if (g_settings.gpu_use_debug_device)
+  if (debug_device)
     m_context.As(&m_annotation);
 #endif
 
@@ -452,27 +454,21 @@ bool D3D11Device::CreateDevice(const WindowInfo& wi, bool vsync)
 
   SetFeatures();
 
-  m_window_info = wi;
-  m_vsync_enabled = vsync;
-
-  if (m_window_info.type != WindowInfo::Type::Surfaceless && !CreateSwapChain(nullptr))
-  {
-    m_window_info = {};
+  if (m_window_info.type != WindowInfo::Type::Surfaceless && !CreateSwapChain())
     return false;
-  }
+
+  if (!CreateBuffers())
+    return false;
 
   return true;
 }
 
-bool D3D11Device::SetupDevice()
+void D3D11Device::DestroyDevice()
 {
-  if (!GPUDevice::SetupDevice())
-    return false;
-
-  if (!CreateBuffers() || !CreateResources())
-    return false;
-
-  return true;
+  DestroyStagingBuffer();
+  DestroyBuffers();
+  m_context.Reset();
+  m_device.Reset();
 }
 
 void D3D11Device::SetFeatures()
@@ -512,58 +508,160 @@ void D3D11Device::SetFeatures()
   }
 }
 
-bool D3D11Device::MakeCurrent()
+bool D3D11Device::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, const RECT& window_rect, u32 width,
+                                                          u32 height, float refresh_rate, DXGI_FORMAT format,
+                                                          DXGI_MODE_DESC* fullscreen_mode, IDXGIOutput** output)
 {
-  return true;
-}
+  // We need to find which monitor the window is located on.
+  const Common::Rectangle<s32> client_rc_vec(window_rect.left, window_rect.top, window_rect.right, window_rect.bottom);
 
-bool D3D11Device::DoneCurrent()
-{
-  return true;
-}
-
-bool D3D11Device::CreateSwapChain(const DXGI_MODE_DESC* fullscreen_mode)
-{
+  // The window might be on a different adapter to which we are rendering.. so we have to enumerate them all.
   HRESULT hr;
+  ComPtr<IDXGIOutput> first_output, intersecting_output;
+
+  for (u32 adapter_index = 0; !intersecting_output; adapter_index++)
+  {
+    ComPtr<IDXGIAdapter1> adapter;
+    hr = factory->EnumAdapters1(adapter_index, adapter.GetAddressOf());
+    if (hr == DXGI_ERROR_NOT_FOUND)
+      break;
+    else if (FAILED(hr))
+      continue;
+
+    for (u32 output_index = 0;; output_index++)
+    {
+      ComPtr<IDXGIOutput> this_output;
+      DXGI_OUTPUT_DESC output_desc;
+      hr = adapter->EnumOutputs(output_index, this_output.GetAddressOf());
+      if (hr == DXGI_ERROR_NOT_FOUND)
+        break;
+      else if (FAILED(hr) || FAILED(this_output->GetDesc(&output_desc)))
+        continue;
+
+      const Common::Rectangle<s32> output_rc(output_desc.DesktopCoordinates.left, output_desc.DesktopCoordinates.top,
+                                             output_desc.DesktopCoordinates.right,
+                                             output_desc.DesktopCoordinates.bottom);
+      if (!client_rc_vec.Intersects(output_rc))
+      {
+        intersecting_output = std::move(this_output);
+        break;
+      }
+
+      // Fallback to the first monitor.
+      if (!first_output)
+        first_output = std::move(this_output);
+    }
+  }
+
+  if (!intersecting_output)
+  {
+    if (!first_output)
+    {
+      Log_ErrorPrintf("No DXGI output found. Can't use exclusive fullscreen.");
+      return false;
+    }
+
+    Log_WarningPrint("No DXGI output found for window, using first.");
+    intersecting_output = std::move(first_output);
+  }
+
+  DXGI_MODE_DESC request_mode = {};
+  request_mode.Width = width;
+  request_mode.Height = height;
+  request_mode.Format = format;
+  request_mode.RefreshRate.Numerator = static_cast<UINT>(std::floor(refresh_rate * 1000.0f));
+  request_mode.RefreshRate.Denominator = 1000u;
+
+  if (FAILED(hr = intersecting_output->FindClosestMatchingMode(&request_mode, fullscreen_mode, nullptr)) ||
+      request_mode.Format != format)
+  {
+    Log_ErrorPrintf("Failed to find closest matching mode, hr=%08X", hr);
+    return false;
+  }
+
+  *output = intersecting_output.Get();
+  intersecting_output->AddRef();
+  return true;
+}
+
+bool D3D11Device::CreateSwapChain()
+{
+  constexpr DXGI_FORMAT swap_chain_format = DXGI_FORMAT_R8G8B8A8_UNORM;
 
   if (m_window_info.type != WindowInfo::Type::Win32)
     return false;
 
-  m_using_flip_model_swap_chain = fullscreen_mode || !Host::GetBoolSettingValue("Display", "UseBlitSwapChain", false);
-
   const HWND window_hwnd = reinterpret_cast<HWND>(m_window_info.window_handle);
   RECT client_rc{};
   GetClientRect(window_hwnd, &client_rc);
-  const u32 width = static_cast<u32>(client_rc.right - client_rc.left);
-  const u32 height = static_cast<u32>(client_rc.bottom - client_rc.top);
 
-  DXGI_SWAP_CHAIN_DESC swap_chain_desc = {};
-  swap_chain_desc.BufferDesc.Width = width;
-  swap_chain_desc.BufferDesc.Height = height;
-  swap_chain_desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  DXGI_MODE_DESC fullscreen_mode = {};
+  ComPtr<IDXGIOutput> fullscreen_output;
+  if (Host::IsFullscreen())
+  {
+    u32 fullscreen_width, fullscreen_height;
+    float fullscreen_refresh_rate;
+    m_is_exclusive_fullscreen =
+      GetRequestedExclusiveFullscreenMode(&fullscreen_width, &fullscreen_height, &fullscreen_refresh_rate) &&
+      GetRequestedExclusiveFullscreenModeDesc(m_dxgi_factory.Get(), client_rc, fullscreen_width, fullscreen_height,
+                                              fullscreen_refresh_rate, swap_chain_format, &fullscreen_mode,
+                                              fullscreen_output.GetAddressOf());
+  }
+  else
+  {
+    m_is_exclusive_fullscreen = false;
+  }
+
+  m_using_flip_model_swap_chain =
+    !Host::GetBoolSettingValue("Display", "UseBlitSwapChain", false) || m_is_exclusive_fullscreen;
+
+  DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};
+  swap_chain_desc.Width = static_cast<u32>(client_rc.right - client_rc.left);
+  swap_chain_desc.Height = static_cast<u32>(client_rc.bottom - client_rc.top);
+  swap_chain_desc.Format = swap_chain_format;
   swap_chain_desc.SampleDesc.Count = 1;
-  swap_chain_desc.BufferCount = 2;
+  swap_chain_desc.BufferCount = 3;
   swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-  swap_chain_desc.OutputWindow = window_hwnd;
-  swap_chain_desc.Windowed = TRUE;
   swap_chain_desc.SwapEffect = m_using_flip_model_swap_chain ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_DISCARD;
 
-  m_using_allow_tearing = (m_allow_tearing_supported && m_using_flip_model_swap_chain && !fullscreen_mode);
+  m_using_allow_tearing = (m_allow_tearing_supported && m_using_flip_model_swap_chain && !m_is_exclusive_fullscreen);
   if (m_using_allow_tearing)
     swap_chain_desc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
-  if (fullscreen_mode)
+  HRESULT hr = S_OK;
+
+  if (m_is_exclusive_fullscreen)
   {
-    swap_chain_desc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-    swap_chain_desc.Windowed = FALSE;
-    swap_chain_desc.BufferDesc = *fullscreen_mode;
+    DXGI_SWAP_CHAIN_DESC1 fs_sd_desc = swap_chain_desc;
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fs_desc = {};
+
+    fs_sd_desc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    fs_sd_desc.Width = fullscreen_mode.Width;
+    fs_sd_desc.Height = fullscreen_mode.Height;
+    fs_desc.RefreshRate = fullscreen_mode.RefreshRate;
+    fs_desc.ScanlineOrdering = fullscreen_mode.ScanlineOrdering;
+    fs_desc.Scaling = fullscreen_mode.Scaling;
+    fs_desc.Windowed = FALSE;
+
+    Log_VerbosePrintf("Creating a %dx%d exclusive fullscreen swap chain", fs_sd_desc.Width, fs_sd_desc.Height);
+    hr = m_dxgi_factory->CreateSwapChainForHwnd(m_device.Get(), window_hwnd, &fs_sd_desc, &fs_desc,
+                                                fullscreen_output.Get(), m_swap_chain.ReleaseAndGetAddressOf());
+    if (FAILED(hr))
+    {
+      Log_WarningPrintf("Failed to create fullscreen swap chain, trying windowed.");
+      m_is_exclusive_fullscreen = false;
+      m_using_allow_tearing = m_allow_tearing_supported && m_using_flip_model_swap_chain;
+    }
   }
 
-  Log_InfoPrintf("Creating a %dx%d %s %s swap chain", swap_chain_desc.BufferDesc.Width,
-                 swap_chain_desc.BufferDesc.Height, m_using_flip_model_swap_chain ? "flip-discard" : "discard",
-                 swap_chain_desc.Windowed ? "windowed" : "full-screen");
+  if (!m_is_exclusive_fullscreen)
+  {
+    Log_VerbosePrintf("Creating a %dx%d %s windowed swap chain", swap_chain_desc.Width, swap_chain_desc.Height,
+                      m_using_flip_model_swap_chain ? "flip-discard" : "discard");
+    hr = m_dxgi_factory->CreateSwapChainForHwnd(m_device.Get(), window_hwnd, &swap_chain_desc, nullptr, nullptr,
+                                                m_swap_chain.ReleaseAndGetAddressOf());
+  }
 
-  hr = m_dxgi_factory->CreateSwapChain(m_device.Get(), &swap_chain_desc, m_swap_chain.GetAddressOf());
   if (FAILED(hr) && m_using_flip_model_swap_chain)
   {
     Log_WarningPrintf("Failed to create a flip-discard swap chain, trying discard.");
@@ -572,24 +670,29 @@ bool D3D11Device::CreateSwapChain(const DXGI_MODE_DESC* fullscreen_mode)
     m_using_flip_model_swap_chain = false;
     m_using_allow_tearing = false;
 
-    hr = m_dxgi_factory->CreateSwapChain(m_device.Get(), &swap_chain_desc, m_swap_chain.GetAddressOf());
+    hr = m_dxgi_factory->CreateSwapChainForHwnd(m_device.Get(), window_hwnd, &swap_chain_desc, nullptr, nullptr,
+                                                m_swap_chain.ReleaseAndGetAddressOf());
     if (FAILED(hr))
     {
-      Log_ErrorPrintf("CreateSwapChain failed: 0x%08X", hr);
+      Log_ErrorPrintf("CreateSwapChainForHwnd failed: 0x%08X", hr);
       return false;
     }
   }
 
-  ComPtr<IDXGIFactory> dxgi_factory;
-  hr = m_swap_chain->GetParent(IID_PPV_ARGS(dxgi_factory.GetAddressOf()));
-  if (SUCCEEDED(hr))
+  hr = m_dxgi_factory->MakeWindowAssociation(window_hwnd, DXGI_MWA_NO_WINDOW_CHANGES);
+  if (FAILED(hr))
+    Log_WarningPrintf("MakeWindowAssociation() to disable ALT+ENTER failed");
+
+  if (!CreateSwapChainRTV())
   {
-    hr = dxgi_factory->MakeWindowAssociation(swap_chain_desc.OutputWindow, DXGI_MWA_NO_WINDOW_CHANGES);
-    if (FAILED(hr))
-      Log_WarningPrintf("MakeWindowAssociation() to disable ALT+ENTER failed");
+    DestroySwapChain();
+    return false;
   }
 
-  return CreateSwapChainRTV();
+  // Render a frame as soon as possible to clear out whatever was previously being displayed.
+  m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), s_clear_color.data());
+  m_swap_chain->Present(0, m_using_allow_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0);
+  return true;
 }
 
 bool D3D11Device::CreateSwapChainRTV()
@@ -607,16 +710,17 @@ bool D3D11Device::CreateSwapChainRTV()
 
   CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(D3D11_RTV_DIMENSION_TEXTURE2D, backbuffer_desc.Format, 0, 0,
                                           backbuffer_desc.ArraySize);
-  hr = m_device->CreateRenderTargetView(backbuffer.Get(), &rtv_desc, m_swap_chain_rtv.GetAddressOf());
+  hr = m_device->CreateRenderTargetView(backbuffer.Get(), &rtv_desc, m_swap_chain_rtv.ReleaseAndGetAddressOf());
   if (FAILED(hr))
   {
     Log_ErrorPrintf("CreateRenderTargetView for swap chain failed: 0x%08X", hr);
+    m_swap_chain_rtv.Reset();
     return false;
   }
 
   m_window_info.surface_width = backbuffer_desc.Width;
   m_window_info.surface_height = backbuffer_desc.Height;
-  Log_InfoPrintf("Swap chain buffer size: %ux%u", m_window_info.surface_width, m_window_info.surface_height);
+  Log_VerbosePrintf("Swap chain buffer size: %ux%u", m_window_info.surface_width, m_window_info.surface_height);
 
   if (m_window_info.type == WindowInfo::Type::Win32)
   {
@@ -637,22 +741,41 @@ bool D3D11Device::CreateSwapChainRTV()
   return true;
 }
 
-bool D3D11Device::ChangeWindow(const WindowInfo& new_wi)
+void D3D11Device::DestroySwapChain()
 {
-  DestroySurface();
+  if (!m_swap_chain)
+    return;
 
-  m_window_info = new_wi;
-  return CreateSwapChain(nullptr);
+  m_swap_chain_rtv.Reset();
+
+  // switch out of fullscreen before destroying
+  BOOL is_fullscreen;
+  if (SUCCEEDED(m_swap_chain->GetFullscreenState(&is_fullscreen, nullptr)) && is_fullscreen)
+    m_swap_chain->SetFullscreenState(FALSE, nullptr);
+
+  m_swap_chain.Reset();
+  m_is_exclusive_fullscreen = false;
+}
+
+bool D3D11Device::UpdateWindow()
+{
+  DestroySwapChain();
+
+  if (!AcquireWindow(false))
+    return false;
+
+  if (m_window_info.type != WindowInfo::Type::Surfaceless && !CreateSwapChain())
+  {
+    Log_ErrorPrintf("Failed to create swap chain on updated window");
+    return false;
+  }
+
+  return true;
 }
 
 void D3D11Device::DestroySurface()
 {
-  m_window_info.SetSurfaceless();
-  if (IsFullscreen())
-    SetFullscreen(false, 0, 0, 0.0f);
-
-  m_swap_chain_rtv.Reset();
-  m_swap_chain.Reset();
+  DestroySwapChain();
 }
 
 std::string D3D11Device::GetShaderCacheBaseName(const std::string_view& type, bool debug) const
@@ -670,10 +793,18 @@ std::string D3D11Device::GetShaderCacheBaseName(const std::string_view& type, bo
   return fmt::format("d3d_{}_{}{}", type, flname, debug ? "_debug" : "");
 }
 
-void D3D11Device::ResizeWindow(s32 new_window_width, s32 new_window_height)
+void D3D11Device::ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale)
 {
-  if (!m_swap_chain)
+  if (!m_swap_chain || m_is_exclusive_fullscreen)
     return;
+
+  m_window_info.surface_scale = new_window_scale;
+
+  if (m_window_info.surface_width == static_cast<u32>(new_window_width) &&
+      m_window_info.surface_height == static_cast<u32>(new_window_height))
+  {
+    return;
+  }
 
   m_swap_chain_rtv.Reset();
 
@@ -686,76 +817,8 @@ void D3D11Device::ResizeWindow(s32 new_window_width, s32 new_window_height)
     Panic("Failed to recreate swap chain RTV after resize");
 }
 
-bool D3D11Device::SupportsFullscreen() const
+bool D3D11Device::SupportsExclusiveFullscreen() const
 {
-  return true;
-}
-
-bool D3D11Device::IsFullscreen()
-{
-  BOOL is_fullscreen = FALSE;
-  return (m_swap_chain && SUCCEEDED(m_swap_chain->GetFullscreenState(&is_fullscreen, nullptr)) && is_fullscreen);
-}
-
-bool D3D11Device::SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate)
-{
-  if (!m_swap_chain)
-    return false;
-
-  BOOL is_fullscreen = FALSE;
-  HRESULT hr = m_swap_chain->GetFullscreenState(&is_fullscreen, nullptr);
-  if (!fullscreen)
-  {
-    // leaving fullscreen
-    if (is_fullscreen)
-      return SUCCEEDED(m_swap_chain->SetFullscreenState(FALSE, nullptr));
-    else
-      return true;
-  }
-
-  IDXGIOutput* output;
-  if (FAILED(hr = m_swap_chain->GetContainingOutput(&output)))
-    return false;
-
-  DXGI_SWAP_CHAIN_DESC current_desc;
-  hr = m_swap_chain->GetDesc(&current_desc);
-  if (FAILED(hr))
-    return false;
-
-  DXGI_MODE_DESC new_mode = current_desc.BufferDesc;
-  new_mode.Width = width;
-  new_mode.Height = height;
-  new_mode.RefreshRate.Numerator = static_cast<UINT>(std::floor(refresh_rate * 1000.0f));
-  new_mode.RefreshRate.Denominator = 1000u;
-
-  DXGI_MODE_DESC closest_mode;
-  if (FAILED(hr = output->FindClosestMatchingMode(&new_mode, &closest_mode, nullptr)) ||
-      new_mode.Format != current_desc.BufferDesc.Format)
-  {
-    Log_ErrorPrintf("Failed to find closest matching mode, hr=%08X", hr);
-    return false;
-  }
-
-  if (new_mode.Width == current_desc.BufferDesc.Width && new_mode.Height == current_desc.BufferDesc.Height &&
-      new_mode.RefreshRate.Numerator == current_desc.BufferDesc.RefreshRate.Numerator &&
-      new_mode.RefreshRate.Denominator == current_desc.BufferDesc.RefreshRate.Denominator)
-  {
-    Log_InfoPrintf("Fullscreen mode already set");
-    return true;
-  }
-
-  m_swap_chain_rtv.Reset();
-  m_swap_chain.Reset();
-
-  if (!CreateSwapChain(&closest_mode))
-  {
-    Log_ErrorPrintf("Failed to create a fullscreen swap chain");
-    if (!CreateSwapChain(nullptr))
-      Panic("Failed to recreate windowed swap chain");
-
-    return false;
-  }
-
   return true;
 }
 
@@ -784,6 +847,16 @@ bool D3D11Device::BeginPresent(bool skip_present)
   if (skip_present || !m_swap_chain)
     return false;
 
+  // Check if we lost exclusive fullscreen. If so, notify the host, so it can switch to windowed mode.
+  // This might get called repeatedly if it takes a while to switch back, that's the host's problem.
+  BOOL is_fullscreen;
+  if (m_is_exclusive_fullscreen &&
+      (FAILED(m_swap_chain->GetFullscreenState(&is_fullscreen, nullptr)) || !is_fullscreen))
+  {
+    Host::SetFullscreen(false);
+    return false;
+  }
+
   // When using vsync, the time here seems to include the time for the buffer to become available.
   // This blows our our GPU usage number considerably, so read the timestamp before the final blit
   // in this configuration. It does reduce accuracy a little, but better than seeing 100% all of
@@ -791,7 +864,7 @@ bool D3D11Device::BeginPresent(bool skip_present)
   if (m_vsync_enabled && m_gpu_timing_enabled)
     PopTimestampQuery();
 
-  static constexpr float clear_color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+  static constexpr float clear_color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), clear_color);
   m_context->OMSetRenderTargets(1, m_swap_chain_rtv.GetAddressOf(), nullptr);
   m_current_framebuffer = nullptr;
@@ -1367,7 +1440,7 @@ std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromSource(GPUShaderStage st
     Log_ErrorPrintf("Failed to compile '%s':\n%s", target, error_string.c_str());
 
     auto fp = FileSystem::OpenManagedCFile(
-      Path::Combine(EmuFolders::DataRoot, fmt::format("bad_shader_{}.txt", s_next_bad_shader_id++)).c_str(), "wb");
+      GetShaderDumpPath(fmt::format("bad_shader_{}.txt", s_next_bad_shader_id++)).c_str(), "wb");
     if (fp)
     {
       std::fwrite(source.data(), source.size(), 1, fp.get());
@@ -1734,7 +1807,7 @@ bool D3D11Texture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32
                        u32 level /*= 0*/)
 {
   if (!m_dynamic || (x + width) > GetMipWidth(level) || (y + height) > GetMipHeight(level) || layer > m_layers ||
-    level > m_levels)
+      level > m_levels)
   {
     return false;
   }

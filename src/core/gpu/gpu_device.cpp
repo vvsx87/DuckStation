@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "gpu_device.h"
+#include "../host_settings.h"
 #include "../settings.h"
 #include "../shadergen.h"
+#include "../system.h"
 #include "postprocessing_chain.h"
 
 #include "common/align.h"
@@ -210,21 +212,95 @@ RenderAPI GPUDevice::GetPreferredAPI()
 #endif
 }
 
-bool GPUDevice::SetupDevice()
+const char* GPUDevice::RenderAPIToString(RenderAPI api)
 {
-  // TODO: option to disable shader cache
-  if (true)
+  // TODO: Combine ES
+  switch (api)
   {
-    const std::string basename = GetShaderCacheBaseName("shaders", g_settings.gpu_use_debug_device);
-    const std::string filename = Path::Combine(EmuFolders::Cache, basename);
-    if (!m_shader_cache.Open(filename.c_str()))
-      Log_WarningPrintf("Failed to open shader cache.");
+    // clang-format off
+#define CASE(x) case RenderAPI::x: return #x
+    CASE(None);
+    CASE(D3D11);
+    CASE(D3D12);
+    CASE(Metal);
+    CASE(Vulkan);
+    CASE(OpenGL);
+    CASE(OpenGLES);
+#undef CASE
+      // clang-format on
+    default:
+      return "Unknown";
   }
-  else
+}
+
+bool GPUDevice::Create(const std::string_view& adapter, const std::string_view& shader_cache_path, bool debug_device,
+                       bool vsync)
+{
+  m_vsync_enabled = vsync;
+
+  if (!AcquireWindow(true))
   {
-    Log_WarningPrintf("Shader cache is disabled.");
+    Log_ErrorPrintf("Failed to acquire window from host.");
+    return false;
   }
 
+  if (!CreateDevice(adapter, debug_device))
+  {
+    Log_ErrorPrintf("Failed to create device.");
+    return false;
+  }
+
+  if (!shader_cache_path.empty())
+    OpenShaderCache(shader_cache_path, debug_device);
+  else
+    Log_WarningPrintf("Shader cache is disabled.");
+
+  if (!CreateResources())
+  {
+    Log_ErrorPrintf("Failed to create base resources.");
+    return false;
+  }
+
+  return true;
+}
+
+void GPUDevice::Destroy()
+{
+  if (HasSurface())
+    DestroySurface();
+  DestroyResources();
+  DestroyDevice();
+}
+
+bool GPUDevice::UpdateWindow()
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return false;
+}
+
+bool GPUDevice::SupportsExclusiveFullscreen() const
+{
+  return false;
+}
+
+void GPUDevice::OpenShaderCache(const std::string_view& base_path, bool debug)
+{
+  // TODO: option to disable shader cache
+  const std::string basename = GetShaderCacheBaseName("shaders", debug);
+  const std::string filename = Path::Combine(base_path, basename);
+  if (!m_shader_cache.Open(filename.c_str()))
+    Log_WarningPrintf("Failed to open shader cache.");
+}
+
+bool GPUDevice::AcquireWindow(bool recreate_window)
+{
+  std::optional<WindowInfo> wi = Host::AcquireRenderWindow(recreate_window);
+  if (!wi.has_value())
+    return false;
+
+  Log_InfoPrintf("Render window is %ux%u.", wi->surface_width, wi->surface_height);
+  m_window_info = wi.value();
   return true;
 }
 
@@ -346,6 +422,12 @@ std::string GPUDevice::GetShaderCacheBaseName(const std::string_view& type, bool
 {
   Panic("Not implemented");
   return {};
+}
+
+void GPUDevice::ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
 }
 
 void GPUDevice::RenderImGui()
@@ -566,6 +648,19 @@ void GPUDevice::InvalidateRenderTarget(GPUTexture* t)
   t->SetState(GPUTexture::State::Invalidated);
 }
 
+bool GPUDevice::CreateDevice(const std::string_view& adapter, bool debug_device)
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+  return false;
+}
+
+void GPUDevice::DestroyDevice()
+{
+  // TODO: REMOVE ME
+  UnreachableCode();
+}
+
 std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data)
 {
   // TODO: REMOVE ME
@@ -658,14 +753,16 @@ std::unique_ptr<GPUShader> GPUDevice::CreateShader(GPUShaderStage stage, const s
   return shader;
 }
 
-bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u32* height, float* refresh_rate)
+bool GPUDevice::GetRequestedExclusiveFullscreenMode(u32* width, u32* height, float* refresh_rate)
 {
+  const std::string mode = Host::GetBaseStringSettingValue("GPU", "FullscreenMode", "");
   if (!mode.empty())
   {
+    const std::string_view mode_view = mode;
     std::string_view::size_type sep1 = mode.find('x');
     if (sep1 != std::string_view::npos)
     {
-      std::optional<u32> owidth = StringUtil::FromChars<u32>(mode.substr(0, sep1));
+      std::optional<u32> owidth = StringUtil::FromChars<u32>(mode_view.substr(0, sep1));
       sep1++;
 
       while (sep1 < mode.length() && std::isspace(mode[sep1]))
@@ -676,7 +773,7 @@ bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u3
         std::string_view::size_type sep2 = mode.find('@', sep1);
         if (sep2 != std::string_view::npos)
         {
-          std::optional<u32> oheight = StringUtil::FromChars<u32>(mode.substr(sep1, sep2 - sep1));
+          std::optional<u32> oheight = StringUtil::FromChars<u32>(mode_view.substr(sep1, sep2 - sep1));
           sep2++;
 
           while (sep2 < mode.length() && std::isspace(mode[sep2]))
@@ -684,7 +781,7 @@ bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u3
 
           if (oheight.has_value() && sep2 < mode.length())
           {
-            std::optional<float> orefresh_rate = StringUtil::FromChars<float>(mode.substr(sep2));
+            std::optional<float> orefresh_rate = StringUtil::FromChars<float>(mode_view.substr(sep2));
             if (orefresh_rate.has_value())
             {
               *width = owidth.value();
@@ -707,6 +804,11 @@ bool GPUDevice::ParseFullscreenMode(const std::string_view& mode, u32* width, u3
 std::string GPUDevice::GetFullscreenModeString(u32 width, u32 height, float refresh_rate)
 {
   return StringUtil::StdStringFromFormat("%u x %u @ %f hz", width, height, refresh_rate);
+}
+
+std::string GPUDevice::GetShaderDumpPath(const std::string_view& name)
+{
+  return Path::Combine(EmuFolders::Dumps, name);
 }
 
 bool GPUDevice::UpdateImGuiFontTexture()
@@ -1529,7 +1631,7 @@ bool GPUDevice::WriteScreenshotToFile(std::string filename, bool internal_resolu
   return true;
 }
 
-std::unique_ptr<GPUDevice> Host::CreateDisplayForAPI(RenderAPI api)
+std::unique_ptr<GPUDevice> GPUDevice::CreateDeviceForAPI(RenderAPI api)
 {
   switch (api)
   {
@@ -1558,18 +1660,6 @@ std::unique_ptr<GPUDevice> Host::CreateDisplayForAPI(RenderAPI api)
 #endif
 
     default:
-#if defined(_WIN32) && defined(_M_ARM64)
-      return std::make_unique<D3D12GPUDevice>();
-#elif defined(_WIN32)
-      return std::make_unique<D3D11Device>();
-#elif defined(__APPLE__)
-      return WrapNewMetalDevice();
-#elif defined(WITH_OPENGL)
-      return std::make_unique<OpenGLDevice>();
-#elif defined(WITH_VULKAN)
-      return std::make_unique<VulkanGPUDevice>();
-#else
       return {};
-#endif
   }
 }

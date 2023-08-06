@@ -159,29 +159,7 @@ public:
   float ComputeVerticalFrequency() const;
   float GetDisplayAspectRatio() const;
 
-#ifdef _WIN32
-  // gpu_hw_d3d11.cpp
-  static std::unique_ptr<GPU> CreateHardwareD3D11Renderer();
-
-  // gpu_hw_d3d12.cpp
-  static std::unique_ptr<GPU> CreateHardwareD3D12Renderer();
-#endif
-
-#ifdef __APPLE__
-  static std::unique_ptr<GPU> CreateHardwareMetalRenderer();
-#endif
-
-#ifdef WITH_OPENGL
-  // gpu_hw_opengl.cpp
-  static std::unique_ptr<GPU> CreateHardwareOpenGLRenderer();
-#endif
-
-#ifdef WITH_VULKAN
-  // gpu_hw_vulkan.cpp
-  static std::unique_ptr<GPU> CreateHardwareVulkanRenderer();
-#endif
-
-  // gpu_sw.cpp
+  static std::unique_ptr<GPU> CreateHardwareRenderer();
   static std::unique_ptr<GPU> CreateSoftwareRenderer();
 
   // Converts window coordinates into horizontal ticks and scanlines. Returns false if out of range. Used for lightguns.

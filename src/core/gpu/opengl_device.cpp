@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "opengl_device.h"
-#include "../settings.h"
 #include "opengl_pipeline.h"
 #include "opengl_stream_buffer.h"
 #include "opengl_texture.h"
@@ -12,6 +11,8 @@
 #include "common/assert.h"
 #include "common/log.h"
 #include "common/string_util.h"
+
+#include "fmt/format.h"
 
 #include <array>
 #include <tuple>
@@ -28,15 +29,7 @@ OpenGLDevice::OpenGLDevice()
 
 OpenGLDevice::~OpenGLDevice()
 {
-  // TODO: Destroy() function
-  if (!m_gl_context)
-    return;
-
-  DestroyResources();
-  DestroyBuffers();
-
-  m_gl_context->DoneCurrent();
-  m_gl_context.reset();
+  Assert(!m_gl_context);
 }
 
 void OpenGLDevice::BindUpdateTextureUnit()
@@ -201,7 +194,7 @@ void OpenGLDevice::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u
 void OpenGLDevice::PushDebugGroup(const char* fmt, ...)
 {
 #ifdef _DEBUG
-  if (!glPushDebugGroup || !g_settings.gpu_use_debug_device)
+  if (!glPushDebugGroup)
     return;
 
   std::va_list ap;
@@ -216,7 +209,7 @@ void OpenGLDevice::PushDebugGroup(const char* fmt, ...)
 void OpenGLDevice::PopDebugGroup()
 {
 #ifdef _DEBUG
-  if (!glPopDebugGroup || !g_settings.gpu_use_debug_device)
+  if (!glPopDebugGroup)
     return;
 
   glPopDebugGroup();
@@ -226,7 +219,7 @@ void OpenGLDevice::PopDebugGroup()
 void OpenGLDevice::InsertDebugMessage(const char* fmt, ...)
 {
 #ifdef _DEBUG
-  if (!glDebugMessageInsert || !g_settings.gpu_use_debug_device)
+  if (!glDebugMessageInsert)
     return;
 
   std::va_list ap;
@@ -275,9 +268,9 @@ bool OpenGLDevice::HasSurface() const
   return m_window_info.type != WindowInfo::Type::Surfaceless;
 }
 
-bool OpenGLDevice::CreateDevice(const WindowInfo& wi, bool vsync)
+bool OpenGLDevice::CreateDevice(const std::string_view& adapter, bool debug_device)
 {
-  m_gl_context = GL::Context::Create(wi);
+  m_gl_context = GL::Context::Create(m_window_info);
   if (!m_gl_context)
   {
     Log_ErrorPrintf("Failed to create any GL context");
@@ -285,18 +278,26 @@ bool OpenGLDevice::CreateDevice(const WindowInfo& wi, bool vsync)
     return false;
   }
 
+  // Is this needed?
   m_window_info = m_gl_context->GetWindowInfo();
-  m_vsync_enabled = vsync;
-  return true;
-}
 
-bool OpenGLDevice::SetupDevice()
-{
-  if (!GPUDevice::SetupDevice())
-    return false;
+#if 0
+  // TODO: add these checks
+  const bool opengl_is_available = ((g_host_display->GetRenderAPI() == RenderAPI::OpenGL &&
+    (GLAD_GL_VERSION_3_0 || GLAD_GL_ARB_uniform_buffer_object)) ||
+    (g_host_display->GetRenderAPI() == RenderAPI::OpenGLES && GLAD_GL_ES_VERSION_3_1));
+  if (!opengl_is_available)
+  {
+    Host::AddOSDMessage(Host::TranslateStdString("OSDMessage",
+      "OpenGL renderer unavailable, your driver or hardware is not "
+      "recent enough. OpenGL 3.1 or OpenGL ES 3.1 is required."),
+      20.0f);
+    return nullptr;
+  }
+#endif
 
   OpenGLTexture::s_use_pbo_for_uploads = true;
-  if (GetRenderAPI() == RenderAPI::OpenGLES)
+  if (m_gl_context->IsGLES())
   {
     // Adreno seems to corrupt textures through PBOs... and Mali is slow.
     const char* gl_vendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
@@ -306,9 +307,9 @@ bool OpenGLDevice::SetupDevice()
 
   Log_VerbosePrintf("Using PBO for uploads: %s", OpenGLTexture::s_use_pbo_for_uploads ? "yes" : "no");
 
-  if (g_settings.gpu_use_debug_device && GLAD_GL_KHR_debug)
+  if (debug_device && GLAD_GL_KHR_debug)
   {
-    if (GetRenderAPI() == RenderAPI::OpenGLES)
+    if (m_gl_context->IsGLES())
       glDebugMessageCallbackKHR(GLDebugCallback, nullptr);
     else
       glDebugMessageCallback(GLDebugCallback, nullptr);
@@ -316,11 +317,19 @@ bool OpenGLDevice::SetupDevice()
     glEnable(GL_DEBUG_OUTPUT);
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   }
+  else
+  {
+    // Nail the function pointers so that we don't waste time calling them.
+    glPushDebugGroup = nullptr;
+    glPopDebugGroup = nullptr;
+    glDebugMessageInsert = nullptr;
+    glObjectLabel = nullptr;
+  }
 
   if (!CheckFeatures())
     return false;
 
-  if (!CreateBuffers() || !CreateResources())
+  if (!CreateBuffers())
     return false;
 
   return true;
@@ -391,28 +400,27 @@ bool OpenGLDevice::CheckFeatures()
   return true;
 }
 
-bool OpenGLDevice::MakeCurrent()
+void OpenGLDevice::DestroyDevice()
 {
-  if (!m_gl_context->MakeCurrent())
-  {
-    Log_ErrorPrintf("Failed to make GL context current");
-    return false;
-  }
+  if (!m_gl_context)
+    return;
 
-  SetSwapInterval();
-  return true;
+  DestroyBuffers();
+
+  m_gl_context->DoneCurrent();
+  m_gl_context.reset();
 }
 
-bool OpenGLDevice::DoneCurrent()
-{
-  return m_gl_context->DoneCurrent();
-}
-
-bool OpenGLDevice::ChangeWindow(const WindowInfo& new_wi)
+bool OpenGLDevice::UpdateWindow()
 {
   Assert(m_gl_context);
 
-  if (!m_gl_context->ChangeSurface(new_wi))
+  DestroySurface();
+
+  if (!AcquireWindow(false))
+    return false;
+
+  if (!m_gl_context->ChangeSurface(m_window_info))
   {
     Log_ErrorPrintf("Failed to change surface");
     return false;
@@ -420,17 +428,24 @@ bool OpenGLDevice::ChangeWindow(const WindowInfo& new_wi)
 
   m_window_info = m_gl_context->GetWindowInfo();
 
-  // Update swap interval for new surface.
-  if (m_gl_context->IsCurrent())
+  if (m_window_info.type != WindowInfo::Type::Surfaceless)
+  {
+    // reset vsync rate, since it (usually) gets lost
     SetSwapInterval();
+    // TODO RenderBlankFrame();
+  }
 
   return true;
 }
 
-void OpenGLDevice::ResizeWindow(s32 new_window_width, s32 new_window_height)
+void OpenGLDevice::ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale)
 {
-  if (!m_gl_context)
+  m_window_info.surface_scale = new_window_scale;
+  if (m_window_info.surface_width == static_cast<u32>(new_window_width) &&
+      m_window_info.surface_height == static_cast<u32>(new_window_height))
+  {
     return;
+  }
 
   m_gl_context->ResizeSurface(static_cast<u32>(new_window_width), static_cast<u32>(new_window_height));
   m_window_info = m_gl_context->GetWindowInfo();
@@ -451,21 +466,6 @@ void OpenGLDevice::SetSwapInterval()
     Log_WarningPrintf("Failed to set swap interval to %d", interval);
 
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, current_fbo);
-}
-
-bool OpenGLDevice::SupportsFullscreen() const
-{
-  return false;
-}
-
-bool OpenGLDevice::IsFullscreen()
-{
-  return false;
-}
-
-bool OpenGLDevice::SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate)
-{
-  return false;
 }
 
 GPUDevice::AdapterAndModeList OpenGLDevice::GetAdapterAndModeList()

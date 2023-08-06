@@ -41,20 +41,12 @@ public:
   RenderAPI GetRenderAPI() const override;
 
   bool HasSurface() const override;
-
-  bool CreateDevice(const WindowInfo& wi, bool vsync) override;
-  bool SetupDevice() override;
-
-  bool MakeCurrent() override;
-  bool DoneCurrent() override;
-
-  bool ChangeWindow(const WindowInfo& new_wi) override;
-  void ResizeWindow(s32 new_window_width, s32 new_window_height) override;
-  bool SupportsFullscreen() const override;
-  bool IsFullscreen() override;
-  bool SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate) override;
-  AdapterAndModeList GetAdapterAndModeList() override;
   void DestroySurface() override;
+
+  bool UpdateWindow() override;
+  void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale) override;
+
+  AdapterAndModeList GetAdapterAndModeList() override;
 
   std::string GetShaderCacheBaseName(const std::string_view& type, bool debug) const override;
 
@@ -141,6 +133,9 @@ protected:
   // TODO: pass in file instead of blob for pipeline cache
   OpenGLPipeline::VertexArrayCache m_vao_cache;
   OpenGLPipeline::ProgramCache m_program_cache;
+
+  bool CreateDevice(const std::string_view& adapter, bool debug_device) override;
+  void DestroyDevice() override;
 
   bool CreateBuffers();
   void DestroyBuffers();

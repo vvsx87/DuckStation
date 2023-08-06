@@ -32,17 +32,17 @@ public:
 
   bool HasSurface() const override;
 
-  bool CreateDevice(const WindowInfo& wi, bool vsync) override;
-  bool SetupDevice() override;
+  //bool CreateDevice(const WindowInfo& wi, bool vsync) override;
+  //bool SetupDevice() override;
 
-  bool MakeCurrent() override;
-  bool DoneCurrent() override;
+  //bool MakeCurrent() override;
+  //bool DoneCurrent() override;
 
-  bool ChangeWindow(const WindowInfo& new_wi) override;
-  void ResizeWindow(s32 new_window_width, s32 new_window_height) override;
-  bool SupportsFullscreen() const override;
-  bool IsFullscreen() override;
-  bool SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate) override;
+  //bool ChangeWindow(const WindowInfo& new_wi) override;
+  //void ResizeWindow(s32 new_window_width, s32 new_window_height) override;
+  //bool SupportsFullscreen() const override;
+  //bool IsFullscreen() override;
+  //bool SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate) override;
   AdapterAndModeList GetAdapterAndModeList() override;
   void DestroySurface() override;
 
@@ -69,13 +69,14 @@ public:
 protected:
   static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
 
-  virtual bool CreateResources() override;
-  virtual void DestroyResources() override;
+  //virtual bool CreateResources() override;
+  //virtual void DestroyResources() override;
 
   bool CreateSwapChain(const DXGI_MODE_DESC* fullscreen_mode);
   bool CreateSwapChainRTV();
   void DestroySwapChainRTVs();
 
+#if 0
   void RenderDisplay(ID3D12GraphicsCommandList* cmdlist, D3D12::Texture* swap_chain_buf);
   void RenderSoftwareCursor(ID3D12GraphicsCommandList* cmdlist);
   void RenderImGui(ID3D12GraphicsCommandList* cmdlist);
@@ -85,6 +86,7 @@ protected:
                      s32 texture_view_height, bool linear_filter);
   void RenderSoftwareCursor(ID3D12GraphicsCommandList* cmdlist, s32 left, s32 top, s32 width, s32 height,
                             GPUTexture* texture_handle);
+#endif
 
   ComPtr<IDXGIFactory> m_dxgi_factory;
   ComPtr<IDXGISwapChain> m_swap_chain;

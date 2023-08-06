@@ -14,6 +14,7 @@
 #include "gsl/span"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -431,11 +432,20 @@ public:
   /// Returns the default/preferred API for the system.
   static RenderAPI GetPreferredAPI();
 
+  /// Returns a string representing the specified API.
+  static const char* RenderAPIToString(RenderAPI api);
+
+  /// Returns a new device for the specified API.
+  static std::unique_ptr<GPUDevice> CreateDeviceForAPI(RenderAPI api);
+
   /// Parses a fullscreen mode into its components (width * height @ refresh hz)
-  static bool ParseFullscreenMode(const std::string_view& mode, u32* width, u32* height, float* refresh_rate);
+  static bool GetRequestedExclusiveFullscreenMode(u32* width, u32* height, float* refresh_rate);
 
   /// Converts a fullscreen mode to a string.
   static std::string GetFullscreenModeString(u32 width, u32 height, float refresh_rate);
+
+  /// Returns the directory bad shaders are saved to.
+  static std::string GetShaderDumpPath(const std::string_view& name);
 
   ALWAYS_INLINE const Features& GetFeatures() const { return m_features; }
   ALWAYS_INLINE u32 GetMaxTextureSize() const { return m_max_texture_size; }
@@ -466,29 +476,23 @@ public:
 
   virtual RenderAPI GetRenderAPI() const = 0;
 
-  virtual bool CreateDevice(const WindowInfo& wi, bool vsync) = 0;
-  virtual bool SetupDevice();
-  virtual bool MakeCurrent() = 0;
-  virtual bool DoneCurrent() = 0;
+  bool Create(const std::string_view& adapter, const std::string_view& shader_cache_path,
+              bool debug_device, bool vsync);
+  void Destroy();
 
   virtual bool HasSurface() const = 0;
   virtual void DestroySurface() = 0;
-  virtual bool ChangeWindow(const WindowInfo& wi) = 0;
+  virtual bool UpdateWindow();
 
-  virtual bool SupportsFullscreen() const = 0;
-  virtual bool IsFullscreen() = 0;
-  virtual bool SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate) = 0;
+  virtual bool SupportsExclusiveFullscreen() const;
   virtual AdapterAndModeList GetAdapterAndModeList() = 0;
-
-  virtual bool CreateResources();
-  virtual void DestroyResources();
 
   virtual bool SetPostProcessingChain(const std::string_view& config);
 
   virtual std::string GetShaderCacheBaseName(const std::string_view& type, bool debug) const;
 
   /// Call when the window size changes externally to recreate any resources.
-  virtual void ResizeWindow(s32 new_window_width, s32 new_window_height) = 0;
+  virtual void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale);
 
   /// Creates an abstracted RGBA8 texture. If dynamic, the texture can be updated with UpdateTexture() below.
   virtual std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
@@ -623,12 +627,36 @@ public:
   bool WriteScreenshotToFile(std::string filename, bool internal_resolution = false, bool compress_on_thread = false);
 
 protected:
+  virtual bool CreateDevice(const std::string_view& adapter, bool debug_device);
+  virtual void DestroyDevice();
+
   virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data);
   virtual std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
                                                             std::vector<u8>* out_binary = nullptr);
 
+  bool AcquireWindow(bool recreate_window);
+
+  Features m_features = {};
+  u32 m_max_texture_size = 0;
+  u32 m_max_multisamples = 0;
+
+  WindowInfo m_window_info;
+
+  GPUShaderCache m_shader_cache;
+
+  std::unique_ptr<GPUSampler> m_nearest_sampler;
+  std::unique_ptr<GPUSampler> m_linear_sampler;
+
+  bool m_gpu_timing_enabled = false;
+  bool m_vsync_enabled = false;
+
+private:
   ALWAYS_INLINE bool HasSoftwareCursor() const { return static_cast<bool>(m_cursor_texture); }
   ALWAYS_INLINE bool HasDisplayTexture() const { return (m_display_texture != nullptr); }
+
+  void OpenShaderCache(const std::string_view& base_path, bool debug);
+  bool CreateResources();
+  void DestroyResources();
 
   bool IsUsingLinearFiltering() const;
 
@@ -647,17 +675,6 @@ protected:
                      s32 texture_view_x, s32 texture_view_y, s32 texture_view_width, s32 texture_view_height,
                      bool linear_filter);
   void RenderSoftwareCursor(s32 left, s32 top, s32 width, s32 height, GPUTexture* texture);
-
-  Features m_features = {};
-  u32 m_max_texture_size = 0;
-  u32 m_max_multisamples = 0;
-
-  WindowInfo m_window_info;
-
-  GPUShaderCache m_shader_cache;
-
-  std::unique_ptr<GPUSampler> m_nearest_sampler;
-  std::unique_ptr<GPUSampler> m_linear_sampler;
 
   u64 m_last_frame_displayed_time = 0;
 
@@ -688,8 +705,6 @@ protected:
   float m_cursor_texture_scale = 1.0f;
 
   bool m_display_changed = false;
-  bool m_gpu_timing_enabled = false;
-  bool m_vsync_enabled = false;
 
   std::unique_ptr<PostProcessingChain> m_post_processing_chain;
 };
@@ -698,20 +713,15 @@ protected:
 extern std::unique_ptr<GPUDevice> g_host_display;
 
 namespace Host {
-std::unique_ptr<GPUDevice> CreateDisplayForAPI(RenderAPI api);
+/// Called when the core is creating a render device.
+/// This could also be fullscreen transition.
+std::optional<WindowInfo> AcquireRenderWindow(bool recreate_window);
 
-/// Creates the host display. This may create a new window. The API used depends on the current configuration.
-bool AcquireHostDisplay(RenderAPI api);
+/// Called before drawing the OSD and other display elements.
+void BeginPresentFrame();
 
-/// Destroys the host display. This may close the display window.
-void ReleaseHostDisplay();
-
-/// Returns false if the window was completely occluded. If frame_skip is set, the frame won't be
-/// displayed, but the GPU command queue will still be flushed.
-// bool BeginPresentFrame(bool frame_skip);
-
-/// Presents the frame to the display, and renders OSD elements.
-// void EndPresentFrame();
+/// Called when the core is finished with a render window.
+void ReleaseRenderWindow();
 
 /// Provided by the host; renders the display.
 void RenderDisplay(bool skip_present);

@@ -942,6 +942,9 @@ RenderAPI Settings::GetRenderAPIForRenderer(GPURenderer renderer)
     case GPURenderer::HardwareD3D12:
       return RenderAPI::D3D12;
 #endif
+#ifdef __APPLE__
+      return RenderAPI::Metal;
+#endif
 #ifdef WITH_VULKAN
     case GPURenderer::HardwareVulkan:
       return RenderAPI::Vulkan;

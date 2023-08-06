@@ -61,20 +61,20 @@ constexpr T PreviousPow2(T value)
   return value - (value >> 1);
 }
 
-
 ALWAYS_INLINE static void* AlignedMalloc(size_t size, size_t alignment)
 {
 #ifdef _MSC_VER
   return _aligned_malloc(size, alignment);
 #else
   // Unaligned sizes are slow on macOS.
-  #ifdef __APPLE__
+#ifdef __APPLE__
     if (IsPow2(alignment))
       size = (size + alignment - 1) & ~(alignment - 1);
-  #endif
+#endif
   void* ret = nullptr;
   posix_memalign(&ret, alignment, size);
   return ret;
+#endif
 }
 
 ALWAYS_INLINE static void AlignedFree(void* ptr)
@@ -86,5 +86,4 @@ ALWAYS_INLINE static void AlignedFree(void* ptr)
 #endif
 }
 
-#endif
 } // namespace Common

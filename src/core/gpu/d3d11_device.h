@@ -1,15 +1,17 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+#include "gpu_device.h"
+#include "postprocessing_chain.h"
+
 #include "common/timer.h"
 #include "common/window_info.h"
 #include "common/windows_headers.h"
-#include "gpu_device.h"
-#include "postprocessing_chain.h"
+
 #include <d3d11_1.h>
-#include <dxgi.h>
+#include <dxgi1_5.h>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -258,28 +260,25 @@ public:
   template<typename T>
   using ComPtr = Microsoft::WRL::ComPtr<T>;
 
+  D3D11Device();
+  ~D3D11Device();
+
   ALWAYS_INLINE static D3D11Device& GetInstance() { return *static_cast<D3D11Device*>(g_host_display.get()); }
   ALWAYS_INLINE static ID3D11Device* GetD3DDevice() { return GetInstance().m_device.Get(); }
   ALWAYS_INLINE static ID3D11DeviceContext* GetD3DContext() { return GetInstance().m_context.Get(); }
 
-  D3D11Device();
-  ~D3D11Device();
+  // returns the fullscreen mode to use for the specified dimensions
+  static bool GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, const RECT& window_rect, u32 width,
+                                                      u32 height, float refresh_rate, DXGI_FORMAT format,
+                                                      DXGI_MODE_DESC* fullscreen_mode, IDXGIOutput** output);
 
   RenderAPI GetRenderAPI() const override;
 
   bool HasSurface() const override;
 
-  bool CreateDevice(const WindowInfo& wi, bool vsync) override;
-  bool SetupDevice() override;
-
-  bool MakeCurrent() override;
-  bool DoneCurrent() override;
-
-  bool ChangeWindow(const WindowInfo& new_wi) override;
-  void ResizeWindow(s32 new_window_width, s32 new_window_height) override;
-  bool SupportsFullscreen() const override;
-  bool IsFullscreen() override;
-  bool SetFullscreen(bool fullscreen, u32 width, u32 height, float refresh_rate) override;
+  bool UpdateWindow() override;
+  void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale) override;
+  bool SupportsExclusiveFullscreen() const override;
   AdapterAndModeList GetAdapterAndModeList() override;
   void DestroySurface() override;
 
@@ -346,6 +345,10 @@ public:
 
   static AdapterAndModeList StaticGetAdapterAndModeList();
 
+protected:
+  bool CreateDevice(const std::string_view& adapter, bool debug_device) override;
+  void DestroyDevice() override;
+
 private:
   using RasterizationStateMap = std::unordered_map<u8, ComPtr<ID3D11RasterizerState>>;
   using DepthStateMap = std::unordered_map<u8, ComPtr<ID3D11DepthStencilState>>;
@@ -368,8 +371,9 @@ private:
   bool CheckStagingBufferSize(u32 width, u32 height, DXGI_FORMAT format);
   void DestroyStagingBuffer();
 
-  bool CreateSwapChain(const DXGI_MODE_DESC* fullscreen_mode);
+  bool CreateSwapChain();
   bool CreateSwapChainRTV();
+  void DestroySwapChain();
 
   bool CreateBuffers();
   void DestroyBuffers();
@@ -388,8 +392,8 @@ private:
   ComPtr<ID3D11DeviceContext1> m_context;
   ComPtr<ID3DUserDefinedAnnotation> m_annotation;
 
-  ComPtr<IDXGIFactory> m_dxgi_factory;
-  ComPtr<IDXGISwapChain> m_swap_chain;
+  ComPtr<IDXGIFactory5> m_dxgi_factory;
+  ComPtr<IDXGISwapChain1> m_swap_chain;
   ComPtr<ID3D11RenderTargetView> m_swap_chain_rtv;
 
   RasterizationStateMap m_rasterization_states;
@@ -405,6 +409,7 @@ private:
   bool m_allow_tearing_supported = false;
   bool m_using_flip_model_swap_chain = true;
   bool m_using_allow_tearing = false;
+  bool m_is_exclusive_fullscreen = false;
 
   D3D11StreamBuffer m_vertex_buffer;
   D3D11StreamBuffer m_index_buffer;
