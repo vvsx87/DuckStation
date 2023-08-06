@@ -28,7 +28,7 @@ void GPUTexture::ClearBaseProperties()
   m_state = State::Dirty;
 }
 
-u32 GPUTexture::GPUTexture::GetPixelSize(GPUTexture::Format format)
+u32 GPUTexture::GetPixelSize(GPUTexture::Format format)
 {
   switch (format)
   {
@@ -59,7 +59,7 @@ bool GPUTexture::ConvertTextureDataToRGBA8(u32 width, u32 height, std::vector<u3
 {
   switch (format)
   {
-    case GPUTexture::Format::BGRA8:
+    case Format::BGRA8:
     {
       for (u32 y = 0; y < height; y++)
       {
@@ -71,10 +71,10 @@ bool GPUTexture::ConvertTextureDataToRGBA8(u32 width, u32 height, std::vector<u3
       return true;
     }
 
-    case GPUTexture::Format::RGBA8:
+    case Format::RGBA8:
       return true;
 
-    case GPUTexture::Format::RGB565:
+    case Format::RGB565:
     {
       std::vector<u32> temp(width * height);
 
@@ -102,7 +102,7 @@ bool GPUTexture::ConvertTextureDataToRGBA8(u32 width, u32 height, std::vector<u3
       return true;
     }
 
-    case GPUTexture::Format::RGBA5551:
+    case Format::RGBA5551:
     {
       std::vector<u32> temp(width * height);
 

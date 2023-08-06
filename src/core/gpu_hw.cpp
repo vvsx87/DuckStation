@@ -2083,8 +2083,8 @@ void GPU_HW::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
 
   // Encode the 24-bit texture as 16-bit.
   const u32 uniforms[4] = {copy_rect.left, copy_rect.top, copy_rect.GetWidth(), copy_rect.GetHeight()};
-  g_gpu_device->SetPipeline(m_vram_readback_pipeline.get());
   g_gpu_device->SetFramebuffer(m_vram_readback_framebuffer.get());
+  g_gpu_device->SetPipeline(m_vram_readback_pipeline.get());
   g_gpu_device->SetTextureSampler(0, m_vram_texture.get(), g_gpu_device->GetNearestSampler());
   g_gpu_device->SetViewportAndScissor(0, 0, encoded_width, encoded_height);
   g_gpu_device->PushUniformBuffer(uniforms, sizeof(uniforms));

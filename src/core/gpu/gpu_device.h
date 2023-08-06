@@ -476,8 +476,8 @@ public:
 
   virtual RenderAPI GetRenderAPI() const = 0;
 
-  bool Create(const std::string_view& adapter, const std::string_view& shader_cache_path,
-              bool debug_device, bool vsync);
+  bool Create(const std::string_view& adapter, const std::string_view& shader_cache_path, bool debug_device,
+              bool vsync);
   void Destroy();
 
   virtual bool HasSurface() const = 0;
