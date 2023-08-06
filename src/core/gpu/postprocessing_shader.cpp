@@ -294,12 +294,12 @@ bool PostProcessingShader::CompilePipeline(GPUTexture::Format target_format)
   if (m_pipeline)
     m_pipeline.reset();
 
-  PostProcessingShaderGen shadergen(g_host_display->GetRenderAPI(), g_host_display->GetFeatures().dual_source_blend);
+  PostProcessingShaderGen shadergen(g_gpu_device->GetRenderAPI(), g_gpu_device->GetFeatures().dual_source_blend);
 
   std::unique_ptr<GPUShader> vs =
-    g_host_display->CreateShader(GPUShaderStage::Vertex, shadergen.GeneratePostProcessingVertexShader(*this));
+    g_gpu_device->CreateShader(GPUShaderStage::Vertex, shadergen.GeneratePostProcessingVertexShader(*this));
   std::unique_ptr<GPUShader> fs =
-    g_host_display->CreateShader(GPUShaderStage::Fragment, shadergen.GeneratePostProcessingFragmentShader(*this));
+    g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GeneratePostProcessingFragmentShader(*this));
   if (!vs || !fs)
     return false;
 
@@ -316,7 +316,7 @@ bool PostProcessingShader::CompilePipeline(GPUTexture::Format target_format)
   plconfig.vertex_shader = vs.get();
   plconfig.fragment_shader = fs.get();
 
-  if (!(m_pipeline = g_host_display->CreatePipeline(plconfig)))
+  if (!(m_pipeline = g_gpu_device->CreatePipeline(plconfig)))
     return false;
 
   return true;
@@ -334,12 +334,12 @@ bool PostProcessingShader::ResizeOutput(GPUTexture::Format format, u32 width, u3
   m_output_texture.reset();
 
   if (!(m_output_texture =
-          g_host_display->CreateTexture(width, height, 1, 1, 1, GPUTexture::Type::RenderTarget, format)))
+          g_gpu_device->CreateTexture(width, height, 1, 1, 1, GPUTexture::Type::RenderTarget, format)))
   {
     return false;
   }
 
-  if (!(m_output_framebuffer = g_host_display->CreateFramebuffer(m_output_texture.get())))
+  if (!(m_output_framebuffer = g_gpu_device->CreateFramebuffer(m_output_texture.get())))
   {
     m_output_texture.reset();
     return false;

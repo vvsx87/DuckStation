@@ -314,7 +314,7 @@ void ImGuiManager::DrawPerformanceOverlay()
 #endif
     }
 
-    if (g_settings.display_show_gpu && g_host_display->IsGPUTimingEnabled())
+    if (g_settings.display_show_gpu && g_gpu_device->IsGPUTimingEnabled())
     {
       text.Assign("GPU: ");
       FormatProcessorStat(text, System::GetGPUUsage(), System::GetGPUAverageTime());
@@ -720,17 +720,17 @@ void SaveStateSelectorUI::InitializeListEntry(ListEntry* li, ExtendedSaveStateIn
   li->preview_texture.reset();
 
   // Might not have a display yet, we're called at startup..
-  if (g_host_display)
+  if (g_gpu_device)
   {
     if (ssi && !ssi->screenshot_data.empty())
     {
-      li->preview_texture = g_host_display->CreateTexture(
+      li->preview_texture = g_gpu_device->CreateTexture(
         ssi->screenshot_width, ssi->screenshot_height, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8,
         ssi->screenshot_data.data(), sizeof(u32) * ssi->screenshot_width, false);
     }
     else
     {
-      li->preview_texture = g_host_display->CreateTexture(
+      li->preview_texture = g_gpu_device->CreateTexture(
         PLACEHOLDER_ICON_WIDTH, PLACEHOLDER_ICON_HEIGHT, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8,
         PLACEHOLDER_ICON_DATA, sizeof(u32) * PLACEHOLDER_ICON_WIDTH, false);
     }
@@ -749,9 +749,9 @@ void SaveStateSelectorUI::InitializePlaceholderListEntry(ListEntry* li, std::str
   li->slot = slot;
   li->global = global;
 
-  if (g_host_display)
+  if (g_gpu_device)
   {
-    li->preview_texture = g_host_display->CreateTexture(
+    li->preview_texture = g_gpu_device->CreateTexture(
       PLACEHOLDER_ICON_WIDTH, PLACEHOLDER_ICON_HEIGHT, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8,
       PLACEHOLDER_ICON_DATA, sizeof(u32) * PLACEHOLDER_ICON_WIDTH, false);
     if (!li->preview_texture)

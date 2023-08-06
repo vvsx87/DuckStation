@@ -53,7 +53,7 @@ GPU_HW::GPU_HW() : GPU()
 
 GPU_HW::~GPU_HW()
 {
-  g_host_display->ClearDisplayTexture();
+  g_gpu_device->ClearDisplayTexture();
 
   if (m_sw_renderer)
   {
@@ -77,8 +77,8 @@ bool GPU_HW::Initialize()
   if (!GPU::Initialize())
     return false;
 
-  const GPUDevice::Features features = g_host_display->GetFeatures();
-  m_max_resolution_scale = g_host_display->GetMaxTextureSize() / VRAM_WIDTH;
+  const GPUDevice::Features features = g_gpu_device->GetFeatures();
+  m_max_resolution_scale = g_gpu_device->GetMaxTextureSize() / VRAM_WIDTH;
   m_supports_dual_source_blend = features.dual_source_blend;
   m_supports_per_sample_shading = features.per_sample_shading;
   m_supports_adaptive_downsampling = features.mipmapped_render_targets;
@@ -86,7 +86,7 @@ bool GPU_HW::Initialize()
 
   m_resolution_scale = CalculateResolutionScale();
   m_multisamples = std::min(g_settings.gpu_multisamples, m_max_multisamples);
-  m_render_api = g_host_display->GetRenderAPI();
+  m_render_api = g_gpu_device->GetRenderAPI();
   m_per_sample_shading = g_settings.gpu_per_sample_shading && m_supports_per_sample_shading;
   m_true_color = g_settings.gpu_true_color;
   m_scaled_dithering = g_settings.gpu_scaled_dithering;
@@ -181,7 +181,7 @@ bool GPU_HW::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_di
         return false;
       }
 
-      g_host_display->CopyTextureRegion(m_vram_texture.get(), 0, 0, 0, 0, tex, 0, 0, 0, 0, tex->GetWidth(),
+      g_gpu_device->CopyTextureRegion(m_vram_texture.get(), 0, 0, 0, 0, tex, 0, 0, 0, 0, tex->GetWidth(),
                                         tex->GetHeight());
     }
     else
@@ -192,7 +192,7 @@ bool GPU_HW::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_di
         delete tex;
 
         tex =
-          g_host_display
+          g_gpu_device
             ->CreateTexture(m_vram_texture->GetWidth(), m_vram_texture->GetHeight(), 1, 1, m_vram_texture->GetSamples(),
                             GPUTexture::Type::RenderTarget, GPUTexture::Format::RGBA8, nullptr, 0, false)
             .release();
@@ -201,7 +201,7 @@ bool GPU_HW::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_di
           return false;
       }
 
-      g_host_display->CopyTextureRegion(tex, 0, 0, 0, 0, m_vram_texture.get(), 0, 0, 0, 0, tex->GetWidth(),
+      g_gpu_device->CopyTextureRegion(tex, 0, 0, 0, 0, m_vram_texture.get(), 0, 0, 0, 0, tex->GetWidth(),
                                         tex->GetHeight());
     }
   }
@@ -219,9 +219,9 @@ bool GPU_HW::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_di
 
 void GPU_HW::RestoreGraphicsAPIState()
 {
-  g_host_display->SetTextureSampler(0, m_vram_read_texture.get(), g_host_display->GetNearestSampler());
-  g_host_display->SetFramebuffer(m_vram_framebuffer.get());
-  g_host_display->SetViewport(0, 0, m_vram_texture->GetWidth(), m_vram_texture->GetHeight());
+  g_gpu_device->SetTextureSampler(0, m_vram_read_texture.get(), g_gpu_device->GetNearestSampler());
+  g_gpu_device->SetFramebuffer(m_vram_framebuffer.get());
+  g_gpu_device->SetViewport(0, 0, m_vram_texture->GetWidth(), m_vram_texture->GetHeight());
   SetScissor();
   m_batch_ubo_dirty = true;
 }
@@ -236,7 +236,7 @@ void GPU_HW::UpdateSettings()
   {
     RestoreGraphicsAPIState();
     ReadVRAM(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
-    g_host_display->ClearDisplayTexture();
+    g_gpu_device->ClearDisplayTexture();
     CreateBuffers();
   }
 
@@ -344,7 +344,7 @@ u32 GPU_HW::CalculateResolutionScale() const
                          (m_console_is_pal ? (PAL_VERTICAL_ACTIVE_END - PAL_VERTICAL_ACTIVE_START) :
                                              (NTSC_VERTICAL_ACTIVE_END - NTSC_VERTICAL_ACTIVE_START));
     const s32 preferred_scale =
-      static_cast<s32>(std::ceil(static_cast<float>(g_host_display->GetWindowHeight()) / height));
+      static_cast<s32>(std::ceil(static_cast<float>(g_gpu_device->GetWindowHeight()) / height));
     Log_InfoPrintf("Height = %d, preferred scale = %d", height, preferred_scale);
 
     scale = static_cast<u32>(std::clamp<s32>(preferred_scale, 1, m_max_resolution_scale));
@@ -425,17 +425,17 @@ bool GPU_HW::CreateBuffers()
   const u32 texture_height = VRAM_HEIGHT * m_resolution_scale;
   const u8 samples = static_cast<u8>(m_multisamples);
 
-  if (!(m_vram_texture = g_host_display->CreateTexture(texture_width, texture_height, 1, 1, samples,
+  if (!(m_vram_texture = g_gpu_device->CreateTexture(texture_width, texture_height, 1, 1, samples,
                                                        GPUTexture::Type::RenderTarget, VRAM_RT_FORMAT)) ||
-      !(m_vram_depth_texture = g_host_display->CreateTexture(texture_width, texture_height, 1, 1, samples,
+      !(m_vram_depth_texture = g_gpu_device->CreateTexture(texture_width, texture_height, 1, 1, samples,
                                                              GPUTexture::Type::DepthStencil, VRAM_DS_FORMAT)) ||
-      !(m_vram_read_texture = g_host_display->CreateTexture(texture_width, texture_height, 1, 1, 1,
+      !(m_vram_read_texture = g_gpu_device->CreateTexture(texture_width, texture_height, 1, 1, 1,
                                                             GPUTexture::Type::Texture, VRAM_RT_FORMAT)) ||
-      !(m_display_texture = g_host_display->CreateTexture(
+      !(m_display_texture = g_gpu_device->CreateTexture(
           ((m_downsample_mode == GPUDownsampleMode::Adaptive) ? VRAM_WIDTH : GPU_MAX_DISPLAY_WIDTH) *
             m_resolution_scale,
           GPU_MAX_DISPLAY_HEIGHT * m_resolution_scale, 1, 1, 1, GPUTexture::Type::RenderTarget, VRAM_RT_FORMAT)) ||
-      !(m_vram_readback_texture = g_host_display->CreateTexture(VRAM_WIDTH / 2, VRAM_HEIGHT, 1, 1, 1,
+      !(m_vram_readback_texture = g_gpu_device->CreateTexture(VRAM_WIDTH / 2, VRAM_HEIGHT, 1, 1, 1,
                                                                 GPUTexture::Type::RenderTarget, VRAM_RT_FORMAT)))
   {
     return false;
@@ -443,12 +443,12 @@ bool GPU_HW::CreateBuffers()
 
   // vram framebuffer has both colour and depth
   if (!(m_vram_framebuffer =
-          g_host_display->CreateFramebuffer(m_vram_texture.get(), 0, 0, m_vram_depth_texture.get(), 0, 0)) ||
+          g_gpu_device->CreateFramebuffer(m_vram_texture.get(), 0, 0, m_vram_depth_texture.get(), 0, 0)) ||
       !(m_vram_update_depth_framebuffer =
-          g_host_display->CreateFramebuffer(nullptr, 0, 0, m_vram_depth_texture.get(), 0, 0)) ||
+          g_gpu_device->CreateFramebuffer(nullptr, 0, 0, m_vram_depth_texture.get(), 0, 0)) ||
       !(m_vram_readback_framebuffer =
-          g_host_display->CreateFramebuffer(m_vram_readback_texture.get(), 0, 0, nullptr, 0, 0)) ||
-      !(m_display_framebuffer = g_host_display->CreateFramebuffer(m_display_texture.get(), 0, 0, nullptr, 0, 0)))
+          g_gpu_device->CreateFramebuffer(m_vram_readback_texture.get(), 0, 0, nullptr, 0, 0)) ||
+      !(m_display_framebuffer = g_gpu_device->CreateFramebuffer(m_display_texture.get(), 0, 0, nullptr, 0, 0)))
   {
     return false;
   }
@@ -459,7 +459,7 @@ bool GPU_HW::CreateBuffers()
   GL_OBJECT_NAME(m_display_framebuffer, "Display Framebuffer");
 
   // TODO: check caps
-  if (!(m_vram_upload_buffer = g_host_display->CreateTextureBuffer(GPUTextureBuffer::Format::R16UI,
+  if (!(m_vram_upload_buffer = g_gpu_device->CreateTextureBuffer(GPUTextureBuffer::Format::R16UI,
                                                                    VRAM_UPDATE_TEXTURE_BUFFER_SIZE / sizeof(u16))))
   {
     return false;
@@ -504,24 +504,24 @@ bool GPU_HW::CreateBuffers()
 #endif
   if (m_downsample_mode == GPUDownsampleMode::Box)
   {
-    if (!(m_downsample_texture = g_host_display->CreateTexture(VRAM_WIDTH, VRAM_HEIGHT, 1, 1, 1,
+    if (!(m_downsample_texture = g_gpu_device->CreateTexture(VRAM_WIDTH, VRAM_HEIGHT, 1, 1, 1,
                                                                GPUTexture::Type::RenderTarget, VRAM_RT_FORMAT)) ||
-        !(m_downsample_framebuffer = g_host_display->CreateFramebuffer(m_downsample_texture.get())))
+        !(m_downsample_framebuffer = g_gpu_device->CreateFramebuffer(m_downsample_texture.get())))
     {
       return false;
     }
   }
 
-  g_host_display->SetFramebuffer(m_vram_framebuffer.get());
+  g_gpu_device->SetFramebuffer(m_vram_framebuffer.get());
   SetFullVRAMDirtyRectangle();
   return true;
 }
 
 void GPU_HW::ClearFramebuffer()
 {
-  g_host_display->ClearRenderTarget(m_vram_texture.get(), 0);
-  g_host_display->ClearDepth(m_vram_depth_texture.get(), m_pgxp_depth_buffer ? 1.0f : 0.0f);
-  g_host_display->ClearRenderTarget(m_display_texture.get(), 0);
+  g_gpu_device->ClearRenderTarget(m_vram_texture.get(), 0);
+  g_gpu_device->ClearDepth(m_vram_depth_texture.get(), m_pgxp_depth_buffer ? 1.0f : 0.0f);
+  g_gpu_device->ClearRenderTarget(m_display_texture.get(), 0);
   ClearVRAMDirtyRectangle();
   m_last_depth_z = 1.0f;
 }
@@ -545,8 +545,8 @@ void GPU_HW::DestroyBuffers()
 
 bool GPU_HW::CompilePipelines()
 {
-  const GPUDevice::Features features = g_host_display->GetFeatures();
-  GPU_HW_ShaderGen shadergen(g_host_display->GetRenderAPI(), m_resolution_scale, m_multisamples, m_per_sample_shading,
+  const GPUDevice::Features features = g_gpu_device->GetFeatures();
+  GPU_HW_ShaderGen shadergen(g_gpu_device->GetRenderAPI(), m_resolution_scale, m_multisamples, m_per_sample_shading,
                              m_true_color, m_scaled_dithering, m_texture_filtering, m_using_uv_limits,
                              m_pgxp_depth_buffer, m_disable_color_perspective, m_supports_dual_source_blend);
 
@@ -566,7 +566,7 @@ bool GPU_HW::CompilePipelines()
   for (u8 textured = 0; textured < 2; textured++)
   {
     const std::string vs = shadergen.GenerateBatchVertexShader(ConvertToBoolUnchecked(textured));
-    if (!(batch_vertex_shaders[textured] = g_host_display->CreateShader(GPUShaderStage::Vertex, vs)))
+    if (!(batch_vertex_shaders[textured] = g_gpu_device->CreateShader(GPUShaderStage::Vertex, vs)))
       return false;
 
     progress.Increment();
@@ -585,7 +585,7 @@ bool GPU_HW::CompilePipelines()
             ConvertToBoolUnchecked(dithering), ConvertToBoolUnchecked(interlacing));
 
           if (!(batch_fragment_shaders[render_mode][texture_mode][dithering][interlacing] =
-                  g_host_display->CreateShader(GPUShaderStage::Fragment, fs)))
+                  g_gpu_device->CreateShader(GPUShaderStage::Fragment, fs)))
           {
             return false;
           }
@@ -702,7 +702,7 @@ bool GPU_HW::CompilePipelines()
               }
 
               if (!(m_batch_pipelines[depth_test][render_mode][texture_mode][transparency_mode][dithering]
-                                     [interlacing] = g_host_display->CreatePipeline(plconfig)))
+                                     [interlacing] = g_gpu_device->CreatePipeline(plconfig)))
               {
                 return false;
               }
@@ -718,9 +718,9 @@ bool GPU_HW::CompilePipelines()
   batch_shader_guard.Run();
 
   std::unique_ptr<GPUShader> fullscreen_quad_vertex_shader =
-    g_host_display->CreateShader(GPUShaderStage::Vertex, shadergen.GenerateScreenQuadVertexShader());
+    g_gpu_device->CreateShader(GPUShaderStage::Vertex, shadergen.GenerateScreenQuadVertexShader());
   std::unique_ptr<GPUShader> uv_quad_vertex_shader =
-    g_host_display->CreateShader(GPUShaderStage::Vertex, shadergen.GenerateUVQuadVertexShader());
+    g_gpu_device->CreateShader(GPUShaderStage::Vertex, shadergen.GenerateUVQuadVertexShader());
   if (!fullscreen_quad_vertex_shader || !uv_quad_vertex_shader)
     return false;
 
@@ -737,7 +737,7 @@ bool GPU_HW::CompilePipelines()
   {
     for (u8 interlaced = 0; interlaced < 2; interlaced++)
     {
-      std::unique_ptr<GPUShader> fs = g_host_display->CreateShader(
+      std::unique_ptr<GPUShader> fs = g_gpu_device->CreateShader(
         GPUShaderStage::Fragment,
         shadergen.GenerateVRAMFillFragmentShader(ConvertToBoolUnchecked(wrapped), ConvertToBoolUnchecked(interlaced)));
       if (!fs)
@@ -746,7 +746,7 @@ bool GPU_HW::CompilePipelines()
       plconfig.fragment_shader = fs.get();
       plconfig.depth = GPUPipeline::DepthState::GetAlwaysWriteState();
 
-      if (!(m_vram_fill_pipelines[wrapped][interlaced] = g_host_display->CreatePipeline(plconfig)))
+      if (!(m_vram_fill_pipelines[wrapped][interlaced] = g_gpu_device->CreatePipeline(plconfig)))
         return false;
 
       progress.Increment();
@@ -756,7 +756,7 @@ bool GPU_HW::CompilePipelines()
   // VRAM copy
   {
     std::unique_ptr<GPUShader> fs =
-      g_host_display->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateVRAMCopyFragmentShader());
+      g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateVRAMCopyFragmentShader());
     if (!fs)
       return false;
 
@@ -767,7 +767,7 @@ bool GPU_HW::CompilePipelines()
       plconfig.depth.depth_test =
         (depth_test != 0) ? GPUPipeline::DepthFunc::GreaterEqual : GPUPipeline::DepthFunc::Always;
 
-      if (!(m_vram_copy_pipelines[depth_test] = g_host_display->CreatePipeline(plconfig)))
+      if (!(m_vram_copy_pipelines[depth_test] = g_gpu_device->CreatePipeline(plconfig)))
         return false;
 
       GL_OBJECT_NAME(m_vram_copy_pipelines[depth_test], "VRAM Write Pipeline, depth=%u", depth_test);
@@ -780,7 +780,7 @@ bool GPU_HW::CompilePipelines()
   // TODO: SSBO path here...
   {
     const bool use_ssbo = features.texture_buffers_emulated_with_ssbo;
-    std::unique_ptr<GPUShader> fs = g_host_display->CreateShader(
+    std::unique_ptr<GPUShader> fs = g_gpu_device->CreateShader(
       GPUShaderStage::Fragment, shadergen.GenerateVRAMWriteFragmentShader(use_ssbo));
     if (!fs)
       return false;
@@ -792,7 +792,7 @@ bool GPU_HW::CompilePipelines()
       plconfig.depth.depth_test =
         (depth_test != 0) ? GPUPipeline::DepthFunc::GreaterEqual : GPUPipeline::DepthFunc::Always;
 
-      if (!(m_vram_write_pipelines[depth_test] = g_host_display->CreatePipeline(plconfig)))
+      if (!(m_vram_write_pipelines[depth_test] = g_gpu_device->CreatePipeline(plconfig)))
         return false;
 
       GL_OBJECT_NAME(m_vram_write_pipelines[depth_test], "VRAM Write Pipeline, depth=%u", depth_test);
@@ -804,7 +804,7 @@ bool GPU_HW::CompilePipelines()
   // VRAM update depth
   {
     std::unique_ptr<GPUShader> fs =
-      g_host_display->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateVRAMUpdateDepthFragmentShader());
+      g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateVRAMUpdateDepthFragmentShader());
     if (!fs)
       return false;
 
@@ -814,7 +814,7 @@ bool GPU_HW::CompilePipelines()
     plconfig.depth = GPUPipeline::DepthState::GetAlwaysWriteState();
     plconfig.blend.write_mask = 0;
 
-    if (!(m_vram_update_depth_pipeline = g_host_display->CreatePipeline(plconfig)))
+    if (!(m_vram_update_depth_pipeline = g_gpu_device->CreatePipeline(plconfig)))
       return false;
 
     GL_OBJECT_NAME(m_vram_update_depth_pipeline, "VRAM Update Depth Pipeline");
@@ -830,13 +830,13 @@ bool GPU_HW::CompilePipelines()
   // VRAM read
   {
     std::unique_ptr<GPUShader> fs =
-      g_host_display->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateVRAMReadFragmentShader());
+      g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateVRAMReadFragmentShader());
     if (!fs)
       return false;
 
     plconfig.fragment_shader = fs.get();
 
-    if (!(m_vram_readback_pipeline = g_host_display->CreatePipeline(plconfig)))
+    if (!(m_vram_readback_pipeline = g_gpu_device->CreatePipeline(plconfig)))
       return false;
 
     GL_OBJECT_NAME(m_vram_readback_pipeline, "VRAM Read Pipeline");
@@ -849,7 +849,7 @@ bool GPU_HW::CompilePipelines()
     {
       for (u8 interlace_mode = 0; interlace_mode < 3; interlace_mode++)
       {
-        std::unique_ptr<GPUShader> fs = g_host_display->CreateShader(
+        std::unique_ptr<GPUShader> fs = g_gpu_device->CreateShader(
           GPUShaderStage::Fragment,
           shadergen.GenerateDisplayFragmentShader(
             ConvertToBoolUnchecked(depth_24), static_cast<InterlacedRenderMode>(interlace_mode), m_chroma_smoothing));
@@ -858,7 +858,7 @@ bool GPU_HW::CompilePipelines()
 
         plconfig.fragment_shader = fs.get();
 
-        if (!(m_display_pipelines[depth_24][interlace_mode] = g_host_display->CreatePipeline(plconfig)))
+        if (!(m_display_pipelines[depth_24][interlace_mode] = g_gpu_device->CreatePipeline(plconfig)))
           return false;
 
         progress.Increment();
@@ -868,12 +868,12 @@ bool GPU_HW::CompilePipelines()
 
   {
     std::unique_ptr<GPUShader> fs =
-      g_host_display->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateCopyFragmentShader());
+      g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateCopyFragmentShader());
     if (!fs)
       return false;
 
     plconfig.fragment_shader = fs.get();
-    if (!(m_copy_pipeline = g_host_display->CreatePipeline(plconfig)))
+    if (!(m_copy_pipeline = g_gpu_device->CreatePipeline(plconfig)))
       return false;
   }
 
@@ -950,14 +950,14 @@ bool GPU_HW::CompilePipelines()
   if (m_downsample_mode == GPUDownsampleMode::Box)
   {
     std::unique_ptr<GPUShader> fs =
-      g_host_display->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateBoxSampleDownsampleFragmentShader());
+      g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateBoxSampleDownsampleFragmentShader());
     if (!fs)
       return false;
 
     GL_OBJECT_NAME(fs, "Downsample First Pass Fragment Shader");
     plconfig.fragment_shader = fs.get();
 
-    if (!(m_downsample_first_pass_pipeline = g_host_display->CreatePipeline(plconfig)))
+    if (!(m_downsample_first_pass_pipeline = g_gpu_device->CreatePipeline(plconfig)))
       return false;
 
     GL_OBJECT_NAME(m_downsample_first_pass_pipeline, "Downsample First Pass Pipeline");
@@ -1001,13 +1001,13 @@ void GPU_HW::UpdateVRAMReadTexture()
 
   if (m_vram_texture->IsMultisampled())
   {
-    g_host_display->ResolveTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+    g_gpu_device->ResolveTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
                                          m_vram_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
                                          scaled_rect.GetWidth(), scaled_rect.GetHeight());
   }
   else
   {
-    g_host_display->CopyTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+    g_gpu_device->CopyTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
                                       m_vram_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
                                       scaled_rect.GetWidth(), scaled_rect.GetHeight());
   }
@@ -1022,15 +1022,15 @@ void GPU_HW::UpdateDepthBufferFromMaskBit()
     return;
 
   // Viewport should already be set full, only need to fudge the scissor.
-  g_host_display->SetScissor(0, 0, m_vram_texture->GetWidth(), m_vram_texture->GetHeight());
-  g_host_display->SetFramebuffer(m_vram_update_depth_framebuffer.get());
-  g_host_display->SetPipeline(m_vram_update_depth_pipeline.get());
-  g_host_display->SetTextureSampler(0, m_vram_texture.get(), g_host_display->GetNearestSampler());
-  g_host_display->Draw(3, 0);
+  g_gpu_device->SetScissor(0, 0, m_vram_texture->GetWidth(), m_vram_texture->GetHeight());
+  g_gpu_device->SetFramebuffer(m_vram_update_depth_framebuffer.get());
+  g_gpu_device->SetPipeline(m_vram_update_depth_pipeline.get());
+  g_gpu_device->SetTextureSampler(0, m_vram_texture.get(), g_gpu_device->GetNearestSampler());
+  g_gpu_device->Draw(3, 0);
 
   // Restore.
-  g_host_display->SetTextureSampler(0, m_vram_read_texture.get(), g_host_display->GetNearestSampler());
-  g_host_display->SetFramebuffer(m_vram_framebuffer.get());
+  g_gpu_device->SetTextureSampler(0, m_vram_read_texture.get(), g_gpu_device->GetNearestSampler());
+  g_gpu_device->SetFramebuffer(m_vram_framebuffer.get());
   SetScissor();
 }
 
@@ -1038,7 +1038,7 @@ void GPU_HW::ClearDepthBuffer()
 {
   DebugAssert(m_pgxp_depth_buffer);
 
-  g_host_display->ClearDepth(m_vram_depth_texture.get(), 1.0f);
+  g_gpu_device->ClearDepth(m_vram_depth_texture.get(), 1.0f);
   m_last_depth_z = 1.0f;
 }
 
@@ -1049,7 +1049,7 @@ void GPU_HW::SetScissor()
   const s32 top = m_drawing_area.top * m_resolution_scale;
   const s32 bottom = std::max<u32>((m_drawing_area.bottom + 1) * m_resolution_scale, top + 1);
 
-  g_host_display->SetScissor(left, top, right - left, bottom - top);
+  g_gpu_device->SetScissor(left, top, right - left, bottom - top);
 }
 
 void GPU_HW::MapBatchVertexPointer(u32 required_vertices)
@@ -1058,7 +1058,7 @@ void GPU_HW::MapBatchVertexPointer(u32 required_vertices)
 
   void* map;
   u32 space;
-  g_host_display->MapVertexBuffer(sizeof(BatchVertex), required_vertices, &map, &space, &m_batch_base_vertex);
+  g_gpu_device->MapVertexBuffer(sizeof(BatchVertex), required_vertices, &map, &space, &m_batch_base_vertex);
 
   m_batch_start_vertex_ptr = static_cast<BatchVertex*>(map);
   m_batch_current_vertex_ptr = m_batch_start_vertex_ptr;
@@ -1068,7 +1068,7 @@ void GPU_HW::MapBatchVertexPointer(u32 required_vertices)
 void GPU_HW::UnmapBatchVertexPointer(u32 used_vertices)
 {
   DebugAssert(m_batch_start_vertex_ptr);
-  g_host_display->UnmapVertexBuffer(sizeof(BatchVertex), used_vertices);
+  g_gpu_device->UnmapVertexBuffer(sizeof(BatchVertex), used_vertices);
   m_batch_start_vertex_ptr = nullptr;
   m_batch_end_vertex_ptr = nullptr;
   m_batch_current_vertex_ptr = nullptr;
@@ -1078,17 +1078,17 @@ void GPU_HW::DrawBatchVertices(BatchRenderMode render_mode, u32 base_vertex, u32
 {
   // [depth_test][render_mode][texture_mode][transparency_mode][dithering][interlacing]
   const u8 depth_test = m_batch.use_depth_buffer ? static_cast<u8>(2) : BoolToUInt8(m_batch.check_mask_before_draw);
-  g_host_display->SetPipeline(
+  g_gpu_device->SetPipeline(
     m_batch_pipelines[depth_test][static_cast<u8>(render_mode)][static_cast<u8>(m_batch.texture_mode)][static_cast<u8>(
       m_batch.transparency_mode)][BoolToUInt8(m_batch.dithering)][BoolToUInt8(m_batch.interlacing)]
       .get());
-  g_host_display->Draw(num_vertices, base_vertex);
+  g_gpu_device->Draw(num_vertices, base_vertex);
 }
 
 void GPU_HW::ClearDisplay()
 {
-  g_host_display->ClearDisplayTexture();
-  g_host_display->ClearRenderTarget(m_display_texture.get(), 0xFF000000u);
+  g_gpu_device->ClearDisplayTexture();
+  g_gpu_device->ClearRenderTarget(m_display_texture.get(), 0xFF000000u);
 }
 
 void GPU_HW::HandleFlippedQuadTextureCoordinates(BatchVertex* vertices)
@@ -1843,7 +1843,7 @@ bool GPU_HW::BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u3
     m_vram_replacement_texture.reset();
 
     if (!(m_vram_replacement_texture =
-            g_host_display->CreateTexture(tex->GetWidth(), tex->GetHeight(), 1, 1, 1, GPUTexture::Type::Texture,
+            g_gpu_device->CreateTexture(tex->GetWidth(), tex->GetHeight(), 1, 1, 1, GPUTexture::Type::Texture,
                                           GPUTexture::Format::RGBA8, tex->GetPixels(), tex->GetPitch(), true)))
     {
       return false;
@@ -1858,11 +1858,11 @@ bool GPU_HW::BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u3
     }
   }
 
-  g_host_display->SetFramebuffer(m_vram_framebuffer.get()); // TODO: needed?
-  g_host_display->SetTextureSampler(0, m_vram_replacement_texture.get(), g_host_display->GetLinearSampler());
-  g_host_display->SetPipeline(m_copy_pipeline.get());
-  g_host_display->SetViewportAndScissor(dst_x, dst_y, width, height);
-  g_host_display->Draw(3, 0);
+  g_gpu_device->SetFramebuffer(m_vram_framebuffer.get()); // TODO: needed?
+  g_gpu_device->SetTextureSampler(0, m_vram_replacement_texture.get(), g_gpu_device->GetLinearSampler());
+  g_gpu_device->SetPipeline(m_copy_pipeline.get());
+  g_gpu_device->SetViewportAndScissor(dst_x, dst_y, width, height);
+  g_gpu_device->Draw(3, 0);
 
   RestoreGraphicsAPIState();
   return true;
@@ -2052,18 +2052,18 @@ void GPU_HW::FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color)
   IncludeVRAMDirtyRectangle(
     Common::Rectangle<u32>::FromExtents(x, y, width, height).Clamped(0, 0, VRAM_WIDTH, VRAM_HEIGHT));
 
-  g_host_display->SetPipeline(m_vram_fill_pipelines[BoolToUInt8(IsVRAMFillOversized(x, y, width, height))]
+  g_gpu_device->SetPipeline(m_vram_fill_pipelines[BoolToUInt8(IsVRAMFillOversized(x, y, width, height))]
                                                    [BoolToUInt8(IsInterlacedRenderingEnabled())]
                                                      .get());
 
   const Common::Rectangle<u32> bounds(GetVRAMTransferBounds(x, y, width, height));
-  g_host_display->SetViewportAndScissor(bounds.left * m_resolution_scale, bounds.top * m_resolution_scale,
+  g_gpu_device->SetViewportAndScissor(bounds.left * m_resolution_scale, bounds.top * m_resolution_scale,
                                         bounds.GetWidth() * m_resolution_scale,
                                         bounds.GetHeight() * m_resolution_scale);
 
   const VRAMFillUBOData uniforms = GetVRAMFillUBOData(x, y, width, height, color);
-  g_host_display->PushUniformBuffer(&uniforms, sizeof(uniforms));
-  g_host_display->Draw(3, 0);
+  g_gpu_device->PushUniformBuffer(&uniforms, sizeof(uniforms));
+  g_gpu_device->Draw(3, 0);
 
   RestoreGraphicsAPIState();
 }
@@ -2083,15 +2083,15 @@ void GPU_HW::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
 
   // Encode the 24-bit texture as 16-bit.
   const u32 uniforms[4] = {copy_rect.left, copy_rect.top, copy_rect.GetWidth(), copy_rect.GetHeight()};
-  g_host_display->SetPipeline(m_vram_readback_pipeline.get());
-  g_host_display->SetFramebuffer(m_vram_readback_framebuffer.get());
-  g_host_display->SetTextureSampler(0, m_vram_texture.get(), g_host_display->GetNearestSampler());
-  g_host_display->SetViewportAndScissor(0, 0, encoded_width, encoded_height);
-  g_host_display->PushUniformBuffer(uniforms, sizeof(uniforms));
-  g_host_display->Draw(3, 0);
+  g_gpu_device->SetPipeline(m_vram_readback_pipeline.get());
+  g_gpu_device->SetFramebuffer(m_vram_readback_framebuffer.get());
+  g_gpu_device->SetTextureSampler(0, m_vram_texture.get(), g_gpu_device->GetNearestSampler());
+  g_gpu_device->SetViewportAndScissor(0, 0, encoded_width, encoded_height);
+  g_gpu_device->PushUniformBuffer(uniforms, sizeof(uniforms));
+  g_gpu_device->Draw(3, 0);
 
   // Stage the readback and copy it into our shadow buffer.
-  g_host_display->DownloadTexture(m_vram_readback_texture.get(), 0, 0, encoded_width, encoded_height,
+  g_gpu_device->DownloadTexture(m_vram_readback_texture.get(), 0, 0, encoded_width, encoded_height,
                                   reinterpret_cast<u32*>(&m_vram_shadow[copy_rect.top * VRAM_WIDTH + copy_rect.left]),
                                   VRAM_WIDTH * sizeof(u16));
 
@@ -2133,12 +2133,12 @@ void GPU_HW::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, b
 
   // the viewport should already be set to the full vram, so just adjust the scissor
   const Common::Rectangle<u32> scaled_bounds = bounds * m_resolution_scale;
-  g_host_display->SetScissor(scaled_bounds.left, scaled_bounds.top, scaled_bounds.GetWidth(),
+  g_gpu_device->SetScissor(scaled_bounds.left, scaled_bounds.top, scaled_bounds.GetWidth(),
                              scaled_bounds.GetHeight());
-  g_host_display->SetPipeline(m_vram_write_pipelines[BoolToUInt8(check_mask && !m_pgxp_depth_buffer)].get());
-  g_host_display->PushUniformBuffer(&uniforms, sizeof(uniforms));
-  g_host_display->SetTextureBuffer(0, m_vram_upload_buffer.get());
-  g_host_display->Draw(3, 0);
+  g_gpu_device->SetPipeline(m_vram_write_pipelines[BoolToUInt8(check_mask && !m_pgxp_depth_buffer)].get());
+  g_gpu_device->PushUniformBuffer(&uniforms, sizeof(uniforms));
+  g_gpu_device->SetTextureBuffer(0, m_vram_upload_buffer.get());
+  g_gpu_device->Draw(3, 0);
 
   RestoreGraphicsAPIState();
 }
@@ -2160,12 +2160,12 @@ void GPU_HW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32
 
     // VRAM read texture should already be bound.
     const Common::Rectangle<u32> dst_bounds_scaled(dst_bounds * m_resolution_scale);
-    g_host_display->SetViewportAndScissor(dst_bounds_scaled.left, dst_bounds_scaled.top, dst_bounds_scaled.GetWidth(),
+    g_gpu_device->SetViewportAndScissor(dst_bounds_scaled.left, dst_bounds_scaled.top, dst_bounds_scaled.GetWidth(),
                                           dst_bounds_scaled.GetHeight());
-    g_host_display->SetPipeline(
+    g_gpu_device->SetPipeline(
       m_vram_copy_pipelines[BoolToUInt8(m_GPUSTAT.check_mask_before_draw && !m_pgxp_depth_buffer)].get());
-    g_host_display->PushUniformBuffer(&uniforms, sizeof(uniforms));
-    g_host_display->Draw(3, 0);
+    g_gpu_device->PushUniformBuffer(&uniforms, sizeof(uniforms));
+    g_gpu_device->Draw(3, 0);
     RestoreGraphicsAPIState();
 
     if (m_GPUSTAT.check_mask_before_draw && !m_pgxp_depth_buffer)
@@ -2192,7 +2192,7 @@ void GPU_HW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32
     m_current_depth++;
   }
 
-  g_host_display->CopyTextureRegion(m_vram_texture.get(), dst_x * m_resolution_scale, dst_y * m_resolution_scale, 0, 0,
+  g_gpu_device->CopyTextureRegion(m_vram_texture.get(), dst_x * m_resolution_scale, dst_y * m_resolution_scale, 0, 0,
                                     m_vram_read_texture.get(), src_x * m_resolution_scale, src_y * m_resolution_scale,
                                     0, 0, width * m_resolution_scale, height * m_resolution_scale);
 }
@@ -2324,7 +2324,7 @@ void GPU_HW::FlushRender()
 
   if (m_batch_ubo_dirty)
   {
-    g_host_display->UploadUniformBuffer(&m_batch_ubo_data, sizeof(m_batch_ubo_data));
+    g_gpu_device->UploadUniformBuffer(&m_batch_ubo_data, sizeof(m_batch_ubo_data));
     m_renderer_stats.num_uniform_buffer_updates++;
     m_batch_ubo_dirty = false;
   }
@@ -2351,21 +2351,21 @@ void GPU_HW::UpdateDisplay()
     if (IsUsingMultisampling())
     {
       UpdateVRAMReadTexture();
-      g_host_display->SetDisplayTexture(m_vram_read_texture.get(), 0, 0, m_vram_read_texture->GetWidth(),
+      g_gpu_device->SetDisplayTexture(m_vram_read_texture.get(), 0, 0, m_vram_read_texture->GetWidth(),
                                         m_vram_read_texture->GetHeight());
     }
     else
     {
-      g_host_display->SetDisplayTexture(m_vram_texture.get(), 0, 0, m_vram_texture->GetWidth(),
+      g_gpu_device->SetDisplayTexture(m_vram_texture.get(), 0, 0, m_vram_texture->GetWidth(),
                                         m_vram_texture->GetHeight());
     }
 
-    g_host_display->SetDisplayParameters(VRAM_WIDTH, VRAM_HEIGHT, 0, 0, VRAM_WIDTH, VRAM_HEIGHT,
+    g_gpu_device->SetDisplayParameters(VRAM_WIDTH, VRAM_HEIGHT, 0, 0, VRAM_WIDTH, VRAM_HEIGHT,
                                          static_cast<float>(VRAM_WIDTH) / static_cast<float>(VRAM_HEIGHT));
   }
   else
   {
-    g_host_display->SetDisplayParameters(m_crtc_state.display_width, m_crtc_state.display_height,
+    g_gpu_device->SetDisplayParameters(m_crtc_state.display_width, m_crtc_state.display_height,
                                          m_crtc_state.display_origin_left, m_crtc_state.display_origin_top,
                                          m_crtc_state.display_vram_width, m_crtc_state.display_vram_height,
                                          GetDisplayAspectRatio());
@@ -2383,7 +2383,7 @@ void GPU_HW::UpdateDisplay()
 
     if (IsDisplayDisabled())
     {
-      g_host_display->ClearDisplayTexture();
+      g_gpu_device->ClearDisplayTexture();
     }
     else if (!m_GPUSTAT.display_area_color_depth_24 && interlaced == InterlacedRenderMode::None &&
              !IsUsingMultisampling() && (scaled_vram_offset_x + scaled_display_width) <= m_vram_texture->GetWidth() &&
@@ -2397,7 +2397,7 @@ void GPU_HW::UpdateDisplay()
       }
       else
       {
-        g_host_display->SetDisplayTexture(m_vram_texture.get(), scaled_vram_offset_x, scaled_vram_offset_y,
+        g_gpu_device->SetDisplayTexture(m_vram_texture.get(), scaled_vram_offset_x, scaled_vram_offset_y,
                                           scaled_display_width, scaled_display_height);
       }
     }
@@ -2405,29 +2405,29 @@ void GPU_HW::UpdateDisplay()
     {
       // TODO: discard vs load for interlaced
       if (interlaced == InterlacedRenderMode::None)
-        g_host_display->InvalidateRenderTarget(m_display_texture.get());
+        g_gpu_device->InvalidateRenderTarget(m_display_texture.get());
 
-      g_host_display->SetPipeline(
+      g_gpu_device->SetPipeline(
         m_display_pipelines[BoolToUInt8(m_GPUSTAT.display_area_color_depth_24)][static_cast<u8>(interlaced)].get());
-      g_host_display->SetFramebuffer(m_display_framebuffer.get());
+      g_gpu_device->SetFramebuffer(m_display_framebuffer.get());
 
       const u32 reinterpret_field_offset = (interlaced != InterlacedRenderMode::None) ? GetInterlacedDisplayField() : 0;
       const u32 reinterpret_start_x = m_crtc_state.regs.X * resolution_scale;
       const u32 reinterpret_crop_left = (m_crtc_state.display_vram_left - m_crtc_state.regs.X) * resolution_scale;
       const u32 uniforms[4] = {reinterpret_start_x, scaled_vram_offset_y + reinterpret_field_offset,
                                reinterpret_crop_left, reinterpret_field_offset};
-      g_host_display->PushUniformBuffer(uniforms, sizeof(uniforms));
+      g_gpu_device->PushUniformBuffer(uniforms, sizeof(uniforms));
 
       Assert(scaled_display_width <= m_display_texture->GetWidth() &&
              scaled_display_height <= m_display_texture->GetHeight());
 
-      g_host_display->SetViewportAndScissor(0, 0, scaled_display_width, scaled_display_height);
-      g_host_display->Draw(3, 0);
+      g_gpu_device->SetViewportAndScissor(0, 0, scaled_display_width, scaled_display_height);
+      g_gpu_device->Draw(3, 0);
 
       if (IsUsingDownsampling())
         DownsampleFramebuffer(m_display_texture.get(), 0, 0, scaled_display_width, scaled_display_height);
       else
-        g_host_display->SetDisplayTexture(m_display_texture.get(), 0, 0, scaled_display_width, scaled_display_height);
+        g_gpu_device->SetDisplayTexture(m_display_texture.get(), 0, 0, scaled_display_width, scaled_display_height);
 
       RestoreGraphicsAPIState();
     }
@@ -2524,16 +2524,16 @@ void GPU_HW::DownsampleFramebufferBoxFilter(GPUTexture* source, u32 left, u32 to
 
   source->MakeReadyForSampling();
 
-  g_host_display->ClearRenderTarget(m_downsample_texture.get(), 0);
-  g_host_display->SetFramebuffer(m_downsample_framebuffer.get());
-  g_host_display->SetPipeline(m_downsample_first_pass_pipeline.get());
-  g_host_display->SetTextureSampler(0, source, g_host_display->GetNearestSampler());
-  g_host_display->SetViewportAndScissor(ds_left, ds_top, ds_width, ds_height);
-  g_host_display->Draw(3, 0);
+  g_gpu_device->ClearRenderTarget(m_downsample_texture.get(), 0);
+  g_gpu_device->SetFramebuffer(m_downsample_framebuffer.get());
+  g_gpu_device->SetPipeline(m_downsample_first_pass_pipeline.get());
+  g_gpu_device->SetTextureSampler(0, source, g_gpu_device->GetNearestSampler());
+  g_gpu_device->SetViewportAndScissor(ds_left, ds_top, ds_width, ds_height);
+  g_gpu_device->Draw(3, 0);
 
   RestoreGraphicsAPIState();
 
-  g_host_display->SetDisplayTexture(m_downsample_texture.get(), ds_left, ds_top, ds_width, ds_height);
+  g_gpu_device->SetDisplayTexture(m_downsample_texture.get(), ds_left, ds_top, ds_width, ds_height);
 }
 
 void GPU_HW::DrawRendererStats(bool is_idle_frame)

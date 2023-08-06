@@ -190,14 +190,14 @@ void UpdateAspectRatio()
   {
     case DisplayAspectRatio::MatchWindow:
     {
-      if (!g_host_display)
+      if (!g_gpu_device)
       {
         s_aspect_ratio = DisplayAspectRatio::R4_3;
         return;
       }
 
-      num = g_host_display->GetWindowWidth();
-      denom = g_host_display->GetWindowHeight();
+      num = g_gpu_device->GetWindowWidth();
+      denom = g_gpu_device->GetWindowHeight();
     }
     break;
 

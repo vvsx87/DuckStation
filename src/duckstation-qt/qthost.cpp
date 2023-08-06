@@ -339,13 +339,13 @@ void EmuThread::checkForSettingsChanges(const Settings& old_settings)
     updatePerformanceCounters();
   }
 
-  if (g_host_display)
+  if (g_gpu_device)
   {
     const bool render_to_main = shouldRenderToMain();
     if (m_is_rendering_to_main != render_to_main)
     {
       m_is_rendering_to_main = render_to_main;
-      g_host_display->UpdateWindow();
+      g_gpu_device->UpdateWindow();
     }
   }
 }
@@ -477,7 +477,7 @@ void EmuThread::stopFullscreenUI()
     QMetaObject::invokeMethod(this, &EmuThread::stopFullscreenUI, Qt::QueuedConnection);
 
     // wait until the host display is gone
-    while (g_host_display)
+    while (g_gpu_device)
       QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 1);
 
     return;
@@ -486,7 +486,7 @@ void EmuThread::stopFullscreenUI()
   if (System::IsValid())
     shutdownSystem();
 
-  if (!g_host_display)
+  if (!g_gpu_device)
     return;
 
   m_run_fullscreen_ui = false;
@@ -571,8 +571,8 @@ void EmuThread::onDisplayWindowMouseMoveEvent(bool relative, float x, float y)
   DebugAssert(isOnThread());
   if (!relative)
   {
-    if (g_host_display)
-      g_host_display->SetMousePosition(static_cast<s32>(x), static_cast<s32>(y));
+    if (g_gpu_device)
+      g_gpu_device->SetMousePosition(static_cast<s32>(x), static_cast<s32>(y));
 
     InputManager::UpdatePointerAbsolutePosition(0, x, y);
     ImGuiManager::UpdateMousePosition(x, y);
@@ -584,11 +584,11 @@ void EmuThread::onDisplayWindowMouseMoveEvent(bool relative, float x, float y)
     if (y != 0.0f)
       InputManager::UpdatePointerRelativeDelta(0, InputPointerAxis::Y, y);
 
-    if (g_host_display)
+    if (g_gpu_device)
     {
-      const float abs_x = static_cast<float>(g_host_display->GetMousePositionX()) + x;
-      const float abs_y = static_cast<float>(g_host_display->GetMousePositionY()) + y;
-      g_host_display->SetMousePosition(static_cast<s32>(abs_x), static_cast<s32>(abs_y));
+      const float abs_x = static_cast<float>(g_gpu_device->GetMousePositionX()) + x;
+      const float abs_y = static_cast<float>(g_gpu_device->GetMousePositionY()) + y;
+      g_gpu_device->SetMousePosition(static_cast<s32>(abs_x), static_cast<s32>(abs_y));
       ImGuiManager::UpdateMousePosition(abs_x, abs_y);
     }
   }
@@ -628,7 +628,7 @@ void EmuThread::redrawDisplayWindow()
     return;
   }
 
-  if (!g_host_display || System::IsShutdown())
+  if (!g_gpu_device || System::IsShutdown())
     return;
 
   renderDisplay(false);
@@ -654,7 +654,7 @@ void EmuThread::setFullscreen(bool fullscreen, bool allow_render_to_main)
     return;
   }
 
-  if (!g_host_display || m_is_fullscreen == fullscreen)
+  if (!g_gpu_device || m_is_fullscreen == fullscreen)
     return;
 
   m_is_fullscreen = fullscreen;
@@ -680,7 +680,7 @@ void EmuThread::setSurfaceless(bool surfaceless)
     return;
   }
 
-  if (!g_host_display || m_is_surfaceless == surfaceless)
+  if (!g_gpu_device || m_is_surfaceless == surfaceless)
     return;
 
   m_is_surfaceless = surfaceless;
@@ -703,10 +703,10 @@ void EmuThread::requestDisplaySize(float scale)
 
 std::optional<WindowInfo> EmuThread::acquireRenderWindow(bool recreate_window)
 {
-  DebugAssert(g_host_display);
+  DebugAssert(g_gpu_device);
   u32 fs_width, fs_height;
   float fs_refresh_rate;
-  m_is_exclusive_fullscreen = (m_is_fullscreen && g_host_display->SupportsExclusiveFullscreen() &&
+  m_is_exclusive_fullscreen = (m_is_fullscreen && g_gpu_device->SupportsExclusiveFullscreen() &&
                                GPUDevice::GetRequestedExclusiveFullscreenMode(&fs_width, &fs_height, &fs_refresh_rate));
 
   const bool window_fullscreen = m_is_fullscreen && !m_is_exclusive_fullscreen;
@@ -1363,11 +1363,11 @@ void EmuThread::run()
 
       m_event_loop->processEvents(QEventLoop::AllEvents);
       CommonHost::PumpMessagesOnCPUThread();
-      if (g_host_display)
+      if (g_gpu_device)
       {
         renderDisplay(false);
-        if (!g_host_display->IsVsyncEnabled())
-          g_host_display->ThrottlePresentation();
+        if (!g_gpu_device->IsVsyncEnabled())
+          g_gpu_device->ThrottlePresentation();
       }
     }
   }
@@ -1398,7 +1398,7 @@ void EmuThread::renderDisplay(bool skip_present)
   ImGuiManager::RenderOverlayWindows();
   ImGuiManager::RenderDebugWindows();
 
-  g_host_display->Render(skip_present);
+  g_gpu_device->Render(skip_present);
 
   ImGuiManager::NewFrame();
 }
@@ -1544,7 +1544,7 @@ void Host::ReleaseRenderWindow()
 
 void EmuThread::updatePerformanceCounters()
 {
-  const RenderAPI render_api = g_host_display ? g_host_display->GetRenderAPI() : RenderAPI::None;
+  const RenderAPI render_api = g_gpu_device ? g_gpu_device->GetRenderAPI() : RenderAPI::None;
   const bool hardware_renderer = g_gpu && g_gpu->IsHardwareRenderer();
   u32 render_width = 0;
   u32 render_height = 0;

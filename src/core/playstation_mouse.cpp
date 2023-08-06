@@ -16,8 +16,8 @@ static constexpr std::array<u8, static_cast<size_t>(PlayStationMouse::Button::Co
 
 PlayStationMouse::PlayStationMouse(u32 index) : Controller(index)
 {
-  m_last_host_position_x = g_host_display->GetMousePositionX();
-  m_last_host_position_y = g_host_display->GetMousePositionY();
+  m_last_host_position_x = g_gpu_device->GetMousePositionX();
+  m_last_host_position_y = g_gpu_device->GetMousePositionY();
 }
 
 PlayStationMouse::~PlayStationMouse() = default;
@@ -157,8 +157,8 @@ bool PlayStationMouse::Transfer(const u8 data_in, u8* data_out)
 void PlayStationMouse::UpdatePosition()
 {
   // get screen coordinates
-  const s32 mouse_x = g_host_display->GetMousePositionX();
-  const s32 mouse_y = g_host_display->GetMousePositionY();
+  const s32 mouse_x = g_gpu_device->GetMousePositionX();
+  const s32 mouse_y = g_gpu_device->GetMousePositionY();
   const s32 delta_x = mouse_x - m_last_host_position_x;
   const s32 delta_y = mouse_y - m_last_host_position_y;
   m_last_host_position_x = mouse_x;

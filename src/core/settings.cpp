@@ -1081,11 +1081,11 @@ float Settings::GetDisplayAspectRatioValue() const
   {
     case DisplayAspectRatio::MatchWindow:
     {
-      if (!g_host_display)
+      if (!g_gpu_device)
         return s_display_aspect_ratio_values[static_cast<int>(DEFAULT_DISPLAY_ASPECT_RATIO)];
 
-      return static_cast<float>(g_host_display->GetWindowWidth()) /
-             static_cast<float>(g_host_display->GetWindowHeight());
+      return static_cast<float>(g_gpu_device->GetWindowWidth()) /
+             static_cast<float>(g_gpu_device->GetWindowHeight());
     }
 
     case DisplayAspectRatio::Custom:

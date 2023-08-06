@@ -29,7 +29,7 @@ public:
   OpenGLDevice();
   ~OpenGLDevice();
 
-  ALWAYS_INLINE static OpenGLDevice& GetInstance() { return *static_cast<OpenGLDevice*>(g_host_display.get()); }
+  ALWAYS_INLINE static OpenGLDevice& GetInstance() { return *static_cast<OpenGLDevice*>(g_gpu_device.get()); }
   ALWAYS_INLINE static OpenGLStreamBuffer* GetTextureStreamBuffer()
   {
     return GetInstance().m_texture_stream_buffer.get();

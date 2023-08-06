@@ -52,7 +52,7 @@ extern std::unique_ptr<GPUDevice> WrapNewMetalDevice();
 // TODO: input layout => VAO in GL, buffer might change
 // TODO: one big lookup table for render passes, or dynamic rendering
 
-std::unique_ptr<GPUDevice> g_host_display;
+std::unique_ptr<GPUDevice> g_gpu_device;
 
 GPUFramebuffer::GPUFramebuffer(GPUTexture* rt, GPUTexture* ds, u32 width, u32 height)
   : m_rt(rt), m_ds(ds), m_width(width), m_height(height)

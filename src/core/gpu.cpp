@@ -27,8 +27,8 @@ GPU::GPU() = default;
 
 GPU::~GPU()
 {
-  if (g_host_display)
-    g_host_display->SetGPUTimingEnabled(false);
+  if (g_gpu_device)
+    g_gpu_device->SetGPUTimingEnabled(false);
 }
 
 bool GPU::Initialize()
@@ -49,12 +49,12 @@ bool GPU::Initialize()
   UpdateCRTCConfig();
 
   if (g_settings.display_post_processing && !g_settings.display_post_process_chain.empty() &&
-      !g_host_display->SetPostProcessingChain(g_settings.display_post_process_chain))
+      !g_gpu_device->SetPostProcessingChain(g_settings.display_post_process_chain))
   {
     Host::AddOSDMessage(Host::TranslateStdString("OSDMessage", "Failed to load post processing shader chain."), 20.0f);
   }
 
-  g_host_display->SetGPUTimingEnabled(g_settings.display_show_gpu);
+  g_gpu_device->SetGPUTimingEnabled(g_settings.display_show_gpu);
 
   return true;
 }
@@ -75,7 +75,7 @@ void GPU::UpdateSettings()
   // Crop mode calls this, so recalculate the display area
   UpdateCRTCDisplayParameters();
 
-  g_host_display->SetGPUTimingEnabled(g_settings.display_show_gpu);
+  g_gpu_device->SetGPUTimingEnabled(g_settings.display_show_gpu);
 }
 
 void GPU::CPUClockChanged()
@@ -971,8 +971,8 @@ void GPU::UpdateCommandTickEvent()
 bool GPU::ConvertScreenCoordinatesToBeamTicksAndLines(s32 window_x, s32 window_y, float x_scale, u32* out_tick,
                                                       u32* out_line) const
 {
-  auto [display_x, display_y] = g_host_display->ConvertWindowCoordinatesToDisplayCoordinates(
-    window_x, window_y, g_host_display->GetWindowWidth(), g_host_display->GetWindowHeight());
+  auto [display_x, display_y] = g_gpu_device->ConvertWindowCoordinatesToDisplayCoordinates(
+    window_x, window_y, g_gpu_device->GetWindowWidth(), g_gpu_device->GetWindowHeight());
 
   if (x_scale != 1.0f)
   {

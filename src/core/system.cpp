@@ -1134,7 +1134,7 @@ bool System::BootSystem(SystemBootParameters parameters)
   Assert(s_state == State::Shutdown);
   s_state = State::Starting;
   s_startup_cancelled.store(false);
-  s_keep_gpu_device_on_shutdown = static_cast<bool>(g_host_display);
+  s_keep_gpu_device_on_shutdown = static_cast<bool>(g_gpu_device);
   s_region = g_settings.region;
   Host::OnSystemStarting();
 
@@ -1523,9 +1523,9 @@ void System::DestroySystem()
   ClearRunningGame();
 
   // Restore present-all-frames behavior.
-  if (s_keep_gpu_device_on_shutdown && g_host_display)
+  if (s_keep_gpu_device_on_shutdown && g_gpu_device)
   {
-    g_host_display->SetDisplayMaxFPS(0.0f);
+    g_gpu_device->SetDisplayMaxFPS(0.0f);
     UpdateSoftwareCursor();
   }
   else
@@ -1577,11 +1577,11 @@ void System::Execute()
       PauseSystem(true);
     }
 
-    const bool skip_present = g_host_display->ShouldSkipDisplayingFrame();
+    const bool skip_present = g_gpu_device->ShouldSkipDisplayingFrame();
     Host::RenderDisplay(skip_present);
-    if (!skip_present && g_host_display->IsGPUTimingEnabled())
+    if (!skip_present && g_gpu_device->IsGPUTimingEnabled())
     {
-      s_accumulated_gpu_time += g_host_display->GetAndResetAccumulatedGPUTime();
+      s_accumulated_gpu_time += g_gpu_device->GetAndResetAccumulatedGPUTime();
       s_presents_since_last_update++;
     }
 
@@ -1635,12 +1635,12 @@ bool System::CreateGPU(GPURenderer renderer)
 {
   const RenderAPI api = Settings::GetRenderAPIForRenderer(renderer);
 
-  if (!g_host_display || g_host_display->GetRenderAPI() != api)
+  if (!g_gpu_device || g_gpu_device->GetRenderAPI() != api)
   {
-    if (g_host_display)
+    if (g_gpu_device)
     {
       Log_WarningPrintf("Recreating GPU device, expecting %s got %s", GPUDevice::RenderAPIToString(api),
-                        GPUDevice::RenderAPIToString(g_host_display->GetRenderAPI()));
+                        GPUDevice::RenderAPIToString(g_gpu_device->GetRenderAPI()));
     }
 
     Host::ReleaseGPUDevice();
@@ -2079,7 +2079,7 @@ bool System::InternalSaveState(ByteStream* state, u32 screenshot_size /* = 256 *
   if (screenshot_size > 0)
   {
     // assume this size is the width
-    const float display_aspect_ratio = g_host_display->GetDisplayAspectRatio();
+    const float display_aspect_ratio = g_gpu_device->GetDisplayAspectRatio();
     const u32 screenshot_width = screenshot_size;
     const u32 screenshot_height =
       std::max(1u, static_cast<u32>(static_cast<float>(screenshot_width) /
@@ -2089,7 +2089,7 @@ bool System::InternalSaveState(ByteStream* state, u32 screenshot_size /* = 256 *
     std::vector<u32> screenshot_buffer;
     u32 screenshot_stride;
     GPUTexture::Format screenshot_format;
-    if (g_host_display->RenderScreenshot(screenshot_width, screenshot_height,
+    if (g_gpu_device->RenderScreenshot(screenshot_width, screenshot_height,
                                          Common::Rectangle<s32>::FromExtents(0, 0, screenshot_width, screenshot_height),
                                          &screenshot_buffer, &screenshot_stride, &screenshot_format) &&
         GPUTexture::ConvertTextureDataToRGBA8(screenshot_width, screenshot_height, screenshot_buffer, screenshot_stride,
@@ -2102,7 +2102,7 @@ bool System::InternalSaveState(ByteStream* state, u32 screenshot_size /* = 256 *
       }
       else
       {
-        if (g_host_display->UsesLowerLeftOrigin())
+        if (g_gpu_device->UsesLowerLeftOrigin())
         {
           GPUTexture::FlipTextureDataRGBA8(screenshot_width, screenshot_height, screenshot_buffer, screenshot_stride);
         }
@@ -2367,7 +2367,7 @@ void System::UpdatePerformanceCounters()
 
   s_fps_timer.ResetTo(now_ticks);
 
-  if (g_host_display->IsGPUTimingEnabled())
+  if (g_gpu_device->IsGPUTimingEnabled())
   {
     s_average_gpu_time = s_accumulated_gpu_time / static_cast<float>(std::max(s_presents_since_last_update, 1u));
     s_gpu_usage = s_accumulated_gpu_time / (time * 10.0f);
@@ -2414,7 +2414,7 @@ void System::UpdateSpeedLimiterState()
       s_target_speed == 1.0f && IsValid())
   {
     float host_refresh_rate;
-    if (g_host_display->GetHostRefreshRate(&host_refresh_rate))
+    if (g_gpu_device->GetHostRefreshRate(&host_refresh_rate))
     {
       const float ratio = host_refresh_rate / System::GetThrottleFrequency();
       s_syncing_to_host = (ratio >= 0.95f && ratio <= 1.05f);
@@ -2470,8 +2470,8 @@ void System::UpdateDisplaySync()
   Log_VerbosePrintf("Max display fps: %f (%s)", max_display_fps,
                     s_display_all_frames ? "displaying all frames" : "skipping displaying frames when needed");
 
-  g_host_display->SetDisplayMaxFPS(max_display_fps);
-  g_host_display->SetVSync(video_sync_enabled);
+  g_gpu_device->SetDisplayMaxFPS(max_display_fps);
+  g_gpu_device->SetVSync(video_sync_enabled);
 }
 
 bool System::ShouldUseVSync()
@@ -3436,13 +3436,13 @@ void System::CheckForSettingsChanges(const Settings& old_settings)
     {
       if (g_settings.display_post_processing && !g_settings.display_post_process_chain.empty())
       {
-        if (!g_host_display->SetPostProcessingChain(g_settings.display_post_process_chain))
+        if (!g_gpu_device->SetPostProcessingChain(g_settings.display_post_process_chain))
           Host::AddOSDMessage(Host::TranslateStdString("OSDMessage", "Failed to load post processing shader chain."),
                               20.0f);
       }
       else
       {
-        g_host_display->SetPostProcessingChain({});
+        g_gpu_device->SetPostProcessingChain({});
       }
     }
   }
@@ -3934,7 +3934,7 @@ bool System::SaveScreenshot(const char* filename /* = nullptr */, bool full_reso
     return false;
   }
 
-  const bool screenshot_saved = g_host_display->WriteScreenshotToFile(
+  const bool screenshot_saved = g_gpu_device->WriteScreenshotToFile(
     filename, g_settings.display_internal_resolution_screenshots, compress_on_thread);
 
   if (!screenshot_saved)
@@ -4293,7 +4293,7 @@ void System::TogglePostProcessing()
     Host::AddKeyedOSDMessage("PostProcessing",
                              Host::TranslateStdString("OSDMessage", "Post-processing is now enabled."), 10.0f);
 
-    if (!g_host_display->SetPostProcessingChain(g_settings.display_post_process_chain))
+    if (!g_gpu_device->SetPostProcessingChain(g_settings.display_post_process_chain))
       Host::AddOSDMessage(Host::TranslateStdString("OSDMessage", "Failed to load post processing shader chain."),
                           20.0f);
   }
@@ -4301,7 +4301,7 @@ void System::TogglePostProcessing()
   {
     Host::AddKeyedOSDMessage("PostProcessing",
                              Host::TranslateStdString("OSDMessage", "Post-processing is now disabled."), 10.0f);
-    g_host_display->SetPostProcessingChain({});
+    g_gpu_device->SetPostProcessingChain({});
   }
 }
 
@@ -4310,7 +4310,7 @@ void System::ReloadPostProcessingShaders()
   if (!IsValid() || !g_settings.display_post_processing)
     return;
 
-  if (!g_host_display->SetPostProcessingChain(g_settings.display_post_process_chain))
+  if (!g_gpu_device->SetPostProcessingChain(g_settings.display_post_process_chain))
     Host::AddOSDMessage(Host::TranslateStdString("OSDMessage", "Failed to load post-processing shader chain."), 20.0f);
   else
     Host::AddOSDMessage(Host::TranslateStdString("OSDMessage", "Post-processing shaders reloaded."), 10.0f);
@@ -4378,7 +4378,7 @@ void System::UpdateSoftwareCursor()
   if (!IsValid())
   {
     Host::SetMouseMode(false, false);
-    g_host_display->ClearSoftwareCursor();
+    g_gpu_device->ClearSoftwareCursor();
     return;
   }
 
@@ -4401,12 +4401,12 @@ void System::UpdateSoftwareCursor()
 
   if (image && image->IsValid())
   {
-    g_host_display->SetSoftwareCursor(image->GetPixels(), image->GetWidth(), image->GetHeight(), image->GetPitch(),
+    g_gpu_device->SetSoftwareCursor(image->GetPixels(), image->GetWidth(), image->GetHeight(), image->GetPitch(),
                                       image_scale);
   }
   else
   {
-    g_host_display->ClearSoftwareCursor();
+    g_gpu_device->ClearSoftwareCursor();
   }
 }
 
@@ -4419,13 +4419,13 @@ void System::RequestDisplaySize(float scale /*= 0.0f*/)
     scale = g_gpu->IsHardwareRenderer() ? static_cast<float>(g_settings.gpu_resolution_scale) : 1.0f;
 
   const float y_scale =
-    (static_cast<float>(g_host_display->GetDisplayWidth()) / static_cast<float>(g_host_display->GetDisplayHeight())) /
-    g_host_display->GetDisplayAspectRatio();
+    (static_cast<float>(g_gpu_device->GetDisplayWidth()) / static_cast<float>(g_gpu_device->GetDisplayHeight())) /
+    g_gpu_device->GetDisplayAspectRatio();
 
   const u32 requested_width =
-    std::max<u32>(static_cast<u32>(std::ceil(static_cast<float>(g_host_display->GetDisplayWidth()) * scale)), 1);
+    std::max<u32>(static_cast<u32>(std::ceil(static_cast<float>(g_gpu_device->GetDisplayWidth()) * scale)), 1);
   const u32 requested_height = std::max<u32>(
-    static_cast<u32>(std::ceil(static_cast<float>(g_host_display->GetDisplayHeight()) * y_scale * scale)), 1);
+    static_cast<u32>(std::ceil(static_cast<float>(g_gpu_device->GetDisplayHeight()) * y_scale * scale)), 1);
 
   Host::RequestResizeHostDisplay(static_cast<s32>(requested_width), static_cast<s32>(requested_height));
 }

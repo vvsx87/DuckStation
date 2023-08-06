@@ -207,13 +207,13 @@ bool PostProcessingChain::CheckTargets(GPUTexture::Format format, u32 target_wid
     m_input_framebuffer.reset();
     m_input_texture.reset();
 
-    if (!(m_input_texture = g_host_display->CreateTexture(target_width, target_height, 1, 1, 1,
+    if (!(m_input_texture = g_gpu_device->CreateTexture(target_width, target_height, 1, 1, 1,
                                                           GPUTexture::Type::RenderTarget, format)))
     {
       return false;
     }
 
-    if (!(m_input_framebuffer = g_host_display->CreateFramebuffer(m_input_texture.get())))
+    if (!(m_input_framebuffer = g_gpu_device->CreateFramebuffer(m_input_texture.get())))
     {
       m_input_texture.reset();
       return false;
@@ -236,7 +236,7 @@ bool PostProcessingChain::CheckTargets(GPUTexture::Format format, u32 target_wid
     config.address_u = GPUSampler::AddressMode::ClampToBorder;
     config.address_v = GPUSampler::AddressMode::ClampToBorder;
     config.border_color = 0xFF000000u;
-    if (!(m_border_sampler = g_host_display->CreateSampler(config)))
+    if (!(m_border_sampler = g_gpu_device->CreateSampler(config)))
       return false;
   }
 
@@ -246,12 +246,12 @@ bool PostProcessingChain::CheckTargets(GPUTexture::Format format, u32 target_wid
 bool PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s32 final_top, s32 final_width,
                                 s32 final_height, s32 orig_width, s32 orig_height, u32 target_width, u32 target_height)
 {
-  const u32 window_width = final_target ? final_target->GetWidth() : g_host_display->GetWindowWidth();
-  const u32 window_height = final_target ? final_target->GetHeight() : g_host_display->GetWindowHeight();
+  const u32 window_width = final_target ? final_target->GetWidth() : g_gpu_device->GetWindowWidth();
+  const u32 window_height = final_target ? final_target->GetHeight() : g_gpu_device->GetWindowHeight();
 
   GL_PUSH("PostProcessingChain Apply");
 
-  g_host_display->SetViewportAndScissor(final_left, final_top, final_width, final_height);
+  g_gpu_device->SetViewportAndScissor(final_left, final_top, final_width, final_height);
 
   GPUTexture* input = m_input_texture.get();
   input->MakeReadyForSampling();
@@ -266,11 +266,11 @@ bool PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s3
 
     // Assumes final stage has been cleared already.
     if (!is_final)
-      g_host_display->ClearRenderTarget(stage.GetOutputTexture(), 0);
+      g_gpu_device->ClearRenderTarget(stage.GetOutputTexture(), 0);
 
     if (is_final && !final_target)
     {
-      if (!g_host_display->BeginPresent(false))
+      if (!g_gpu_device->BeginPresent(false))
       {
         result = false;
         break;
@@ -278,19 +278,19 @@ bool PostProcessingChain::Apply(GPUFramebuffer* final_target, s32 final_left, s3
     }
     else
     {
-      g_host_display->SetFramebuffer(is_final ? final_target : stage.GetOutputFramebuffer());
+      g_gpu_device->SetFramebuffer(is_final ? final_target : stage.GetOutputFramebuffer());
     }
 
-    g_host_display->SetPipeline(stage.GetPipeline());
-    g_host_display->SetTextureSampler(0, input, m_border_sampler.get());
+    g_gpu_device->SetPipeline(stage.GetPipeline());
+    g_gpu_device->SetTextureSampler(0, input, m_border_sampler.get());
 
     const u32 uniforms_size = stage.GetUniformsSize();
-    void* uniforms = g_host_display->MapUniformBuffer(uniforms_size);
+    void* uniforms = g_gpu_device->MapUniformBuffer(uniforms_size);
     stage.FillUniformBuffer(uniforms, input->GetWidth(), input->GetHeight(), final_left, final_top, final_width,
                             final_height, window_width, window_height, orig_width, orig_height,
                             static_cast<float>(m_timer.GetTimeSeconds()));
-    g_host_display->UnmapUniformBuffer(uniforms_size);
-    g_host_display->Draw(3, 0);
+    g_gpu_device->UnmapUniformBuffer(uniforms_size);
+    g_gpu_device->Draw(3, 0);
 
     if (!is_final)
     {

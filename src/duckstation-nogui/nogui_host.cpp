@@ -413,7 +413,7 @@ void NoGUIHost::StartSystem(SystemBootParameters params)
 void NoGUIHost::ProcessPlatformWindowResize(s32 width, s32 height, float scale)
 {
   Host::RunOnCPUThread([width, height, scale]() {
-    g_host_display->ResizeWindow(width, height, scale);
+    g_gpu_device->ResizeWindow(width, height, scale);
     ImGuiManager::WindowResized();
     System::HostDisplayResized();
   });
@@ -421,8 +421,8 @@ void NoGUIHost::ProcessPlatformWindowResize(s32 width, s32 height, float scale)
 
 void NoGUIHost::ProcessPlatformMouseMoveEvent(float x, float y)
 {
-  if (g_host_display)
-    g_host_display->SetMousePosition(static_cast<s32>(x), static_cast<s32>(y));
+  if (g_gpu_device)
+    g_gpu_device->SetMousePosition(static_cast<s32>(x), static_cast<s32>(y));
 
   InputManager::UpdatePointerAbsolutePosition(0, x, y);
   ImGuiManager::UpdateMousePosition(x, y);
@@ -645,8 +645,8 @@ void NoGUIHost::CPUThreadMainLoop()
 
     Host::PumpMessagesOnCPUThread();
     Host::RenderDisplay(false);
-    if (!g_host_display->IsVsyncEnabled())
-      g_host_display->ThrottlePresentation();
+    if (!g_gpu_device->IsVsyncEnabled())
+      g_gpu_device->ThrottlePresentation();
   }
 }
 
@@ -748,7 +748,7 @@ void Host::RenderDisplay(bool skip_present)
   ImGuiManager::RenderOverlayWindows();
   ImGuiManager::RenderDebugWindows();
 
-  g_host_display->Render(skip_present);
+  g_gpu_device->Render(skip_present);
 
   ImGuiManager::NewFrame();
 }

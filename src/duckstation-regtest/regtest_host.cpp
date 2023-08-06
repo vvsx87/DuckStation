@@ -287,13 +287,13 @@ void Host::SetFullscreen(bool enabled)
 
 bool Host::AcquireHostDisplay(RenderAPI api)
 {
-  g_host_display = std::make_unique<RegTestHostDisplay>();
+  g_gpu_device = std::make_unique<RegTestHostDisplay>();
   return true;
 }
 
 void Host::ReleaseHostDisplay()
 {
-  g_host_display.reset();
+  g_gpu_device.reset();
 }
 
 void Host::RenderDisplay(bool skip_present)
@@ -302,7 +302,7 @@ void Host::RenderDisplay(bool skip_present)
   if (s_frame_dump_interval > 0 && (s_frame_dump_interval == 1 || (frame % s_frame_dump_interval) == 0))
   {
     std::string dump_filename(RegTestHost::GetFrameDumpFilename(frame));
-    g_host_display->WriteDisplayTextureToFile(std::move(dump_filename));
+    g_gpu_device->WriteDisplayTextureToFile(std::move(dump_filename));
   }
 }
 

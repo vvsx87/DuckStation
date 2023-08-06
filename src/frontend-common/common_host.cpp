@@ -131,29 +131,29 @@ void CommonHost::PumpMessagesOnCPUThread()
 
 bool Host::CreateGPUDevice(RenderAPI api)
 {
-  DebugAssert(!g_host_display);
+  DebugAssert(!g_gpu_device);
 
   Log_InfoPrintf("Trying to create a %s GPU device...", GPUDevice::RenderAPIToString(api));
-  g_host_display = GPUDevice::CreateDeviceForAPI(api);
+  g_gpu_device = GPUDevice::CreateDeviceForAPI(api);
 
   // TODO: option to disable shader cache
   // TODO: FSUI should always use vsync..
   const bool vsync = System::IsValid() ? System::ShouldUseVSync() : g_settings.video_sync_enabled;
-  if (!g_host_display ||
-      !g_host_display->Create(g_settings.gpu_adapter, EmuFolders::Cache, g_settings.gpu_use_debug_device, vsync))
+  if (!g_gpu_device ||
+      !g_gpu_device->Create(g_settings.gpu_adapter, EmuFolders::Cache, g_settings.gpu_use_debug_device, vsync))
   {
     Log_ErrorPrintf("Failed to initialize GPU device.");
-    if (g_host_display)
-      g_host_display->Destroy();
-    g_host_display.reset();
+    if (g_gpu_device)
+      g_gpu_device->Destroy();
+    g_gpu_device.reset();
     return false;
   }
 
   if (!ImGuiManager::Initialize())
   {
     Log_ErrorPrintf("Failed to initialize ImGuiManager.");
-    g_host_display->Destroy();
-    g_host_display.reset();
+    g_gpu_device->Destroy();
+    g_gpu_device.reset();
     return false;
   }
 
@@ -162,10 +162,10 @@ bool Host::CreateGPUDevice(RenderAPI api)
 
 void Host::UpdateDisplayWindow()
 {
-  if (!g_host_display)
+  if (!g_gpu_device)
     return;
 
-  if (!g_host_display->UpdateWindow())
+  if (!g_gpu_device->UpdateWindow())
   {
     Host::ReportErrorAsync("Error", "Failed to change window after update. The log may contain more information.");
     return;
@@ -180,12 +180,12 @@ void Host::UpdateDisplayWindow()
 
 void Host::ResizeDisplayWindow(s32 width, s32 height, float scale)
 {
-  if (!g_host_display)
+  if (!g_gpu_device)
     return;
 
   Log_DevPrintf("Display window resized to %dx%d", width, height);
 
-  g_host_display->ResizeWindow(width, height, scale);
+  g_gpu_device->ResizeWindow(width, height, scale);
   ImGuiManager::WindowResized();
 
   // If we're paused, re-present the current frame at the new window size.
@@ -200,15 +200,15 @@ void Host::ResizeDisplayWindow(s32 width, s32 height, float scale)
 
 void Host::ReleaseGPUDevice()
 {
-  if (!g_host_display)
+  if (!g_gpu_device)
     return;
 
   SaveStateSelectorUI::DestroyTextures();
   ImGuiManager::Shutdown();
 
-  Log_InfoPrintf("Destroying %s GPU device...", GPUDevice::RenderAPIToString(g_host_display->GetRenderAPI()));
-  g_host_display->Destroy();
-  g_host_display.reset();
+  Log_InfoPrintf("Destroying %s GPU device...", GPUDevice::RenderAPIToString(g_gpu_device->GetRenderAPI()));
+  g_gpu_device->Destroy();
+  g_gpu_device.reset();
 }
 
 #ifndef __ANDROID__
@@ -503,7 +503,7 @@ void Host::DisplayLoadingScreen(const char* message, int progress_min /*= -1*/, 
   ImGui::End();
 
   ImGui::EndFrame();
-  g_host_display->Render(false);
+  g_gpu_device->Render(false);
   ImGui::NewFrame();
 }
 

@@ -709,8 +709,7 @@ private:
   std::unique_ptr<PostProcessingChain> m_post_processing_chain;
 };
 
-/// Returns a pointer to the current host display abstraction. Assumes AcquireHostDisplay() has been called.
-extern std::unique_ptr<GPUDevice> g_host_display;
+extern std::unique_ptr<GPUDevice> g_gpu_device;
 
 namespace Host {
 /// Called when the core is creating a render device.
@@ -733,13 +732,13 @@ void InvalidateDisplay();
 struct GLAutoPop
 {
   GLAutoPop(int dummy) {}
-  ~GLAutoPop() { g_host_display->PopDebugGroup(); }
+  ~GLAutoPop() { g_gpu_device->PopDebugGroup(); }
 };
 
-#define GL_SCOPE(...) GLAutoPop gl_auto_pop((g_host_display->PushDebugGroup(__VA_ARGS__), 0))
-#define GL_PUSH(...) g_host_display->PushDebugGroup(__VA_ARGS__)
-#define GL_POP() g_host_display->PopDebugGroup()
-#define GL_INS(...) g_host_display->InsertDebugMessage(__VA_ARGS__)
+#define GL_SCOPE(...) GLAutoPop gl_auto_pop((g_gpu_device->PushDebugGroup(__VA_ARGS__), 0))
+#define GL_PUSH(...) g_gpu_device->PushDebugGroup(__VA_ARGS__)
+#define GL_POP() g_gpu_device->PopDebugGroup()
+#define GL_INS(...) g_gpu_device->InsertDebugMessage(__VA_ARGS__)
 #define GL_OBJECT_NAME(obj, ...) (obj)->SetDebugName(StringUtil::StdStringFromFormat(__VA_ARGS__))
 #else
 #define GL_SCOPE(...) (void)0

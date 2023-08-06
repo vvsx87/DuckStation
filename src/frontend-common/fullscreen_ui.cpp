@@ -2355,7 +2355,7 @@ void FullscreenUI::SwitchToGameSettings(const GameList::Entry* entry)
 
 void FullscreenUI::PopulateGraphicsAdapterList()
 {
-  GPUDevice::AdapterAndModeList ml(g_host_display->GetAdapterAndModeList());
+  GPUDevice::AdapterAndModeList ml(g_gpu_device->GetAdapterAndModeList());
   s_graphics_adapter_list_cache = std::move(ml.adapter_names);
   s_fullscreen_mode_list_cache = std::move(ml.fullscreen_modes);
   s_fullscreen_mode_list_cache.insert(s_fullscreen_mode_list_cache.begin(), "Borderless Fullscreen");
@@ -3544,7 +3544,7 @@ void FullscreenUI::DrawDisplaySettingsPage()
                           adapter.has_value() ? (adapter->empty() ? "Default" : adapter->c_str()) :
                                                 "Use Global Setting"))
   {
-    GPUDevice::AdapterAndModeList aml(g_host_display->GetAdapterAndModeList());
+    GPUDevice::AdapterAndModeList aml(g_gpu_device->GetAdapterAndModeList());
 
     ImGuiFullscreen::ChoiceDialogOptions options;
     options.reserve(aml.adapter_names.size() + 2);
@@ -3588,7 +3588,7 @@ void FullscreenUI::DrawDisplaySettingsPage()
                           fsmode.has_value() ? (fsmode->empty() ? "Borderless Fullscreen" : fsmode->c_str()) :
                                                "Use Global Setting"))
   {
-    GPUDevice::AdapterAndModeList aml(g_host_display->GetAdapterAndModeList());
+    GPUDevice::AdapterAndModeList aml(g_gpu_device->GetAdapterAndModeList());
 
     ImGuiFullscreen::ChoiceDialogOptions options;
     options.reserve(aml.fullscreen_modes.size() + 2);
@@ -3819,7 +3819,7 @@ void FullscreenUI::SavePostProcessingChain()
   const std::string config(s_postprocessing_chain.GetConfigString());
   bsi->SetStringValue("Display", "PostProcessChain", config.c_str());
   if (bsi->GetBoolValue("Display", "PostProcessing", false))
-    g_host_display->SetPostProcessingChain(config);
+    g_gpu_device->SetPostProcessingChain(config);
   if (IsEditingGameSettings(bsi))
   {
     s_game_settings_interface->Save();
@@ -3854,7 +3854,7 @@ void FullscreenUI::DrawPostProcessingSettingsPage()
                  bsi->GetBoolValue("Display", "PostProcessing", false)))
   {
     const std::string chain(bsi->GetStringValue("Display", "PostProcessChain", ""));
-    g_host_display->SetPostProcessingChain(chain);
+    g_gpu_device->SetPostProcessingChain(chain);
     if (chain.empty())
       ShowToast(std::string(), "Post-processing chain is empty.");
     else
@@ -4860,13 +4860,13 @@ void FullscreenUI::PopulateSaveStateScreenshot(SaveStateListEntry* li, const Ext
   li->preview_texture.reset();
   if (ssi && !ssi->screenshot_data.empty())
   {
-    li->preview_texture = g_host_display->CreateTexture(
+    li->preview_texture = g_gpu_device->CreateTexture(
       ssi->screenshot_width, ssi->screenshot_height, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8,
       ssi->screenshot_data.data(), sizeof(u32) * ssi->screenshot_width, false);
   }
   else
   {
-    li->preview_texture = g_host_display->CreateTexture(
+    li->preview_texture = g_gpu_device->CreateTexture(
       PLACEHOLDER_ICON_WIDTH, PLACEHOLDER_ICON_HEIGHT, 1, 1, 1, GPUTexture::Type::Texture, GPUTexture::Format::RGBA8,
       PLACEHOLDER_ICON_DATA, sizeof(u32) * PLACEHOLDER_ICON_WIDTH, false);
   }
