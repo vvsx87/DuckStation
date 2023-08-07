@@ -814,9 +814,10 @@ std::string GPUDevice::GetShaderDumpPath(const std::string_view& name)
 
 std::array<float, 4> GPUDevice::RGBA8ToFloat(u32 rgba)
 {
-  return std::array<float, 4>{static_cast<float>(rgba & 0xFF) / 255.0f, static_cast<float>((rgba >> 8) & 0xFF) / 255.0f,
-                              static_cast<float>((rgba >> 16) & 0xFF) / 255.0f,
-                              static_cast<float>((rgba >> 24) & 0xFF) / 255.0f};
+  return std::array<float, 4>{static_cast<float>(rgba & UINT32_C(0xFF)) * (1.0f / 255.0f),
+                              static_cast<float>((rgba >> 8) & UINT32_C(0xFF)) * (1.0f / 255.0f),
+                              static_cast<float>((rgba >> 16) & UINT32_C(0xFF)) * (1.0f / 255.0f),
+                              static_cast<float>(rgba >> 24) * (1.0f / 255.0f)};
 }
 
 bool GPUDevice::UpdateImGuiFontTexture()

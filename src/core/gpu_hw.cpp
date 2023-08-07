@@ -46,6 +46,29 @@ ALWAYS_INLINE static bool ShouldDisableColorPerspective()
   return g_settings.gpu_pgxp_enable && g_settings.gpu_pgxp_texture_correction && !g_settings.gpu_pgxp_color_correction;
 }
 
+/// Returns true if the specified texture filtering mode requires dual-source blending.
+static bool TextureFilterRequiresDualSourceBlend(GPUTextureFilter filter)
+{
+  return (filter == GPUTextureFilter::Bilinear || filter == GPUTextureFilter::JINC2 || filter == GPUTextureFilter::xBR);
+}
+
+/// Computes the area affected by a VRAM transfer, including wrap-around of X.
+static Common::Rectangle<u32> GetVRAMTransferBounds(u32 x, u32 y, u32 width, u32 height)
+{
+  Common::Rectangle<u32> out_rc = Common::Rectangle<u32>::FromExtents(x % VRAM_WIDTH, y % VRAM_HEIGHT, width, height);
+  if (out_rc.right > VRAM_WIDTH)
+  {
+    out_rc.left = 0;
+    out_rc.right = VRAM_WIDTH;
+  }
+  if (out_rc.bottom > VRAM_HEIGHT)
+  {
+    out_rc.top = 0;
+    out_rc.bottom = VRAM_HEIGHT;
+  }
+  return out_rc;
+}
+
 namespace {
 class ShaderCompileProgressTracker
 {
@@ -403,6 +426,27 @@ void GPU_HW::UpdateResolutionScale()
 GPUDownsampleMode GPU_HW::GetDownsampleMode(u32 resolution_scale) const
 {
   return (resolution_scale == 1) ? GPUDownsampleMode::Disabled : g_settings.gpu_downsample_mode;
+}
+
+bool GPU_HW::IsUsingMultisampling() const
+{
+  return m_multisamples > 1;
+}
+
+bool GPU_HW::IsUsingDownsampling() const
+{
+  return (m_downsample_mode != GPUDownsampleMode::Disabled && !m_GPUSTAT.display_area_color_depth_24);
+}
+
+void GPU_HW::SetFullVRAMDirtyRectangle()
+{
+  m_vram_dirty_rect.Set(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
+  m_draw_mode.SetTexturePageChanged();
+}
+
+void GPU_HW::ClearVRAMDirtyRectangle()
+{
+  m_vram_dirty_rect.SetInvalid();
 }
 
 std::tuple<u32, u32> GPU_HW::GetEffectiveDisplayResolution(bool scaled /* = true */)
@@ -1739,76 +1783,6 @@ void GPU_HW::LoadVertices()
   }
 }
 
-GPU_HW::VRAMFillUBOData GPU_HW::GetVRAMFillUBOData(u32 x, u32 y, u32 width, u32 height, u32 color) const
-{
-  // drop precision unless true colour is enabled
-  if (!m_true_color)
-    color = VRAMRGBA5551ToRGBA8888(VRAMRGBA8888ToRGBA5551(color));
-
-  VRAMFillUBOData uniforms;
-  uniforms.u_dst_x = (x % VRAM_WIDTH) * m_resolution_scale;
-  uniforms.u_dst_y = (y % VRAM_HEIGHT) * m_resolution_scale;
-  uniforms.u_end_x = ((x + width) % VRAM_WIDTH) * m_resolution_scale;
-  uniforms.u_end_y = ((y + height) % VRAM_HEIGHT) * m_resolution_scale;
-  std::tie(uniforms.u_fill_color[0], uniforms.u_fill_color[1], uniforms.u_fill_color[2], uniforms.u_fill_color[3]) =
-    RGBA8ToFloat(color);
-
-  uniforms.u_interlaced_displayed_field = GetActiveLineLSB();
-  return uniforms;
-}
-
-Common::Rectangle<u32> GPU_HW::GetVRAMTransferBounds(u32 x, u32 y, u32 width, u32 height) const
-{
-  Common::Rectangle<u32> out_rc = Common::Rectangle<u32>::FromExtents(x % VRAM_WIDTH, y % VRAM_HEIGHT, width, height);
-  if (out_rc.right > VRAM_WIDTH)
-  {
-    out_rc.left = 0;
-    out_rc.right = VRAM_WIDTH;
-  }
-  if (out_rc.bottom > VRAM_HEIGHT)
-  {
-    out_rc.top = 0;
-    out_rc.bottom = VRAM_HEIGHT;
-  }
-  return out_rc;
-}
-
-GPU_HW::VRAMWriteUBOData GPU_HW::GetVRAMWriteUBOData(u32 x, u32 y, u32 width, u32 height, u32 buffer_offset,
-                                                     bool set_mask, bool check_mask) const
-{
-  const VRAMWriteUBOData uniforms = {
-    (x % VRAM_WIDTH), (y % VRAM_HEIGHT), ((x + width) % VRAM_WIDTH),  ((y + height) % VRAM_HEIGHT),     width,
-    height,           buffer_offset,     (set_mask) ? 0x8000u : 0x00, GetCurrentNormalizedVertexDepth()};
-  return uniforms;
-}
-
-bool GPU_HW::UseVRAMCopyShader(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height) const
-{
-  // masking enabled, oversized, or overlapping
-  return (m_GPUSTAT.IsMaskingEnabled() || ((src_x % VRAM_WIDTH) + width) > VRAM_WIDTH ||
-          ((src_y % VRAM_HEIGHT) + height) > VRAM_HEIGHT || ((dst_x % VRAM_WIDTH) + width) > VRAM_WIDTH ||
-          ((dst_y % VRAM_HEIGHT) + height) > VRAM_HEIGHT ||
-          Common::Rectangle<u32>::FromExtents(src_x, src_y, width, height)
-            .Intersects(Common::Rectangle<u32>::FromExtents(dst_x, dst_y, width, height)));
-}
-
-GPU_HW::VRAMCopyUBOData GPU_HW::GetVRAMCopyUBOData(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width,
-                                                   u32 height) const
-{
-  const VRAMCopyUBOData uniforms = {(src_x % VRAM_WIDTH) * m_resolution_scale,
-                                    (src_y % VRAM_HEIGHT) * m_resolution_scale,
-                                    (dst_x % VRAM_WIDTH) * m_resolution_scale,
-                                    (dst_y % VRAM_HEIGHT) * m_resolution_scale,
-                                    ((dst_x + width) % VRAM_WIDTH) * m_resolution_scale,
-                                    ((dst_y + height) % VRAM_HEIGHT) * m_resolution_scale,
-                                    width * m_resolution_scale,
-                                    height * m_resolution_scale,
-                                    m_GPUSTAT.set_mask_while_drawing ? 1u : 0u,
-                                    GetCurrentNormalizedVertexDepth()};
-
-  return uniforms;
-}
-
 bool GPU_HW::BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u32 dst_x, u32 dst_y, u32 width,
                                         u32 height)
 {
@@ -1854,6 +1828,19 @@ void GPU_HW::IncludeVRAMDirtyRectangle(const Common::Rectangle<u32>& rect)
        (m_draw_mode.mode_reg.IsUsingPalette() && m_draw_mode.GetTexturePaletteRectangle().Intersects(rect))))
   {
     m_draw_mode.SetTexturePageChanged();
+  }
+}
+
+GPU_HW::InterlacedRenderMode GPU_HW::GetInterlacedRenderMode() const
+{
+  if (IsInterlacedDisplayEnabled())
+  {
+    return m_GPUSTAT.vertical_resolution ? InterlacedRenderMode::InterleavedFields :
+                                           InterlacedRenderMode::SeparateFields;
+  }
+  else
+  {
+    return InterlacedRenderMode::None;
   }
 }
 
@@ -1972,70 +1959,49 @@ void GPU_HW::FillDrawCommand(GPUBackendDrawCommand* cmd, GPURenderCommand rc) co
   cmd->window = m_draw_mode.texture_window;
 }
 
-void GPU_HW::ReadSoftwareRendererVRAM(u32 x, u32 y, u32 width, u32 height)
-{
-  DebugAssert(m_sw_renderer);
-  m_sw_renderer->Sync(false);
-}
-
-void GPU_HW::UpdateSoftwareRendererVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask,
-                                        bool check_mask)
-{
-  const u32 num_words = width * height;
-  GPUBackendUpdateVRAMCommand* cmd = m_sw_renderer->NewUpdateVRAMCommand(num_words);
-  FillBackendCommandParameters(cmd);
-  cmd->params.set_mask_while_drawing = set_mask;
-  cmd->params.check_mask_before_draw = check_mask;
-  cmd->x = static_cast<u16>(x);
-  cmd->y = static_cast<u16>(y);
-  cmd->width = static_cast<u16>(width);
-  cmd->height = static_cast<u16>(height);
-  std::memcpy(cmd->data, data, sizeof(u16) * num_words);
-  m_sw_renderer->PushCommand(cmd);
-}
-
-void GPU_HW::FillSoftwareRendererVRAM(u32 x, u32 y, u32 width, u32 height, u32 color)
-{
-  GPUBackendFillVRAMCommand* cmd = m_sw_renderer->NewFillVRAMCommand();
-  FillBackendCommandParameters(cmd);
-  cmd->x = static_cast<u16>(x);
-  cmd->y = static_cast<u16>(y);
-  cmd->width = static_cast<u16>(width);
-  cmd->height = static_cast<u16>(height);
-  cmd->color = color;
-  m_sw_renderer->PushCommand(cmd);
-}
-
-void GPU_HW::CopySoftwareRendererVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height)
-{
-  GPUBackendCopyVRAMCommand* cmd = m_sw_renderer->NewCopyVRAMCommand();
-  FillBackendCommandParameters(cmd);
-  cmd->src_x = static_cast<u16>(src_x);
-  cmd->src_y = static_cast<u16>(src_y);
-  cmd->dst_x = static_cast<u16>(dst_x);
-  cmd->dst_y = static_cast<u16>(dst_y);
-  cmd->width = static_cast<u16>(width);
-  cmd->height = static_cast<u16>(height);
-  m_sw_renderer->PushCommand(cmd);
-}
-
 void GPU_HW::FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color)
 {
-  if (IsUsingSoftwareRendererForReadbacks())
-    FillSoftwareRendererVRAM(x, y, width, height, color);
+  if (m_sw_renderer)
+  {
+    GPUBackendFillVRAMCommand* cmd = m_sw_renderer->NewFillVRAMCommand();
+    FillBackendCommandParameters(cmd);
+    cmd->x = static_cast<u16>(x);
+    cmd->y = static_cast<u16>(y);
+    cmd->width = static_cast<u16>(width);
+    cmd->height = static_cast<u16>(height);
+    cmd->color = color;
+    m_sw_renderer->PushCommand(cmd);
+  }
 
   IncludeVRAMDirtyRectangle(
     Common::Rectangle<u32>::FromExtents(x, y, width, height).Clamped(0, 0, VRAM_WIDTH, VRAM_HEIGHT));
 
-  g_gpu_device->SetPipeline(m_vram_fill_pipelines[BoolToUInt8(IsVRAMFillOversized(x, y, width, height))]
-                                                 [BoolToUInt8(IsInterlacedRenderingEnabled())]
-                                                   .get());
+  const bool is_oversized = (((x + width) > VRAM_WIDTH || (y + height) > VRAM_HEIGHT));
+  g_gpu_device->SetPipeline(
+    m_vram_fill_pipelines[BoolToUInt8(is_oversized)][BoolToUInt8(IsInterlacedRenderingEnabled())].get());
 
   const Common::Rectangle<u32> bounds(GetVRAMTransferBounds(x, y, width, height));
   g_gpu_device->SetViewportAndScissor(bounds.left * m_resolution_scale, bounds.top * m_resolution_scale,
                                       bounds.GetWidth() * m_resolution_scale, bounds.GetHeight() * m_resolution_scale);
 
-  const VRAMFillUBOData uniforms = GetVRAMFillUBOData(x, y, width, height, color);
+  struct VRAMFillUBOData
+  {
+    u32 u_dst_x;
+    u32 u_dst_y;
+    u32 u_end_x;
+    u32 u_end_y;
+    std::array<float, 4> u_fill_color;
+    u32 u_interlaced_displayed_field;
+  };
+  VRAMFillUBOData uniforms;
+  uniforms.u_dst_x = (x % VRAM_WIDTH) * m_resolution_scale;
+  uniforms.u_dst_y = (y % VRAM_HEIGHT) * m_resolution_scale;
+  uniforms.u_end_x = ((x + width) % VRAM_WIDTH) * m_resolution_scale;
+  uniforms.u_end_y = ((y + height) % VRAM_HEIGHT) * m_resolution_scale;
+  // drop precision unless true colour is enabled
+  uniforms.u_fill_color =
+    GPUDevice::RGBA8ToFloat(m_true_color ? color : VRAMRGBA5551ToRGBA8888(VRAMRGBA8888ToRGBA5551(color)));
+  uniforms.u_interlaced_displayed_field = GetActiveLineLSB();
   g_gpu_device->PushUniformBuffer(&uniforms, sizeof(uniforms));
   g_gpu_device->Draw(3, 0);
 
@@ -2044,9 +2010,9 @@ void GPU_HW::FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color)
 
 void GPU_HW::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
 {
-  if (IsUsingSoftwareRendererForReadbacks())
+  if (m_sw_renderer)
   {
-    ReadSoftwareRendererVRAM(x, y, width, height);
+    m_sw_renderer->Sync(false);
     return;
   }
 
@@ -2075,8 +2041,20 @@ void GPU_HW::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
 
 void GPU_HW::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask)
 {
-  if (IsUsingSoftwareRendererForReadbacks())
-    UpdateSoftwareRendererVRAM(x, y, width, height, data, set_mask, check_mask);
+  if (m_sw_renderer)
+  {
+    const u32 num_words = width * height;
+    GPUBackendUpdateVRAMCommand* cmd = m_sw_renderer->NewUpdateVRAMCommand(num_words);
+    FillBackendCommandParameters(cmd);
+    cmd->params.set_mask_while_drawing = set_mask;
+    cmd->params.check_mask_before_draw = check_mask;
+    cmd->x = static_cast<u16>(x);
+    cmd->y = static_cast<u16>(y);
+    cmd->width = static_cast<u16>(width);
+    cmd->height = static_cast<u16>(height);
+    std::memcpy(cmd->data, data, sizeof(u16) * num_words);
+    m_sw_renderer->PushCommand(cmd);
+  }
 
   const Common::Rectangle<u32> bounds = GetVRAMTransferBounds(x, y, width, height);
 
@@ -2104,7 +2082,21 @@ void GPU_HW::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, b
   std::memcpy(map, data, num_pixels * sizeof(u16));
   m_vram_upload_buffer->Unmap(num_pixels);
 
-  const VRAMWriteUBOData uniforms = GetVRAMWriteUBOData(x, y, width, height, map_index, set_mask, check_mask);
+  struct VRAMWriteUBOData
+  {
+    u32 u_dst_x;
+    u32 u_dst_y;
+    u32 u_end_x;
+    u32 u_end_y;
+    u32 u_width;
+    u32 u_height;
+    u32 u_buffer_base_offset;
+    u32 u_mask_or_bits;
+    float u_depth_value;
+  };
+  const VRAMWriteUBOData uniforms = {
+    (x % VRAM_WIDTH), (y % VRAM_HEIGHT), ((x + width) % VRAM_WIDTH),  ((y + height) % VRAM_HEIGHT),     width,
+    height,           map_index,         (set_mask) ? 0x8000u : 0x00, GetCurrentNormalizedVertexDepth()};
 
   // the viewport should already be set to the full vram, so just adjust the scissor
   const Common::Rectangle<u32> scaled_bounds = bounds * m_resolution_scale;
@@ -2119,10 +2111,28 @@ void GPU_HW::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, b
 
 void GPU_HW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height)
 {
-  if (IsUsingSoftwareRendererForReadbacks())
-    CopySoftwareRendererVRAM(src_x, src_y, dst_x, dst_y, width, height);
+  if (m_sw_renderer)
+  {
+    GPUBackendCopyVRAMCommand* cmd = m_sw_renderer->NewCopyVRAMCommand();
+    FillBackendCommandParameters(cmd);
+    cmd->src_x = static_cast<u16>(src_x);
+    cmd->src_y = static_cast<u16>(src_y);
+    cmd->dst_x = static_cast<u16>(dst_x);
+    cmd->dst_y = static_cast<u16>(dst_y);
+    cmd->width = static_cast<u16>(width);
+    cmd->height = static_cast<u16>(height);
+    m_sw_renderer->PushCommand(cmd);
+  }
 
-  if (UseVRAMCopyShader(src_x, src_y, dst_x, dst_y, width, height) || IsUsingMultisampling())
+  // masking enabled, oversized, or overlapping
+  const bool use_shader =
+    (m_GPUSTAT.IsMaskingEnabled() || ((src_x % VRAM_WIDTH) + width) > VRAM_WIDTH ||
+     ((src_y % VRAM_HEIGHT) + height) > VRAM_HEIGHT || ((dst_x % VRAM_WIDTH) + width) > VRAM_WIDTH ||
+     ((dst_y % VRAM_HEIGHT) + height) > VRAM_HEIGHT ||
+     Common::Rectangle<u32>::FromExtents(src_x, src_y, width, height)
+       .Intersects(Common::Rectangle<u32>::FromExtents(dst_x, dst_y, width, height)));
+
+  if (use_shader || IsUsingMultisampling())
   {
     const Common::Rectangle<u32> src_bounds = GetVRAMTransferBounds(src_x, src_y, width, height);
     const Common::Rectangle<u32> dst_bounds = GetVRAMTransferBounds(dst_x, dst_y, width, height);
@@ -2130,7 +2140,29 @@ void GPU_HW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32
       UpdateVRAMReadTexture();
     IncludeVRAMDirtyRectangle(dst_bounds);
 
-    const VRAMCopyUBOData uniforms = GetVRAMCopyUBOData(src_x, src_y, dst_x, dst_y, width, height);
+    struct VRAMCopyUBOData
+    {
+      u32 u_src_x;
+      u32 u_src_y;
+      u32 u_dst_x;
+      u32 u_dst_y;
+      u32 u_end_x;
+      u32 u_end_y;
+      u32 u_width;
+      u32 u_height;
+      u32 u_set_mask_bit;
+      float u_depth_value;
+    };
+    const VRAMCopyUBOData uniforms = {(src_x % VRAM_WIDTH) * m_resolution_scale,
+                                      (src_y % VRAM_HEIGHT) * m_resolution_scale,
+                                      (dst_x % VRAM_WIDTH) * m_resolution_scale,
+                                      (dst_y % VRAM_HEIGHT) * m_resolution_scale,
+                                      ((dst_x + width) % VRAM_WIDTH) * m_resolution_scale,
+                                      ((dst_y + height) % VRAM_HEIGHT) * m_resolution_scale,
+                                      width * m_resolution_scale,
+                                      height * m_resolution_scale,
+                                      m_GPUSTAT.set_mask_while_drawing ? 1u : 0u,
+                                      GetCurrentNormalizedVertexDepth()};
 
     // VRAM read texture should already be bound.
     const Common::Rectangle<u32> dst_bounds_scaled(dst_bounds * m_resolution_scale);
