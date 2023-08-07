@@ -237,6 +237,7 @@ void ImGuiManager::DrawPerformanceOverlay()
 
     if (g_settings.display_show_resolution)
     {
+      // TODO: this seems wrong?
       const auto [effective_width, effective_height] = g_gpu->GetEffectiveDisplayResolution();
       const bool interlaced = g_gpu->IsInterlacedDisplayEnabled();
       const bool pal = g_gpu->IsInPALMode();

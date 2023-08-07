@@ -1635,7 +1635,7 @@ bool System::CreateGPU(GPURenderer renderer)
 {
   const RenderAPI api = Settings::GetRenderAPIForRenderer(renderer);
 
-  if (!g_gpu_device || g_gpu_device->GetRenderAPI() != api)
+  if (!g_gpu_device || (renderer != GPURenderer::Software && g_gpu_device->GetRenderAPI() != api))
   {
     if (g_gpu_device)
     {

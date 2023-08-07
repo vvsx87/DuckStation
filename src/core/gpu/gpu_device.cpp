@@ -197,15 +197,11 @@ u32 GPUTextureBuffer::GetElementSize(Format format)
   return element_size[static_cast<u32>(format)];
 }
 
-GPUDevice::~GPUDevice()
-{
-  // TODO: move to Destroy() method
-  m_shader_cache.Close();
-}
+GPUDevice::~GPUDevice() = default;
 
 RenderAPI GPUDevice::GetPreferredAPI()
 {
-#ifdef _WIN32___ // TODO remove me
+#ifdef _WIN32
   return RenderAPI::D3D11;
 #else
   return RenderAPI::Metal;
@@ -270,6 +266,7 @@ void GPUDevice::Destroy()
   if (HasSurface())
     DestroySurface();
   DestroyResources();
+  m_shader_cache.Close();
   DestroyDevice();
 }
 

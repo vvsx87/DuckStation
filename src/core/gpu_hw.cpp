@@ -560,8 +560,8 @@ void GPU_HW::ClearFramebuffer()
 {
   g_gpu_device->ClearRenderTarget(m_vram_texture.get(), 0);
   g_gpu_device->ClearDepth(m_vram_depth_texture.get(), m_pgxp_depth_buffer ? 1.0f : 0.0f);
-  g_gpu_device->ClearRenderTarget(m_display_texture.get(), 0);
   ClearVRAMDirtyRectangle();
+  g_gpu_device->ClearRenderTarget(m_display_texture.get(), 0);
   m_last_depth_z = 1.0f;
 }
 
@@ -2411,9 +2411,10 @@ void GPU_HW::UpdateDisplay()
       if (interlaced == InterlacedRenderMode::None)
         g_gpu_device->InvalidateRenderTarget(m_display_texture.get());
 
+      g_gpu_device->SetFramebuffer(m_display_framebuffer.get());
       g_gpu_device->SetPipeline(
         m_display_pipelines[BoolToUInt8(m_GPUSTAT.display_area_color_depth_24)][static_cast<u8>(interlaced)].get());
-      g_gpu_device->SetFramebuffer(m_display_framebuffer.get());
+      g_gpu_device->SetTextureSampler(0, m_vram_texture.get(), g_gpu_device->GetNearestSampler());
 
       const u32 reinterpret_field_offset = (interlaced != InterlacedRenderMode::None) ? GetInterlacedDisplayField() : 0;
       const u32 reinterpret_start_x = m_crtc_state.regs.X * resolution_scale;
