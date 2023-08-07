@@ -210,7 +210,7 @@ void ShaderGen::WriteHeader(std::stringstream& ss)
     ss << "#define SAMPLE_TEXTURE(name, coords) texture(name, coords)\n";
     ss << "#define SAMPLE_TEXTURE_OFFSET(name, coords, offset) textureOffset(name, coords, offset)\n";
     ss << "#define SAMPLE_TEXTURE_LEVEL(name, coords, level) textureLod(name, coords, level)\n";
-    ss << "#define SAMPLE_TEXTURE_LEVEL_OFFSET(name, coords, level, offset) textureLod(name, coords, level, offset)\n";
+    ss << "#define SAMPLE_TEXTURE_LEVEL_OFFSET(name, coords, level, offset) textureLodOffset(name, coords, level, offset)\n";
     ss << "#define LOAD_TEXTURE(name, coords, mip) texelFetch(name, coords, mip)\n";
     ss << "#define LOAD_TEXTURE_MS(name, coords, sample) texelFetch(name, coords, int(sample))\n";
     ss << "#define LOAD_TEXTURE_OFFSET(name, coords, mip, offset) texelFetchOffset(name, coords, mip, offset)\n";

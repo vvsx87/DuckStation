@@ -116,7 +116,6 @@ bool GPU_HW::Initialize()
   m_max_resolution_scale = g_gpu_device->GetMaxTextureSize() / VRAM_WIDTH;
   m_supports_dual_source_blend = features.dual_source_blend;
   m_supports_per_sample_shading = features.per_sample_shading;
-  m_supports_adaptive_downsampling = features.mipmapped_render_targets;
   m_supports_disable_color_perspective = features.noperspective_interpolation;
 
   m_resolution_scale = CalculateResolutionScale();
@@ -147,14 +146,6 @@ bool GPU_HW::Initialize()
       20.0f, Host::TranslateString("OSDMessage", "Texture filter '%s' is not supported with the current renderer."),
       Settings::GetTextureFilterDisplayName(m_texture_filtering));
     m_texture_filtering = GPUTextureFilter::Nearest;
-  }
-  if (!m_supports_adaptive_downsampling && g_settings.gpu_resolution_scale > 1 &&
-      g_settings.gpu_downsample_mode == GPUDownsampleMode::Adaptive)
-  {
-    Host::AddOSDMessage(
-      Host::TranslateStdString(
-        "OSDMessage", "Adaptive downsampling is not supported with the current renderer, using box filter instead."),
-      20.0f);
   }
   if (!m_supports_disable_color_perspective && !ShouldDisableColorPerspective())
     Log_WarningPrint("Disable color perspective not supported, but should be used.");
@@ -382,8 +373,7 @@ u32 GPU_HW::CalculateResolutionScale() const
     scale = static_cast<u32>(std::clamp<s32>(preferred_scale, 1, m_max_resolution_scale));
   }
 
-  if (g_settings.gpu_downsample_mode == GPUDownsampleMode::Adaptive && m_supports_adaptive_downsampling && scale > 1 &&
-      !Common::IsPow2(scale))
+  if (g_settings.gpu_downsample_mode == GPUDownsampleMode::Adaptive && scale > 1 && !Common::IsPow2(scale))
   {
     const u32 new_scale = Common::PreviousPow2(scale);
     Log_InfoPrintf("Resolution scale %ux not supported for adaptive smoothing, using %ux", scale, new_scale);
@@ -412,13 +402,7 @@ void GPU_HW::UpdateResolutionScale()
 
 GPUDownsampleMode GPU_HW::GetDownsampleMode(u32 resolution_scale) const
 {
-  if (resolution_scale == 1)
-    return GPUDownsampleMode::Disabled;
-
-  if (g_settings.gpu_downsample_mode == GPUDownsampleMode::Adaptive)
-    return m_supports_adaptive_downsampling ? GPUDownsampleMode::Adaptive : GPUDownsampleMode::Box;
-
-  return g_settings.gpu_downsample_mode;
+  return (resolution_scale == 1) ? GPUDownsampleMode::Disabled : g_settings.gpu_downsample_mode;
 }
 
 std::tuple<u32, u32> GPU_HW::GetEffectiveDisplayResolution(bool scaled /* = true */)
@@ -499,46 +483,28 @@ bool GPU_HW::CreateBuffers()
 
   Log_InfoPrintf("Created HW framebuffer of %ux%u", texture_width, texture_height);
 
-#if 0
   if (m_downsample_mode == GPUDownsampleMode::Adaptive)
   {
     const u32 levels = GetAdaptiveDownsamplingMipLevels();
 
-    if (!m_downsample_texture.Create(m_device.Get(), texture_width, texture_height, 1, static_cast<u16>(levels), 1,
-      GPUTexture::Type::RenderTarget, texture_format) ||
-      !m_downsample_weight_texture.Create(m_device.Get(), texture_width >> (levels - 1),
-        texture_height >> (levels - 1), 1, 1, 1, GPUTexture::Type::RenderTarget,
-        GPUTexture::Format::R8))
+    if (!(m_downsample_texture = g_gpu_device->CreateTexture(texture_width, texture_height, 1, levels, 1,
+                                                             GPUTexture::Type::Texture, VRAM_RT_FORMAT)) ||
+        !(m_downsample_render_texture = g_gpu_device->CreateTexture(texture_width, texture_height, 1, 1, 1,
+                                                                    GPUTexture::Type::RenderTarget, VRAM_RT_FORMAT)) ||
+        !(m_downsample_framebuffer = g_gpu_device->CreateFramebuffer(m_downsample_render_texture.get())) ||
+        !(m_downsample_weight_texture =
+            g_gpu_device->CreateTexture(texture_width >> (levels - 1), texture_height >> (levels - 1), 1, 1, 1,
+                                        GPUTexture::Type::RenderTarget, GPUTexture::Format::R8)) ||
+        !(m_downsample_weight_framebuffer = g_gpu_device->CreateFramebuffer(m_downsample_weight_texture.get())))
     {
       return false;
     }
-
-    m_downsample_mip_views.resize(levels);
-    for (u32 i = 0; i < levels; i++)
-    {
-      const CD3D11_SHADER_RESOURCE_VIEW_DESC srv_desc(m_downsample_texture, D3D11_SRV_DIMENSION_TEXTURE2D,
-        m_downsample_texture.GetDXGIFormat(), i, 1);
-      const CD3D11_RENDER_TARGET_VIEW_DESC rtv_desc(m_downsample_texture, D3D11_RTV_DIMENSION_TEXTURE2D,
-        m_downsample_texture.GetDXGIFormat(), i, 1);
-
-      HRESULT hr = m_device->CreateShaderResourceView(m_downsample_texture, &srv_desc,
-        m_downsample_mip_views[i].first.GetAddressOf());
-      if (FAILED(hr))
-        return false;
-
-      hr = m_device->CreateRenderTargetView(m_downsample_texture, &rtv_desc,
-        m_downsample_mip_views[i].second.GetAddressOf());
-      if (FAILED(hr))
-        return false;
-    }
   }
-  else
-#endif
-  if (m_downsample_mode == GPUDownsampleMode::Box)
+  else if (m_downsample_mode == GPUDownsampleMode::Box)
   {
-    if (!(m_downsample_texture = g_gpu_device->CreateTexture(VRAM_WIDTH, VRAM_HEIGHT, 1, 1, 1,
-                                                             GPUTexture::Type::RenderTarget, VRAM_RT_FORMAT)) ||
-        !(m_downsample_framebuffer = g_gpu_device->CreateFramebuffer(m_downsample_texture.get())))
+    if (!(m_downsample_render_texture = g_gpu_device->CreateTexture(VRAM_WIDTH, VRAM_HEIGHT, 1, 1, 1,
+                                                                    GPUTexture::Type::RenderTarget, VRAM_RT_FORMAT)) ||
+        !(m_downsample_framebuffer = g_gpu_device->CreateFramebuffer(m_downsample_render_texture.get())))
     {
       return false;
     }
@@ -561,7 +527,10 @@ void GPU_HW::ClearFramebuffer()
 void GPU_HW::DestroyBuffers()
 {
   m_vram_upload_buffer.reset();
+  m_downsample_weight_framebuffer.reset();
+  m_downsample_weight_texture.reset();
   m_downsample_framebuffer.reset();
+  m_downsample_render_texture.reset();
   m_downsample_texture.reset();
   m_display_framebuffer.reset();
   m_vram_readback_framebuffer.reset();
@@ -759,6 +728,8 @@ bool GPU_HW::CompilePipelines()
   progress.Increment();
 
   // common state
+  plconfig.input_layout.vertex_attributes = {};
+  plconfig.input_layout.vertex_stride = 0;
   plconfig.layout = GPUPipeline::Layout::SingleTexturePushConstants;
   plconfig.per_sample_shading = false;
   plconfig.blend = GPUPipeline::BlendState::GetNoBlendingState();
@@ -909,77 +880,65 @@ bool GPU_HW::CompilePipelines()
       return false;
   }
 
-#if 0
   if (m_downsample_mode == GPUDownsampleMode::Adaptive)
   {
-    gpbuilder.Clear();
-    gpbuilder.SetRenderPass(m_downsample_render_pass, 0);
-    gpbuilder.SetPipelineLayout(m_downsample_pipeline_layout);
-    gpbuilder.SetVertexShader(uv_quad_vertex_shader);
-    gpbuilder.SetNoCullRasterizationState();
-    gpbuilder.SetNoDepthTestState();
-    gpbuilder.SetNoBlendingState();
-    gpbuilder.SetDynamicViewportAndScissorState();
-
-    std::unique_ptr<GPUShader> fs = g_host_display->CreateShaderFromSource(
-      GPUShader::Stage::Pixel, shadergen.GenerateAdaptiveDownsampleMipFragmentShader(true));
-    if (fs == VK_NULL_HANDLE)
+    std::unique_ptr<GPUShader> vs =
+      g_gpu_device->CreateShader(GPUShaderStage::Vertex, shadergen.GenerateAdaptiveDownsampleVertexShader());
+    std::unique_ptr<GPUShader> fs =
+      g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateAdaptiveDownsampleMipFragmentShader(true));
+    if (!vs || !fs)
       return false;
-
-    gpbuilder.SetFragmentShader(fs);
-    m_downsample_first_pass_pipeline = gpbuilder.Create(device, pipeline_cache, false);
-    vkDestroyShaderModule(g_vulkan_context->GetDevice(), fs, nullptr);
-    if (m_downsample_first_pass_pipeline == VK_NULL_HANDLE)
+    GL_OBJECT_NAME(fs, "Downsample Vertex Shader");
+    GL_OBJECT_NAME(fs, "Downsample First Pass Fragment Shader");
+    plconfig.vertex_shader = vs.get();
+    plconfig.fragment_shader = fs.get();
+    if (!(m_downsample_first_pass_pipeline = g_gpu_device->CreatePipeline(plconfig)))
       return false;
-    Vulkan::Util::SetObjectName(g_vulkan_context->GetDevice(), m_downsample_first_pass_pipeline,
-                                "Downsample First Pass Pipeline");
+    GL_OBJECT_NAME(m_downsample_first_pass_pipeline, "Downsample First Pass Pipeline");
 
-    fs = g_host_display->CreateShaderFromSource(GPUShader::Stage::Pixel,
-                                                shadergen.GenerateAdaptiveDownsampleMipFragmentShader(false));
-    if (fs == VK_NULL_HANDLE)
+    fs = g_gpu_device->CreateShader(GPUShaderStage::Fragment,
+                                    shadergen.GenerateAdaptiveDownsampleMipFragmentShader(false));
+    if (!fs)
       return false;
-
-    gpbuilder.SetFragmentShader(fs);
-    m_downsample_mid_pass_pipeline = gpbuilder.Create(device, pipeline_cache, false);
-    vkDestroyShaderModule(g_vulkan_context->GetDevice(), fs, nullptr);
-    if (m_downsample_mid_pass_pipeline == VK_NULL_HANDLE)
+    GL_OBJECT_NAME(fs, "Downsample Mid Pass Fragment Shader");
+    plconfig.fragment_shader = fs.get();
+    if (!(m_downsample_mid_pass_pipeline = g_gpu_device->CreatePipeline(plconfig)))
       return false;
-    Vulkan::Util::SetObjectName(g_vulkan_context->GetDevice(), m_downsample_mid_pass_pipeline,
-                                "Downsample Mid Pass Pipeline");
+    GL_OBJECT_NAME(m_downsample_mid_pass_pipeline, "Downsample Mid Pass Pipeline");
 
-    fs = g_host_display->CreateShaderFromSource(GPUShader::Stage::Pixel,
-                                                shadergen.GenerateAdaptiveDownsampleBlurFragmentShader());
-    if (fs == VK_NULL_HANDLE)
+    fs = g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateAdaptiveDownsampleBlurFragmentShader());
+    if (!fs)
       return false;
-
-    gpbuilder.SetFragmentShader(fs);
-    gpbuilder.SetRenderPass(m_downsample_weight_render_pass, 0);
-    m_downsample_blur_pass_pipeline = gpbuilder.Create(device, pipeline_cache, false);
-    vkDestroyShaderModule(g_vulkan_context->GetDevice(), fs, nullptr);
-    if (m_downsample_blur_pass_pipeline == VK_NULL_HANDLE)
+    GL_OBJECT_NAME(fs, "Downsample Blur Pass Fragment Shader");
+    plconfig.fragment_shader = fs.get();
+    plconfig.color_format = GPUTexture::Format::R8;
+    if (!(m_downsample_blur_pass_pipeline = g_gpu_device->CreatePipeline(plconfig)))
       return false;
-    Vulkan::Util::SetObjectName(g_vulkan_context->GetDevice(), m_downsample_blur_pass_pipeline,
-                                "Downsample Blur Pass Pipeline");
+    GL_OBJECT_NAME(m_downsample_blur_pass_pipeline, "Downsample Blur Pass Pipeline");
 
-    fs = g_host_display->CreateShaderFromSource(GPUShader::Stage::Pixel,
-                                                shadergen.GenerateAdaptiveDownsampleCompositeFragmentShader());
-    if (fs == VK_NULL_HANDLE)
+    fs = g_gpu_device->CreateShader(GPUShaderStage::Fragment,
+                                    shadergen.GenerateAdaptiveDownsampleCompositeFragmentShader());
+    if (!fs)
       return false;
-
-    gpbuilder.SetFragmentShader(fs);
-    gpbuilder.SetPipelineLayout(m_downsample_composite_pipeline_layout);
-    gpbuilder.SetRenderPass(m_display_load_render_pass, 0);
-    m_downsample_composite_pass_pipeline = gpbuilder.Create(device, pipeline_cache, false);
-    vkDestroyShaderModule(g_vulkan_context->GetDevice(), fs, nullptr);
-    if (m_downsample_composite_pass_pipeline == VK_NULL_HANDLE)
+    GL_OBJECT_NAME(fs, "Downsample Composite Pass Fragment Shader");
+    plconfig.fragment_shader = fs.get();
+    plconfig.color_format = VRAM_RT_FORMAT;
+    if (!(m_downsample_composite_pass_pipeline = g_gpu_device->CreatePipeline(plconfig)))
       return false;
+    GL_OBJECT_NAME(m_downsample_composite_pass_pipeline, "Downsample Blur Pass Pipeline");
 
-    Vulkan::Util::SetObjectName(g_vulkan_context->GetDevice(), m_downsample_composite_pass_pipeline,
-                                "Downsample Composite Pass Pipeline");
+    GPUSampler::Config config = GPUSampler::GetLinearConfig();
+    config.min_lod = 0;
+    config.max_lod = GPUSampler::Config::LOD_MAX;
+    if (!(m_downsample_lod_sampler = g_gpu_device->CreateSampler(config)))
+      return false;
+    GL_OBJECT_NAME(m_downsample_lod_sampler, "Downsample LOD Sampler");
+    config.mip_filter = GPUSampler::Filter::Linear;
+    if (!(m_downsample_composite_sampler = g_gpu_device->CreateSampler(config)))
+      return false;
+    GL_OBJECT_NAME(m_downsample_composite_sampler, "Downsample Trilinear Sampler");
   }
-  else
-#endif
-  if (m_downsample_mode == GPUDownsampleMode::Box)
+  else if (m_downsample_mode == GPUDownsampleMode::Box)
   {
     std::unique_ptr<GPUShader> fs =
       g_gpu_device->CreateShader(GPUShaderStage::Fragment, shadergen.GenerateBoxSampleDownsampleFragmentShader());
@@ -1023,6 +982,7 @@ void GPU_HW::DestroyPipelines()
   destroy(m_downsample_mid_pass_pipeline);
   destroy(m_downsample_blur_pass_pipeline);
   destroy(m_downsample_composite_pass_pipeline);
+  m_downsample_composite_sampler.reset();
 
   m_display_pipelines.enumerate(destroy);
 }
@@ -1281,23 +1241,6 @@ u32 GPU_HW::GetAdaptiveDownsamplingMipLevels() const
   }
 
   return levels;
-}
-
-GPU_HW::SmoothingUBOData GPU_HW::GetSmoothingUBO(u32 level, u32 left, u32 top, u32 width, u32 height, u32 tex_width,
-                                                 u32 tex_height) const
-{
-  const float rcp_width = 1.0f / static_cast<float>(tex_width >> level);
-  const float rcp_height = 1.0f / static_cast<float>(tex_height >> level);
-
-  SmoothingUBOData data;
-  data.min_uv[0] = static_cast<float>(left >> level) * rcp_width;
-  data.min_uv[1] = static_cast<float>(top >> level) * rcp_height;
-  data.max_uv[0] = static_cast<float>((left + width) >> level) * rcp_width;
-  data.max_uv[1] = static_cast<float>((top + height) >> level) * rcp_height;
-  data.rcp_size[0] = rcp_width;
-  data.rcp_size[1] = rcp_height;
-
-  return data;
 }
 
 void GPU_HW::DrawLine(float x0, float y0, u32 col0, float x1, float y1, u32 col1, float depth)
@@ -2476,75 +2419,97 @@ void GPU_HW::DownsampleFramebuffer(GPUTexture* source, u32 left, u32 top, u32 wi
 
 void GPU_HW::DownsampleFramebufferAdaptive(GPUTexture* source, u32 left, u32 top, u32 width, u32 height)
 {
-#if 0
-  CD3D11_BOX src_box(left, top, 0, left + width, top + height, 1);
-  m_context->OMSetDepthStencilState(m_depth_disabled_state.Get(), 0);
-  m_context->OMSetBlendState(m_blend_disabled_state.Get(), nullptr, 0xFFFFFFFFu);
-  m_context->CopySubresourceRegion(m_downsample_texture, 0, left, top, 0, source->GetD3DTexture(), 0, &src_box);
-  m_context->PSSetSamplers(0, 1, m_point_sampler_state.GetAddressOf());
-  m_context->VSSetShader(m_uv_quad_vertex_shader.Get(), nullptr, 0);
+  GL_PUSH("DownsampleFramebufferAdaptive (%u,%u => %u,%d)", left, top, left + width, left + height);
+
+  struct SmoothingUBOData
+  {
+    float min_uv[2];
+    float max_uv[2];
+    float rcp_size[2];
+    float lod;
+  };
+
+  g_gpu_device->CopyTextureRegion(m_downsample_texture.get(), 0, 0, 0, 0, source, left, top, 0, 0, width, height);
+  g_gpu_device->SetTextureSampler(0, m_downsample_texture.get(), m_downsample_lod_sampler.get());
+
+  const u32 levels = m_downsample_texture->GetLevels();
+  SmoothingUBOData uniforms;
 
   // create mip chain
-  const u32 levels = m_downsample_texture.GetLevels();
   for (u32 level = 1; level < levels; level++)
   {
-    static constexpr float clear_color[4] = {};
+    GL_SCOPE("Create miplevel %u", level);
 
-    SetViewportAndScissor(left >> level, top >> level, width >> level, height >> level);
-    m_context->ClearRenderTargetView(m_downsample_mip_views[level].second.Get(), clear_color);
-    m_context->OMSetRenderTargets(1, m_downsample_mip_views[level].second.GetAddressOf(), nullptr);
-    m_context->PSSetShaderResources(0, 1, m_downsample_mip_views[level - 1].first.GetAddressOf());
+    const u32 level_width = width >> level;
+    const u32 level_height = height >> level;
+    const float rcp_width = 1.0f / static_cast<float>(m_downsample_texture->GetMipWidth(level));
+    const float rcp_height = 1.0f / static_cast<float>(m_downsample_texture->GetMipHeight(level));
+    uniforms.min_uv[0] = 0.0f;
+    uniforms.min_uv[1] = 0.0f;
+    uniforms.max_uv[0] = static_cast<float>(level_width) * rcp_width;
+    uniforms.max_uv[1] = static_cast<float>(level_height) * rcp_height;
+    uniforms.rcp_size[0] = rcp_width;
+    uniforms.rcp_size[1] = rcp_height;
+    uniforms.lod = static_cast<float>(level - 1);
 
-    const SmoothingUBOData ubo = GetSmoothingUBO(level, left, top, width, height, m_downsample_texture.GetWidth(),
-                                                 m_downsample_texture.GetHeight());
-    m_context->PSSetShader(
-      (level == 1) ? m_downsample_first_pass_pixel_shader.Get() : m_downsample_mid_pass_pixel_shader.Get(), nullptr, 0);
-    UploadUniformBuffer(&ubo, sizeof(ubo));
-    m_context->Draw(3, 0);
+    g_gpu_device->InvalidateRenderTarget(m_downsample_render_texture.get());
+    g_gpu_device->SetFramebuffer(m_downsample_framebuffer.get());
+    g_gpu_device->SetViewportAndScissor(0, 0, level_width, level_height);
+    g_gpu_device->SetPipeline((level == 1) ? m_downsample_first_pass_pipeline.get() :
+                                             m_downsample_mid_pass_pipeline.get());
+    g_gpu_device->PushUniformBuffer(&uniforms, sizeof(uniforms));
+    g_gpu_device->Draw(3, 0);
+    g_gpu_device->CopyTextureRegion(m_downsample_texture.get(), 0, 0, 0, level, m_downsample_render_texture.get(), 0, 0,
+                                    0, 0, level_width, level_height);
   }
 
   // blur pass at lowest level
   {
+    GL_SCOPE("Blur");
+
     const u32 last_level = levels - 1;
-    static constexpr float clear_color[4] = {};
+    const u32 last_width = width >> last_level;
+    const u32 last_height = height >> last_level;
+    const float rcp_width = 1.0f / static_cast<float>(m_downsample_render_texture->GetWidth());
+    const float rcp_height = 1.0f / static_cast<float>(m_downsample_render_texture->GetHeight());
+    uniforms.min_uv[0] = 0.0f;
+    uniforms.min_uv[1] = 0.0f;
+    uniforms.max_uv[0] = static_cast<float>(last_width) * rcp_width;
+    uniforms.max_uv[1] = static_cast<float>(last_height) * rcp_height;
+    uniforms.rcp_size[0] = rcp_width;
+    uniforms.rcp_size[1] = rcp_height;
+    uniforms.lod = 0.0f;
 
-    SetViewportAndScissor(left >> last_level, top >> last_level, width >> last_level, height >> last_level);
-    m_context->ClearRenderTargetView(m_downsample_weight_texture.GetD3DRTV(), clear_color);
-    m_context->OMSetRenderTargets(1, m_downsample_weight_texture.GetD3DRTVArray(), nullptr);
-    m_context->PSSetShaderResources(0, 1, m_downsample_mip_views.back().first.GetAddressOf());
-    m_context->PSSetShader(m_downsample_blur_pass_pixel_shader.Get(), nullptr, 0);
-
-    const SmoothingUBOData ubo = GetSmoothingUBO(last_level, left, top, width, height, m_downsample_texture.GetWidth(),
-                                                 m_downsample_texture.GetHeight());
-    m_context->PSSetShader(m_downsample_blur_pass_pixel_shader.Get(), nullptr, 0);
-    UploadUniformBuffer(&ubo, sizeof(ubo));
-    m_context->Draw(3, 0);
+    m_downsample_render_texture->MakeReadyForSampling();
+    g_gpu_device->InvalidateRenderTarget(m_downsample_weight_texture.get());
+    g_gpu_device->SetFramebuffer(m_downsample_weight_framebuffer.get());
+    g_gpu_device->SetTextureSampler(0, m_downsample_render_texture.get(), g_gpu_device->GetNearestSampler());
+    g_gpu_device->SetViewportAndScissor(0, 0, last_width, last_height);
+    g_gpu_device->SetPipeline(m_downsample_blur_pass_pipeline.get());
+    g_gpu_device->PushUniformBuffer(&uniforms, sizeof(uniforms));
+    g_gpu_device->Draw(3, 0);
+    m_downsample_weight_texture->MakeReadyForSampling();
   }
 
   // composite downsampled and upsampled images together
   {
-    SetViewportAndScissor(left, top, width, height);
-    m_context->OMSetRenderTargets(1, GetDisplayTexture()->GetD3DRTVArray(), nullptr);
+    GL_SCOPE("Composite");
 
-    ID3D11ShaderResourceView* const srvs[2] = {m_downsample_texture.GetD3DSRV(),
-                                               m_downsample_weight_texture.GetD3DSRV()};
-    ID3D11SamplerState* const samplers[2] = {m_trilinear_sampler_state.Get(), m_linear_sampler_state.Get()};
-    m_context->PSSetShaderResources(0, countof(srvs), srvs);
-    m_context->PSSetSamplers(0, countof(samplers), samplers);
-    m_context->PSSetShader(m_downsample_composite_pixel_shader.Get(), nullptr, 0);
-    m_context->Draw(3, 0);
+    g_gpu_device->InvalidateRenderTarget(m_downsample_render_texture.get());
+    g_gpu_device->SetFramebuffer(m_downsample_framebuffer.get());
+    g_gpu_device->SetTextureSampler(0, m_downsample_texture.get(), m_downsample_composite_sampler.get());
+    g_gpu_device->SetTextureSampler(1, m_downsample_weight_texture.get(), m_downsample_lod_sampler.get());
+    g_gpu_device->SetViewportAndScissor(0, 0, width, height);
+    g_gpu_device->SetPipeline(m_downsample_composite_pass_pipeline.get());
+    g_gpu_device->Draw(3, 0);
+    m_downsample_render_texture->MakeReadyForSampling();
   }
 
-  ID3D11ShaderResourceView* const null_srvs[2] = {};
-  m_context->PSSetShaderResources(0, countof(null_srvs), null_srvs);
-  m_batch_ubo_dirty = true;
+  GL_POP();
 
   RestoreGraphicsAPIState();
 
-  g_host_display->SetDisplayTexture(m_display_texture.get(), left, top, width, height);
-#else
-  Panic("Not implemented");
-#endif
+  g_gpu_device->SetDisplayTexture(m_downsample_render_texture.get(), 0, 0, width, height);
 }
 
 void GPU_HW::DownsampleFramebufferBoxFilter(GPUTexture* source, u32 left, u32 top, u32 width, u32 height)
@@ -2556,7 +2521,7 @@ void GPU_HW::DownsampleFramebufferBoxFilter(GPUTexture* source, u32 left, u32 to
 
   source->MakeReadyForSampling();
 
-  g_gpu_device->ClearRenderTarget(m_downsample_texture.get(), 0);
+  g_gpu_device->ClearRenderTarget(m_downsample_render_texture.get(), 0);
   g_gpu_device->SetFramebuffer(m_downsample_framebuffer.get());
   g_gpu_device->SetPipeline(m_downsample_first_pass_pipeline.get());
   g_gpu_device->SetTextureSampler(0, source, g_gpu_device->GetNearestSampler());
@@ -2565,7 +2530,7 @@ void GPU_HW::DownsampleFramebufferBoxFilter(GPUTexture* source, u32 left, u32 to
 
   RestoreGraphicsAPIState();
 
-  g_gpu_device->SetDisplayTexture(m_downsample_texture.get(), ds_left, ds_top, ds_width, ds_height);
+  g_gpu_device->SetDisplayTexture(m_downsample_render_texture.get(), ds_left, ds_top, ds_width, ds_height);
 }
 
 void GPU_HW::DrawRendererStats(bool is_idle_frame)

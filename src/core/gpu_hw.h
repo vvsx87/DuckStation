@@ -341,20 +341,8 @@ protected:
   void SetBatchDepthBuffer(bool enabled);
   void CheckForDepthClear(const BatchVertex* vertices, u32 num_vertices);
 
-  /// UBO data for adaptive smoothing.
-  struct SmoothingUBOData
-  {
-    float min_uv[2];
-    float max_uv[2];
-    float rcp_size[2];
-  };
-
   /// Returns the number of mipmap levels used for adaptive smoothing.
   u32 GetAdaptiveDownsamplingMipLevels() const;
-
-  /// Returns the UBO data for an adaptive smoothing pass.
-  SmoothingUBOData GetSmoothingUBO(u32 level, u32 left, u32 top, u32 width, u32 height, u32 tex_width,
-                                   u32 tex_height) const;
 
   void DownsampleFramebuffer(GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
   void DownsampleFramebufferAdaptive(GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
@@ -397,12 +385,11 @@ protected:
   {
     BitField<u8, bool, 0, 1> m_supports_per_sample_shading;
     BitField<u8, bool, 1, 1> m_supports_dual_source_blend;
-    BitField<u8, bool, 2, 1> m_supports_adaptive_downsampling;
-    BitField<u8, bool, 3, 1> m_supports_disable_color_perspective;
-    BitField<u8, bool, 4, 1> m_per_sample_shading;
-    BitField<u8, bool, 5, 1> m_scaled_dithering;
-    BitField<u8, bool, 6, 1> m_chroma_smoothing;
-    BitField<u8, bool, 7, 1> m_disable_color_perspective;
+    BitField<u8, bool, 2, 1> m_supports_disable_color_perspective;
+    BitField<u8, bool, 3, 1> m_per_sample_shading;
+    BitField<u8, bool, 4, 1> m_scaled_dithering;
+    BitField<u8, bool, 5, 1> m_chroma_smoothing;
+    BitField<u8, bool, 6, 1> m_disable_color_perspective;
 
     u8 bits = 0;
   };
@@ -441,13 +428,16 @@ protected:
   std::unique_ptr<GPUPipeline> m_copy_pipeline;
 
   std::unique_ptr<GPUTexture> m_downsample_texture;
+  std::unique_ptr<GPUTexture> m_downsample_render_texture;
   std::unique_ptr<GPUFramebuffer> m_downsample_framebuffer;
-  // std::unique_ptr<GPUTexture> m_downsample_weight_texture;
-  // std::unique_ptr<GPUFramebuffer> m_downsample_weight_framebuffer;
+  std::unique_ptr<GPUTexture> m_downsample_weight_texture;
+  std::unique_ptr<GPUFramebuffer> m_downsample_weight_framebuffer;
   std::unique_ptr<GPUPipeline> m_downsample_first_pass_pipeline;
   std::unique_ptr<GPUPipeline> m_downsample_mid_pass_pipeline;
   std::unique_ptr<GPUPipeline> m_downsample_blur_pass_pipeline;
   std::unique_ptr<GPUPipeline> m_downsample_composite_pass_pipeline;
+  std::unique_ptr<GPUSampler> m_downsample_lod_sampler;
+  std::unique_ptr<GPUSampler> m_downsample_composite_sampler;
 
   // Statistics
   RendererStats m_renderer_stats = {};

@@ -43,8 +43,7 @@ static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view
   if (SUCCEEDED(hr) && existing_data_size > 0)
     return;
 
-  const std::wstring wname = StringUtil::UTF8StringToWideString(name);
-  obj->SetPrivateData(guid, static_cast<UINT>(wname.length()) * 2u, wname.c_str());
+  obj->SetPrivateData(guid, static_cast<UINT>(name.length()), name.data());
 #endif
 }
 
@@ -477,10 +476,6 @@ bool D3D11Device::CreateDevice(const std::string_view& adapter)
 
   if (m_window_info.type != WindowInfo::Type::Surfaceless && !CreateSwapChain())
     return false;
-
-  // Render a frame as soon as possible to clear out whatever was previously being displayed.
-  m_context->ClearRenderTargetView(m_swap_chain_rtv.Get(), s_clear_color.data());
-  m_swap_chain->Present(0, m_using_allow_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0);
 
   if (!CreateBuffers())
     return false;

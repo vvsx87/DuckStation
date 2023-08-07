@@ -74,6 +74,8 @@ public:
 
   union Config
   {
+    static constexpr u8 LOD_MAX = 15;
+
     BitField<u64, Filter, 0, 1> min_filter;
     BitField<u64, Filter, 1, 1> mag_filter;
     BitField<u64, Filter, 2, 1> mip_filter;
