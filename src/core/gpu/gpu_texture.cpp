@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "gpu_texture.h"
+#include "gpu_device.h"
+
 #include "common/log.h"
 #include "common/string_util.h"
+
 Log_SetChannel(GPUTexture);
 
 GPUTexture::GPUTexture() = default;
@@ -52,6 +55,49 @@ u32 GPUTexture::GetPixelSize(GPUTexture::Format format)
 bool GPUTexture::IsDepthFormat(Format format)
 {
   return (format == Format::D16);
+}
+
+bool GPUTexture::ValidateConfig(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type, Format format)
+{
+  if (width > MAX_WIDTH || height > MAX_HEIGHT || layers > MAX_LAYERS || levels > MAX_LEVELS || samples > MAX_SAMPLES)
+  {
+    Log_ErrorPrintf("Invalid dimensions: %ux%ux%u %u %u.", width, height, layers, levels, samples);
+    return false;
+  }
+
+  const u32 max_texture_size = g_gpu_device->GetMaxTextureSize();
+  if (width > max_texture_size || height > max_texture_size)
+  {
+    Log_ErrorPrintf("Texture width (%u) or height (%u) exceeds max texture size (%u).", width, height, max_texture_size);
+    return false;
+  }
+
+  const u32 max_samples = g_gpu_device->GetMaxMultisamples();
+  if (samples > max_samples)
+  {
+    Log_ErrorPrintf("Texture samples (%u) exceeds max samples (%u).", samples, max_samples);
+    return false;
+  }
+
+  if (samples > 1 && levels > 1)
+  {
+    Log_ErrorPrintf("Multisampled textures can't have mip levels.");
+    return false;
+  }
+
+  if (layers > 1 && type != Type::Texture)
+  {
+    Log_ErrorPrintf("Texture arrays are not supported on targets.");
+    return false;
+  }
+
+  if (levels > 1 && type != Type::Texture)
+  {
+    Log_ErrorPrintf("Mipmaps are not supported on targets.");
+    return false;
+  }
+
+  return true;
 }
 
 bool GPUTexture::ConvertTextureDataToRGBA8(u32 width, u32 height, std::vector<u32>& texture_data,

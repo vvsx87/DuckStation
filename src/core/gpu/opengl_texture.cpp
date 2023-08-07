@@ -59,22 +59,11 @@ bool OpenGLTexture::UseTextureStorage() const
   return UseTextureStorage(IsMultisampled());
 }
 
-bool OpenGLTexture::Create(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Format format, const void* data,
-                           u32 data_pitch)
+bool OpenGLTexture::Create(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type, Format format,
+                           const void* data, u32 data_pitch)
 {
-  glGetError();
-
-  if (width > MAX_WIDTH || height > MAX_HEIGHT || layers > MAX_LAYERS || levels > MAX_LEVELS || samples > MAX_SAMPLES)
-  {
-    Log_ErrorPrintf("Invalid dimensions: %ux%ux%u %u %u", width, height, layers, levels, samples);
+  if (!ValidateConfig(width, height, layers, levels, samples, type, format))
     return false;
-  }
-
-  if (samples > 1 && levels > 1)
-  {
-    Log_ErrorPrintf("Multisampled textures can't have mip levels");
-    return false;
-  }
 
   if (layers > 1 && data)
   {
@@ -87,6 +76,8 @@ bool OpenGLTexture::Create(u32 width, u32 height, u32 layers, u32 levels, u32 sa
   const auto [gl_internal_format, gl_format, gl_type] = GetPixelFormatMapping(format);
 
   OpenGLDevice::BindUpdateTextureUnit();
+
+  glGetError();
 
   GLuint id;
   glGenTextures(1, &id);
@@ -164,66 +155,11 @@ bool OpenGLTexture::Create(u32 width, u32 height, u32 layers, u32 levels, u32 sa
   m_layers = static_cast<u8>(layers);
   m_levels = static_cast<u8>(levels);
   m_samples = static_cast<u8>(samples);
+  m_type = type;
   m_format = format;
   m_state = GPUTexture::State::Dirty;
   return true;
 }
-
-#if 0
-void OpenGLTexture::Replace(u32 width, u32 height, GLenum internal_format, GLenum format, GLenum type, const void* data)
-{
-  Assert(IsValid() && width < MAX_WIDTH && height < MAX_HEIGHT && m_layers == 1 && m_samples == 1 && m_levels == 1);
-
-  const bool size_changed = (width != m_width || height != m_height);
-
-  m_width = static_cast<u16>(width);
-  m_height = static_cast<u16>(height);
-  m_levels = 1;
-
-  const GLenum target = GetGLTarget();
-  glBindTexture(target, m_id);
-
-  if (UseTextureStorage())
-  {
-    if (size_changed)
-    {
-      if (m_layers > 0)
-        glTexStorage3D(target, m_levels, internal_format, m_width, m_height, m_levels);
-      else
-        glTexStorage2D(target, m_levels, internal_format, m_width, m_height);
-    }
-
-    glTexSubImage2D(target, 0, 0, 0, m_width, m_height, format, type, data);
-  }
-  else
-  {
-    glTexImage2D(target, 0, internal_format, width, height, 0, format, type, data);
-  }
-}
-
-void OpenGLTexture::ReplaceImage(u32 layer, u32 level, GLenum format, GLenum type, const void* data)
-{
-  Assert(IsValid() && !IsMultisampled());
-
-  const GLenum target = GetGLTarget();
-  if (IsTextureArray())
-    glTexSubImage3D(target, level, 0, 0, layer, m_width, m_height, 1, format, type, data);
-  else
-    glTexSubImage2D(target, level, 0, 0, m_width, m_height, format, type, data);
-}
-
-void OpenGLTexture::ReplaceSubImage(u32 layer, u32 level, u32 x, u32 y, u32 width, u32 height, GLenum format,
-                                    GLenum type, const void* data)
-{
-  Assert(IsValid() && !IsMultisampled());
-
-  const GLenum target = GetGLTarget();
-  if (IsTextureArray())
-    glTexSubImage3D(target, level, x, y, layer, width, height, 1, format, type, data);
-  else
-    glTexSubImage2D(target, level, x, y, width, height, format, type, data);
-}
-#endif
 
 void OpenGLTexture::Destroy()
 {
@@ -458,8 +394,7 @@ void OpenGLFramebuffer::Bind(GLenum target)
   glBindFramebuffer(target, m_id);
 }
 
-std::unique_ptr<GPUFramebuffer> OpenGLDevice::CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level,
-                                                                GPUTexture* ds, u32 ds_layer, u32 ds_level)
+std::unique_ptr<GPUFramebuffer> OpenGLDevice::CreateFramebuffer(GPUTexture* rt_or_ds, GPUTexture* ds /* = nullptr */)
 {
   glGetError();
 
@@ -467,34 +402,25 @@ std::unique_ptr<GPUFramebuffer> OpenGLDevice::CreateFramebuffer(GPUTexture* rt, 
   glGenFramebuffers(1, &fbo_id);
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo_id);
 
-  OpenGLTexture* RT = static_cast<OpenGLTexture*>(rt);
-  OpenGLTexture* DS = static_cast<OpenGLTexture*>(ds);
+  DebugAssert((rt_or_ds || ds) && (!rt_or_ds || rt_or_ds->IsRenderTarget() || (rt_or_ds->IsDepthStencil() && !ds)));
+  OpenGLTexture* RT = static_cast<OpenGLTexture*>((rt_or_ds && rt_or_ds->IsDepthStencil()) ? nullptr : rt_or_ds);
+  OpenGLTexture* DS = static_cast<OpenGLTexture*>((rt_or_ds && rt_or_ds->IsDepthStencil()) ? rt_or_ds : ds);
   if (RT)
-  {
-    if (RT->IsTextureArray())
-      glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, fbo_id, RT->GetGLId(), rt_level, rt_layer);
-    else
-      glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, RT->GetGLId(), rt_level);
-  }
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, RT->GetGLId(), 0);
   if (DS)
-  {
-    if (DS->IsTextureArray())
-      glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, fbo_id, DS->GetGLId(), rt_level, rt_layer);
-    else
-      glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, DS->GetGLId(), rt_level);
-  }
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, DS->GetGLId(), 0);
 
   if (glGetError() != GL_NO_ERROR || glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
   {
     Log_ErrorPrintf("Failed to create GL framebuffer: %u", glGetError());
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_current_framebuffer ? m_current_framebuffer->GetGLId() : 0);
     glDeleteFramebuffers(1, &fbo_id);
     return {};
   }
 
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_current_framebuffer ? m_current_framebuffer->GetGLId() : 0);
-  return std::unique_ptr<GPUFramebuffer>(
-    new OpenGLFramebuffer(rt, ds, rt ? rt->GetMipWidth(rt_level) : ds->GetMipWidth(ds_level),
-                          rt ? rt->GetMipHeight(rt_level) : ds->GetMipHeight(ds_level), fbo_id));
+  return std::unique_ptr<GPUFramebuffer>(new OpenGLFramebuffer(RT, DS, RT ? RT->GetWidth() : DS->GetWidth(),
+                                                               RT ? RT->GetHeight() : DS->GetHeight(), fbo_id));
 }
 
 void OpenGLDevice::CommitClear(OpenGLTexture* tex)

@@ -273,13 +273,6 @@ void GPUDevice::Destroy()
   DestroyDevice();
 }
 
-bool GPUDevice::UpdateWindow()
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return false;
-}
-
 bool GPUDevice::SupportsExclusiveFullscreen() const
 {
   return false;
@@ -419,18 +412,6 @@ bool GPUDevice::SetPostProcessingChain(const std::string_view& config)
   return true;
 }
 
-std::string GPUDevice::GetShaderCacheBaseName(const std::string_view& type) const
-{
-  Panic("Not implemented");
-  return {};
-}
-
-void GPUDevice::ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
 void GPUDevice::RenderImGui()
 {
   GL_SCOPE("RenderImGui");
@@ -483,30 +464,6 @@ void GPUDevice::RenderImGui()
   }
 }
 
-void GPUDevice::MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space, u32* map_base_vertex)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::UnmapVertexBuffer(u32 vertex_size, u32 vertex_count)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::UnmapIndexBuffer(u32 used_index_count)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
 void GPUDevice::UploadVertexBuffer(const void* vertices, u32 vertex_size, u32 vertex_count, u32* base_vertex)
 {
   void* map;
@@ -525,25 +482,6 @@ void GPUDevice::UploadIndexBuffer(const u16* indices, u32 index_count, u32* base
   UnmapIndexBuffer(index_count);
 }
 
-void GPUDevice::PushUniformBuffer(const void* data, u32 data_size)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void* GPUDevice::MapUniformBuffer(u32 size)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return nullptr;
-}
-
-void GPUDevice::UnmapUniformBuffer(u32 size)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
 void GPUDevice::UploadUniformBuffer(const void* data, u32 data_size)
 {
   void* map = MapUniformBuffer(data_size);
@@ -551,87 +489,10 @@ void GPUDevice::UploadUniformBuffer(const void* data, u32 data_size)
   UnmapUniformBuffer(data_size);
 }
 
-void GPUDevice::SetFramebuffer(GPUFramebuffer* fb)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::SetPipeline(GPUPipeline* pipeline)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::SetViewport(s32 x, s32 y, s32 width, s32 height)
-{
-  // TODO: REMOVE ME
-  // GL needs to invert if writing to the window framebuffer
-  UnreachableCode();
-}
-
-void GPUDevice::SetScissor(s32 x, s32 y, s32 width, s32 height)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
 void GPUDevice::SetViewportAndScissor(s32 x, s32 y, s32 width, s32 height)
 {
   SetViewport(x, y, width, height);
   SetScissor(x, y, width, height);
-}
-
-void GPUDevice::Draw(u32 base_vertex, u32 vertex_count)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::DrawIndexed(u32 base_index, u32 index_count, u32 base_vertex)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-bool GPUDevice::BeginPresent(bool skip_present)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return false;
-}
-
-void GPUDevice::EndPresent()
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
-                                  u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-void GPUDevice::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
-                                     GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
-                                     u32 height)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
 }
 
 void GPUDevice::ClearRenderTarget(GPUTexture* t, u32 c)
@@ -647,75 +508,6 @@ void GPUDevice::ClearDepth(GPUTexture* t, float d)
 void GPUDevice::InvalidateRenderTarget(GPUTexture* t)
 {
   t->SetState(GPUTexture::State::Invalidated);
-}
-
-bool GPUDevice::CreateDevice(const std::string_view& adapter)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return false;
-}
-
-void GPUDevice::DestroyDevice()
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-}
-
-std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return {};
-}
-
-std::unique_ptr<GPUShader> GPUDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                             std::vector<u8>* out_binary /* = nullptr */)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return {};
-}
-
-std::unique_ptr<GPUPipeline> GPUDevice::CreatePipeline(const GPUPipeline::GraphicsConfig& config)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return {};
-}
-
-void GPUDevice::PushDebugGroup(const char* fmt, ...)
-{
-}
-
-void GPUDevice::PopDebugGroup()
-{
-}
-
-void GPUDevice::InsertDebugMessage(const char* fmt, ...)
-{
-}
-
-std::unique_ptr<GPUSampler> GPUDevice::CreateSampler(const GPUSampler::Config& config)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return {};
-}
-
-std::unique_ptr<GPUTextureBuffer> GPUDevice::CreateTextureBuffer(GPUTextureBuffer::Format format, u32 size_in_elements)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return {};
-}
-
-std::unique_ptr<GPUFramebuffer> GPUDevice::CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level, GPUTexture* ds,
-                                                             u32 ds_layer, u32 ds_level)
-{
-  // TODO: REMOVE ME
-  UnreachableCode();
-  return {};
 }
 
 std::unique_ptr<GPUShader> GPUDevice::CreateShader(GPUShaderStage stage, const std::string_view& source)
@@ -1646,7 +1438,8 @@ std::unique_ptr<GPUDevice> GPUDevice::CreateDeviceForAPI(RenderAPI api)
   {
 #ifdef WITH_VULKAN
     case RenderAPI::Vulkan:
-      return std::make_unique<VulkanGPUDevice>();
+      // return std::make_unique<VulkanGPUDevice>();
+      return {};
 #endif
 
 #ifdef WITH_OPENGL
@@ -1657,7 +1450,8 @@ std::unique_ptr<GPUDevice> GPUDevice::CreateDeviceForAPI(RenderAPI api)
 
 #ifdef _WIN32
     case RenderAPI::D3D12:
-      return std::make_unique<D3D12GPUDevice>();
+      // return std::make_unique<D3D12GPUDevice>();
+      return {};
 
     case RenderAPI::D3D11:
       return std::make_unique<D3D11Device>();

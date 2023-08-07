@@ -47,7 +47,7 @@ std::unique_ptr<GPUTexture> OpenGLDevice::CreateTexture(u32 width, u32 height, u
                                                         const void* data, u32 data_stride, bool dynamic /* = false */)
 {
   std::unique_ptr<OpenGLTexture> tex(std::make_unique<OpenGLTexture>());
-  if (!tex->Create(width, height, layers, levels, samples, format, data, data_stride))
+  if (!tex->Create(width, height, layers, levels, samples, type, format, data, data_stride))
     tex.reset();
 
   return tex;
@@ -416,9 +416,6 @@ bool OpenGLDevice::CheckFeatures()
   }
 
   m_features.per_sample_shading = GLAD_GL_VERSION_4_0 || GLAD_GL_ES_VERSION_3_2 || GLAD_GL_ARB_sample_shading;
-
-  // adaptive smoothing would require texture views, which aren't in GLES.
-  m_features.mipmapped_render_targets = false;
 
   // noperspective is not supported in GLSL ES.
   m_features.noperspective_interpolation = !is_gles;

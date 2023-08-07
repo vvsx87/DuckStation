@@ -510,7 +510,6 @@ void D3D11Device::SetFeatures()
 
   m_features.dual_source_blend = true;
   m_features.per_sample_shading = (feature_level >= D3D_FEATURE_LEVEL_10_1);
-  m_features.mipmapped_render_targets = true;
   m_features.noperspective_interpolation = true;
   m_features.supports_texture_buffers = true;
   m_features.texture_buffers_emulated_with_ssbo = false;
@@ -1153,121 +1152,29 @@ void D3D11Framebuffer::CommitClear(ID3D11DeviceContext1* context)
   }
 }
 
-std::unique_ptr<GPUFramebuffer> D3D11Device::CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level,
-                                                               GPUTexture* ds, u32 ds_layer, u32 ds_level)
+std::unique_ptr<GPUFramebuffer> D3D11Device::CreateFramebuffer(GPUTexture* rt_or_ds, GPUTexture* ds)
 {
+  DebugAssert((rt_or_ds || ds) && (!rt_or_ds || rt_or_ds->IsRenderTarget() || (rt_or_ds->IsDepthStencil() && !ds)));
+  D3D11Texture* RT = static_cast<D3D11Texture*>((rt_or_ds && rt_or_ds->IsDepthStencil()) ? nullptr : rt_or_ds);
+  D3D11Texture* DS = static_cast<D3D11Texture*>((rt_or_ds && rt_or_ds->IsDepthStencil()) ? rt_or_ds : ds);
+
   ComPtr<ID3D11RenderTargetView> rtv;
+  if (RT)
+  {
+    rtv = RT->GetD3DRTV();
+    Assert(rtv);
+  }
+
   ComPtr<ID3D11DepthStencilView> dsv;
-  HRESULT hr;
-
-  Assert(rt || ds);
-  Assert(!rt || (rt_layer < rt->GetLayers() && rt_level < rt->GetLevels()));
-  Assert(!ds || (ds_layer < ds->GetLevels() && ds_level < ds->GetLevels()));
-  Assert(!rt || !ds ||
-         (rt->GetMipWidth(rt_level) == ds->GetMipWidth(ds_level) &&
-          rt->GetMipHeight(rt_level) == ds->GetMipHeight(ds_level)));
-
-  if (rt)
+  if (DS)
   {
-    if (rt_layer == 0 && rt_level == 0)
-    {
-      rtv = static_cast<D3D11Texture*>(rt)->GetD3DRTV();
-    }
-    else
-    {
-      D3D11_RENDER_TARGET_VIEW_DESC rtv_desc = {};
-      rtv_desc.Format = static_cast<D3D11Texture*>(rt)->GetDXGIFormat();
-      if (rt->IsMultisampled())
-      {
-        Assert(rt_level == 0);
-        if (rt->GetLayers() > 1)
-        {
-          rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY;
-          rtv_desc.Texture2DMSArray.ArraySize = rt->GetLayers();
-          rtv_desc.Texture2DMSArray.FirstArraySlice = rt_layer;
-        }
-        else
-        {
-          rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMS;
-        }
-      }
-      else
-      {
-        if (rt->GetLayers() > 1)
-        {
-          rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-          rtv_desc.Texture2DArray.ArraySize = rt->GetLayers();
-          rtv_desc.Texture2DArray.FirstArraySlice = rt_layer;
-          rtv_desc.Texture2DArray.MipSlice = rt_level;
-        }
-        else
-        {
-          rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-          rtv_desc.Texture2D.MipSlice = rt_level;
-        }
-      }
-
-      if (FAILED(hr = m_device->CreateRenderTargetView(static_cast<D3D11Texture*>(rt)->GetD3DTexture(), &rtv_desc,
-                                                       rtv.GetAddressOf())))
-      {
-        Log_ErrorPrintf("CreateRenderTargetView() failed: %08X", hr);
-        return {};
-      }
-    }
+    dsv = DS->GetD3DDSV();
+    Assert(dsv);
   }
 
-  if (ds)
-  {
-    if (ds_layer == 0 && ds_level == 0)
-    {
-      dsv = static_cast<D3D11Texture*>(ds)->GetD3DDSV();
-    }
-    else
-    {
-      D3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc = {};
-      dsv_desc.Format = static_cast<D3D11Texture*>(ds)->GetDXGIFormat();
-      if (ds->IsMultisampled())
-      {
-        Assert(rt_level == 0);
-        if (ds->GetLayers() > 1)
-        {
-          dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY;
-          dsv_desc.Texture2DMSArray.ArraySize = ds->GetLayers();
-          dsv_desc.Texture2DMSArray.FirstArraySlice = rt_layer;
-        }
-        else
-        {
-          dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
-        }
-      }
-      else
-      {
-        if (ds->GetLayers() > 1)
-        {
-          dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
-          dsv_desc.Texture2DArray.ArraySize = ds->GetLayers();
-          dsv_desc.Texture2DArray.FirstArraySlice = rt_layer;
-          dsv_desc.Texture2DArray.MipSlice = rt_level;
-        }
-        else
-        {
-          dsv_desc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-          dsv_desc.Texture2D.MipSlice = rt_level;
-        }
-      }
-
-      if (FAILED(hr = m_device->CreateDepthStencilView(static_cast<D3D11Texture*>(ds)->GetD3DTexture(), &dsv_desc,
-                                                       dsv.GetAddressOf())))
-      {
-        Log_ErrorPrintf("CreateDepthStencilView() failed: %08X", hr);
-        return {};
-      }
-    }
-  }
-
-  return std::unique_ptr<GPUFramebuffer>(
-    new D3D11Framebuffer(rt, ds, rt ? rt->GetMipWidth(rt_level) : ds->GetMipWidth(ds_level),
-                         rt ? rt->GetMipHeight(rt_level) : ds->GetMipHeight(ds_level), std::move(rtv), std::move(dsv)));
+  return std::unique_ptr<GPUFramebuffer>(new D3D11Framebuffer(RT, DS, RT ? RT->GetWidth() : DS->GetWidth(),
+                                                              RT ? RT->GetHeight() : DS->GetHeight(), std::move(rtv),
+                                                              std::move(dsv)));
 }
 
 D3D11Sampler::D3D11Sampler(ComPtr<ID3D11SamplerState> ss) : m_ss(std::move(ss))
@@ -1854,13 +1761,8 @@ bool D3D11Texture::Create(ID3D11Device* device, u32 width, u32 height, u32 layer
                           Format format, const void* initial_data /* = nullptr */, u32 initial_data_stride /* = 0 */,
                           bool dynamic /* = false */)
 {
-  if (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
-      layers > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION || (layers > 1 && samples > 1))
-  {
-    Log_ErrorPrintf("Texture bounds (%ux%ux%u, %u mips, %u samples) are too large", width, height, layers, levels,
-                    samples);
+  if (!ValidateConfig(width, height, layers, layers, samples, type, format))
     return false;
-  }
 
   u32 bind_flags = 0;
   switch (type)

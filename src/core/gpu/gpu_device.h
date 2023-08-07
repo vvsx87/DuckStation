@@ -416,7 +416,6 @@ public:
   {
     bool dual_source_blend : 1;
     bool per_sample_shading : 1;
-    bool mipmapped_render_targets : 1;
     bool noperspective_interpolation : 1;
     bool supports_texture_buffers : 1;
     bool texture_buffers_emulated_with_ssbo : 1;
@@ -488,83 +487,81 @@ public:
 
   virtual bool HasSurface() const = 0;
   virtual void DestroySurface() = 0;
-  virtual bool UpdateWindow();
+  virtual bool UpdateWindow() = 0;
 
   virtual bool SupportsExclusiveFullscreen() const;
   virtual AdapterAndModeList GetAdapterAndModeList() = 0;
 
   virtual bool SetPostProcessingChain(const std::string_view& config);
 
-  virtual std::string GetShaderCacheBaseName(const std::string_view& type) const;
+  virtual std::string GetShaderCacheBaseName(const std::string_view& type) const = 0;
 
   /// Call when the window size changes externally to recreate any resources.
-  virtual void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale);
+  virtual void ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale) = 0;
 
   /// Creates an abstracted RGBA8 texture. If dynamic, the texture can be updated with UpdateTexture() below.
   virtual std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                                     GPUTexture::Type type, GPUTexture::Format format,
                                                     const void* data = nullptr, u32 data_stride = 0,
                                                     bool dynamic = false) = 0;
-  virtual std::unique_ptr<GPUSampler> CreateSampler(const GPUSampler::Config& config);
-  virtual std::unique_ptr<GPUTextureBuffer> CreateTextureBuffer(GPUTextureBuffer::Format format, u32 size_in_elements);
+  virtual std::unique_ptr<GPUSampler> CreateSampler(const GPUSampler::Config& config) = 0;
+  virtual std::unique_ptr<GPUTextureBuffer> CreateTextureBuffer(GPUTextureBuffer::Format format, u32 size_in_elements) = 0;
 
   virtual bool DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width, u32 height, void* out_data,
                                u32 out_data_stride) = 0;
   virtual void CopyTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level, GPUTexture* src,
-                                 u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height);
+                                 u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width, u32 height) = 0;
   virtual void ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u32 dst_layer, u32 dst_level,
                                     GPUTexture* src, u32 src_x, u32 src_y, u32 src_layer, u32 src_level, u32 width,
-                                    u32 height);
+                                    u32 height) = 0;
   virtual void ClearRenderTarget(GPUTexture* t, u32 c);
   virtual void ClearDepth(GPUTexture* t, float d);
   virtual void InvalidateRenderTarget(GPUTexture* t);
 
   /// Framebuffer abstraction.
-  virtual std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt = nullptr, u32 rt_layer = 0,
-                                                            u32 rt_level = 0, GPUTexture* ds = nullptr,
-                                                            u32 ds_layer = 0, u32 ds_level = 0);
+  virtual std::unique_ptr<GPUFramebuffer> CreateFramebuffer(GPUTexture* rt_or_ds, GPUTexture* ds = nullptr) = 0;
 
   /// Shader abstraction.
   // TODO:  entry point? source format?
   std::unique_ptr<GPUShader> CreateShader(GPUShaderStage stage, const std::string_view& source);
-  virtual std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config);
+  virtual std::unique_ptr<GPUPipeline> CreatePipeline(const GPUPipeline::GraphicsConfig& config) = 0;
 
   /// Debug messaging.
-  virtual void PushDebugGroup(const char* fmt, ...);
-  virtual void PopDebugGroup();
-  virtual void InsertDebugMessage(const char* fmt, ...);
+  virtual void PushDebugGroup(const char* fmt, ...) = 0;
+  virtual void PopDebugGroup() = 0;
+  virtual void InsertDebugMessage(const char* fmt, ...) = 0;
 
   /// Vertex/index buffer abstraction.
-  virtual void MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space, u32* map_base_vertex);
-  virtual void UnmapVertexBuffer(u32 vertex_size, u32 vertex_count);
-  virtual void MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index);
-  virtual void UnmapIndexBuffer(u32 used_size);
+  virtual void MapVertexBuffer(u32 vertex_size, u32 vertex_count, void** map_ptr, u32* map_space, u32* map_base_vertex) = 0;
+  virtual void UnmapVertexBuffer(u32 vertex_size, u32 vertex_count) = 0;
+  virtual void MapIndexBuffer(u32 index_count, DrawIndex** map_ptr, u32* map_space, u32* map_base_index) = 0;
+  virtual void UnmapIndexBuffer(u32 used_size) = 0;
 
   void UploadVertexBuffer(const void* vertices, u32 vertex_size, u32 vertex_count, u32* base_vertex);
   void UploadIndexBuffer(const DrawIndex* indices, u32 index_count, u32* base_index);
 
   /// Uniform buffer abstraction.
-  virtual void PushUniformBuffer(const void* data, u32 data_size);
-  virtual void* MapUniformBuffer(u32 size);
-  virtual void UnmapUniformBuffer(u32 size);
+  virtual void PushUniformBuffer(const void* data, u32 data_size) = 0;
+  virtual void* MapUniformBuffer(u32 size) = 0;
+  virtual void UnmapUniformBuffer(u32 size) = 0;
   void UploadUniformBuffer(const void* data, u32 data_size);
 
   /// Drawing setup abstraction.
-  virtual void SetFramebuffer(GPUFramebuffer* fb);
-  virtual void SetPipeline(GPUPipeline* pipeline);
-  virtual void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler);
-  virtual void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer);
-  virtual void SetViewport(s32 x, s32 y, s32 width, s32 height);
-  virtual void SetScissor(s32 x, s32 y, s32 width, s32 height);
+  virtual void SetFramebuffer(GPUFramebuffer* fb) = 0;
+  virtual void SetPipeline(GPUPipeline* pipeline) = 0;
+  virtual void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) = 0;
+  virtual void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer) = 0;
+  virtual void SetViewport(s32 x, s32 y, s32 width, s32 height) = 0;
+  virtual void SetScissor(s32 x, s32 y, s32 width, s32 height) = 0;
   void SetViewportAndScissor(s32 x, s32 y, s32 width, s32 height);
 
   // Drawing abstraction.
-  virtual void Draw(u32 vertex_count, u32 base_vertex);
-  virtual void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex);
+  virtual void Draw(u32 vertex_count, u32 base_vertex) = 0;
+  virtual void DrawIndexed(u32 index_count, u32 base_index, u32 base_vertex) = 0;
 
   /// Returns false if the window was completely occluded.
-  virtual bool BeginPresent(bool skip_present);
-  virtual void EndPresent();
+  virtual bool BeginPresent(bool skip_present) = 0;
+  virtual void EndPresent() = 0;
   bool Render(bool skip_present);
 
   /// Renders the display with postprocessing to the specified image.
@@ -633,12 +630,12 @@ public:
   bool WriteScreenshotToFile(std::string filename, bool internal_resolution = false, bool compress_on_thread = false);
 
 protected:
-  virtual bool CreateDevice(const std::string_view& adapter);
-  virtual void DestroyDevice();
+  virtual bool CreateDevice(const std::string_view& adapter) = 0;
+  virtual void DestroyDevice() = 0;
 
-  virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data);
+  virtual std::unique_ptr<GPUShader> CreateShaderFromBinary(GPUShaderStage stage, gsl::span<const u8> data) = 0;
   virtual std::unique_ptr<GPUShader> CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
-                                                            std::vector<u8>* out_binary = nullptr);
+                                                            std::vector<u8>* out_binary = nullptr) = 0;
 
   bool AcquireWindow(bool recreate_window);
 

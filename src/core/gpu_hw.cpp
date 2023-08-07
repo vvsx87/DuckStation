@@ -502,13 +502,10 @@ bool GPU_HW::CreateBuffers()
   }
 
   // vram framebuffer has both colour and depth
-  if (!(m_vram_framebuffer =
-          g_gpu_device->CreateFramebuffer(m_vram_texture.get(), 0, 0, m_vram_depth_texture.get(), 0, 0)) ||
-      !(m_vram_update_depth_framebuffer =
-          g_gpu_device->CreateFramebuffer(nullptr, 0, 0, m_vram_depth_texture.get(), 0, 0)) ||
-      !(m_vram_readback_framebuffer =
-          g_gpu_device->CreateFramebuffer(m_vram_readback_texture.get(), 0, 0, nullptr, 0, 0)) ||
-      !(m_display_framebuffer = g_gpu_device->CreateFramebuffer(m_display_texture.get(), 0, 0, nullptr, 0, 0)))
+  if (!(m_vram_framebuffer = g_gpu_device->CreateFramebuffer(m_vram_texture.get(), m_vram_depth_texture.get())) ||
+      !(m_vram_update_depth_framebuffer = g_gpu_device->CreateFramebuffer(m_vram_depth_texture.get())) ||
+      !(m_vram_readback_framebuffer = g_gpu_device->CreateFramebuffer(m_vram_readback_texture.get())) ||
+      !(m_display_framebuffer = g_gpu_device->CreateFramebuffer(m_display_texture.get())))
   {
     return false;
   }

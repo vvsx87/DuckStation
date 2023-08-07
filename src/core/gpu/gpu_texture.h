@@ -109,6 +109,7 @@ public:
 
   static u32 GetPixelSize(GPUTexture::Format format);
   static bool IsDepthFormat(GPUTexture::Format format);
+  static bool ValidateConfig(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type, Format format);
 
   static bool ConvertTextureDataToRGBA8(u32 width, u32 height, std::vector<u32>& texture_data, u32& texture_data_stride,
                                         GPUTexture::Format format);

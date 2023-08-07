@@ -970,15 +970,15 @@ std::unique_ptr<GPUTexture> MetalDevice::CreateTexture(u32 width, u32 height, u3
                                                        GPUTexture::Type type, GPUTexture::Format format,
                                                        const void* data, u32 data_stride, bool dynamic /* = false */)
 {
+  if (!GPUTexture::ValidateConfig(width, height, layers, layers, samples, type, format))
+    return {};
+
+  const MTLPixelFormat pixel_format = s_pixel_format_mapping[static_cast<u8>(format)];
+  if (pixel_format == MTLPixelFormatInvalid)
+    return {};
+
   @autoreleasepool
   {
-    if (width > m_max_texture_size || height > m_max_texture_size || samples > m_max_multisamples)
-      return {};
-
-    const MTLPixelFormat pixel_format = s_pixel_format_mapping[static_cast<u8>(format)];
-    if (pixel_format == MTLPixelFormatInvalid)
-      return {};
-
     MTLTextureDescriptor* desc = [[[MTLTextureDescriptor alloc] init] autorelease];
     desc.width = width;
     desc.height = height;
@@ -1115,16 +1115,19 @@ MTLRenderPassDescriptor* MetalFramebuffer::GetDescriptor() const
   return m_descriptor;
 }
 
-std::unique_ptr<GPUFramebuffer> MetalDevice::CreateFramebuffer(GPUTexture* rt, u32 rt_layer, u32 rt_level,
-                                                               GPUTexture* ds, u32 ds_layer, u32 ds_level)
+std::unique_ptr<GPUFramebuffer> MetalDevice::CreateFramebuffer(GPUTexture* rt_or_ds, GPUTexture* ds)
 {
+  DebugAssert((rt_or_ds || ds) && (!rt_or_ds || rt_or_ds->IsRenderTarget() || (rt_or_ds->IsDepthStencil() && !ds)));
+  MetalTexture* RT = static_cast<MetalTexture*>((rt_or_ds && rt_or_ds->IsDepthStencil()) ? nullptr : rt_or_ds);
+  MetalTexture* DS = static_cast<MetalTexture*>((rt_or_ds && rt_or_ds->IsDepthStencil()) ? rt_or_ds : ds);
+
   @autoreleasepool
   {
     MTLRenderPassDescriptor* desc = [[MTLRenderPassDescriptor renderPassDescriptor] retain];
-    id<MTLTexture> rt_tex = rt ? [static_cast<MetalTexture*>(rt)->GetMTLTexture() retain] : nil;
-    id<MTLTexture> ds_tex = ds ? [static_cast<MetalTexture*>(ds)->GetMTLTexture() retain] : nil;
+    id<MTLTexture> rt_tex = RT ? [RT->GetMTLTexture() retain] : nil;
+    id<MTLTexture> ds_tex = DS ? [DS->GetMTLTexture() retain] : nil;
 
-    if (rt)
+    if (RT)
     {
       desc.colorAttachments[0].texture = rt_tex;
       desc.colorAttachments[0].slice = rt_layer;
@@ -1133,7 +1136,7 @@ std::unique_ptr<GPUFramebuffer> MetalDevice::CreateFramebuffer(GPUTexture* rt, u
       desc.colorAttachments[0].storeAction = MTLStoreActionStore;
     }
 
-    if (rt)
+    if (DS)
     {
       desc.depthAttachment.texture = ds_tex;
       desc.depthAttachment.slice = ds_layer;
@@ -1142,12 +1145,12 @@ std::unique_ptr<GPUFramebuffer> MetalDevice::CreateFramebuffer(GPUTexture* rt, u
       desc.depthAttachment.storeAction = MTLStoreActionStore;
     }
 
-    const u32 width = rt ? rt->GetMipWidth(rt_level) : ds->GetMipWidth(ds_level);
-    const u32 height = rt ? rt->GetMipHeight(rt_level) : ds->GetMipHeight(ds_level);
+    const u32 width = RT ? RT->GetWidth() : DS->GetWidth();
+    const u32 height = RT ? RT->GetHeight() : DS->GetHeight();
     desc.renderTargetWidth = width;
     desc.renderTargetHeight = height;
 
-    return std::unique_ptr<GPUFramebuffer>(new MetalFramebuffer(rt, ds, width, height, rt_tex, ds_tex, desc));
+    return std::unique_ptr<GPUFramebuffer>(new MetalFramebuffer(RT, DS, width, height, rt_tex, ds_tex, desc));
   }
 }
 

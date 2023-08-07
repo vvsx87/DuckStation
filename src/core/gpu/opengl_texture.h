@@ -30,8 +30,8 @@ public:
 
   void SetDebugName(const std::string_view& name) override;
 
-  bool Create(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Format format, const void* data = nullptr,
-              u32 data_pitch = 0);
+  bool Create(u32 width, u32 height, u32 layers, u32 levels, u32 samples, Type type, Format format,
+              const void* data = nullptr, u32 data_pitch = 0);
   void Destroy();
 
   bool UseTextureStorage() const;
