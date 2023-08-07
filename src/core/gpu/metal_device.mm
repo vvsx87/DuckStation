@@ -113,7 +113,7 @@ void MetalDevice::SetVSync(bool enabled)
     [m_layer setDisplaySyncEnabled:enabled];
 }
 
-bool MetalDevice::CreateDevice(const std::string_view& adapter, bool debug_device)
+bool MetalDevice::CreateDevice(const std::string_view& adapter)
 {
   @autoreleasepool
   {
@@ -142,8 +142,7 @@ bool MetalDevice::CreateDevice(const std::string_view& adapter, bool debug_devic
       return false;
 
     CreateCommandBuffer();
-
-    Panic("Render blank frame!");
+    RenderBlankFrame();
 
     if (!CreateBuffers())
     {
@@ -277,6 +276,23 @@ void MetalDevice::DestroyLayer()
   });
 }
 
+void MetalDevice::RenderBlankFrame()
+{
+  DebugAssert(!InRenderPass());
+  if (m_layer == nil)
+    return;
+
+  @autoreleasepool
+  {
+    id<MTLDrawable> drawable = [m_layer nextDrawable];
+    m_layer_pass_desc.colorAttachments[0].texture = [drawable texture];
+    id<MTLRenderCommandEncoder> encoder = [m_render_cmdbuf renderCommandEncoderWithDescriptor:m_layer_pass_desc];
+    [encoder endEncoding];
+    [m_render_cmdbuf presentDrawable:drawable];
+    SubmitCommandBuffer();
+  }
+}
+
 bool MetalDevice::UpdateWindow()
 {
   if (InRenderPass())
@@ -300,9 +316,9 @@ void MetalDevice::DestroySurface()
   DestroyLayer();
 }
 
-std::string MetalDevice::GetShaderCacheBaseName(const std::string_view& type, bool debug) const
+std::string MetalDevice::GetShaderCacheBaseName(const std::string_view& type) const
 {
-  return fmt::format("metal_{}{}", type, debug ? "_debug" : "");
+  return fmt::format("metal_{}{}", type, m_debug_device ? "_debug" : "");
 }
 
 void MetalDevice::ResizeWindow(s32 new_window_width, s32 new_window_height, float new_window_scale)
@@ -1374,6 +1390,30 @@ void MetalDevice::ResolveTextureRegion(GPUTexture* dst, u32 dst_x, u32 dst_y, u3
 #endif
 }
 
+void MetalDevice::ClearRenderTarget(GPUTexture* t, u32 c)
+{
+  GPUDevice::ClearRenderTarget(t, c);
+  if (InRenderPass() && m_current_framebuffer && m_current_framebuffer->GetRT() == t)
+    EndRenderPass();
+}
+
+void MetalDevice::ClearDepth(GPUTexture* t, float d)
+{
+  GPUDevice::ClearDepth(t, d);
+  if (InRenderPass() && m_current_framebuffer && m_current_framebuffer->GetDS() == t)
+    EndRenderPass();
+}
+
+void MetalDevice::InvalidateRenderTarget(GPUTexture* t)
+{
+  GPUDevice::InvalidateRenderTarget(t);
+  if (InRenderPass() && m_current_framebuffer &&
+      (m_current_framebuffer->GetRT() == t || m_current_framebuffer->GetDS() == t))
+  {
+    EndRenderPass();
+  }
+}
+
 void MetalDevice::CommitClear(MetalTexture* tex)
 {
   if (tex->GetState() == GPUTexture::State::Dirty)
@@ -1881,6 +1921,7 @@ void MetalDevice::EndPresent()
 
   [m_render_cmdbuf presentDrawable:m_layer_drawable];
   [m_layer_drawable release];
+  m_layer_drawable = nil;
   SubmitCommandBuffer();
 }
 

@@ -192,7 +192,7 @@ public:
   AdapterAndModeList GetAdapterAndModeList() override;
   void DestroySurface() override;
 
-  std::string GetShaderCacheBaseName(const std::string_view& type, bool debug) const override;
+  std::string GetShaderCacheBaseName(const std::string_view& type) const override;
 
   std::unique_ptr<GPUTexture> CreateTexture(u32 width, u32 height, u32 layers, u32 levels, u32 samples,
                                             GPUTexture::Type type, GPUTexture::Format format,
@@ -274,7 +274,7 @@ public:
   static AdapterAndModeList StaticGetAdapterAndModeList();
 
 protected:
-  bool CreateDevice(const std::string_view& adapter, bool debug_device) override;
+  bool CreateDevice(const std::string_view& adapter) override;
   void DestroyDevice() override;
 
 private:
@@ -319,6 +319,7 @@ private:
 
   bool CreateLayer();
   void DestroyLayer();
+  void RenderBlankFrame();
 
   bool CreateBuffers();
   void DestroyBuffers();
