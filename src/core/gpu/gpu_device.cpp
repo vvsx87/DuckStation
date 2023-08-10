@@ -45,7 +45,7 @@ extern std::unique_ptr<GPUDevice> WrapNewMetalDevice();
 #endif
 
 #ifdef WITH_VULKAN
-#include "vulkan_gpu_device.h"
+#include "vulkan_device.h"
 #endif
 
 // TODO: default sampler mode, create a persistent descriptor set in Vulkan for textures
@@ -306,12 +306,12 @@ bool GPUDevice::CreateResources()
   ShaderGen shadergen(GetRenderAPI(), m_features.dual_source_blend);
 
   GPUPipeline::GraphicsConfig plconfig;
-  plconfig.layout = GPUPipeline::Layout::SingleTexturePushConstants;
+  plconfig.layout = GPUPipeline::Layout::SingleTextureAndPushConstants;
   plconfig.primitive = GPUPipeline::Primitive::Triangles;
   plconfig.rasterization = GPUPipeline::RasterizationState::GetNoCullState();
   plconfig.depth = GPUPipeline::DepthState::GetNoTestsState();
   plconfig.blend = GPUPipeline::BlendState::GetNoBlendingState();
-  plconfig.color_format = GPUTexture::Format::RGBA8; // FIXME m_window_info.surface_format;
+  plconfig.color_format = HasSurface() ? m_window_info.surface_format : GPUTexture::Format::RGBA8;
   plconfig.depth_format = GPUTexture::Format::Unknown;
   plconfig.samples = 1;
   plconfig.per_sample_shading = false;
@@ -693,7 +693,6 @@ void GPUDevice::ClearDisplayTexture()
 void GPUDevice::SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 view_width, s32 view_height)
 {
   DebugAssert(texture);
-  texture->MakeReadyForSampling();
   m_display_texture = texture;
   m_display_texture_view_x = view_x;
   m_display_texture_view_y = view_y;
@@ -807,6 +806,10 @@ bool GPUDevice::IsUsingLinearFiltering() const
 
 bool GPUDevice::Render(bool skip_present)
 {
+  // Moved here because there can be draws after UpdateDisplay().
+  if (HasDisplayTexture())
+    m_display_texture->MakeReadyForSampling();
+
   if (skip_present)
   {
     // Should never return true here..
@@ -850,7 +853,7 @@ bool GPUDevice::Render(bool skip_present)
 bool GPUDevice::RenderScreenshot(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect,
                                  std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format)
 {
-  static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8; // TODO FIXME m_window_info.surface_format
+  const GPUTexture::Format hdformat = HasSurface() ? m_window_info.surface_format : GPUTexture::Format::RGBA8;
 
   std::unique_ptr<GPUTexture> render_texture =
     CreateTexture(width, height, 1, 1, 1, GPUTexture::Type::RenderTarget, hdformat);
@@ -885,7 +888,8 @@ bool GPUDevice::RenderDisplay(GPUFramebuffer* target, s32 left, s32 top, s32 wid
 {
   GL_SCOPE("RenderDisplay: %dx%d at %d,%d", left, top, width, height);
 
-  static constexpr GPUTexture::Format hdformat = GPUTexture::Format::RGBA8; // TODO FIXME m_window_info.surface_format
+  const GPUTexture::Format hdformat =
+    (target && target->GetRT()) ? target->GetRT()->GetFormat() : m_window_info.surface_format;
   const u32 target_width = target ? target->GetWidth() : m_window_info.surface_width;
   const u32 target_height = target ? target->GetHeight() : m_window_info.surface_height;
   const bool postfx =
@@ -1435,8 +1439,7 @@ std::unique_ptr<GPUDevice> GPUDevice::CreateDeviceForAPI(RenderAPI api)
   {
 #ifdef WITH_VULKAN
     case RenderAPI::Vulkan:
-      // return std::make_unique<VulkanGPUDevice>();
-      return {};
+      return std::make_unique<VulkanDevice>();
 #endif
 
 #ifdef WITH_OPENGL

@@ -244,16 +244,16 @@ bool ContextEGL::CheckConfigSurfaceFormat(EGLConfig config, WindowInfo::SurfaceF
 
   switch (format)
   {
-    case WindowInfo::SurfaceFormat::Auto:
+    case GPUTexture::Format::Undefined:
       return true;
 
-    case WindowInfo::SurfaceFormat::RGB8:
+    case GPUTexture::Format::RGB8:
       return (red_size == 8 && green_size == 8 && blue_size == 8);
 
-    case WindowInfo::SurfaceFormat::RGBA8:
+    case GPUTexture::Format::RGBA8:
       return (red_size == 8 && green_size == 8 && blue_size == 8 && alpha_size == 8);
 
-    case WindowInfo::SurfaceFormat::RGB565:
+    case GPUTexture::Format::RGB565:
       return (red_size == 5 && green_size == 6 && blue_size == 5);
 
     default:

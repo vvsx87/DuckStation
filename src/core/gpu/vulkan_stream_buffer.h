@@ -1,30 +1,29 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
 
+#include "vulkan_loader.h"
+
 #include "common/types.h"
-#include "loader.h"
+
 #include <deque>
 #include <memory>
 
-namespace Vulkan {
-
-class StreamBuffer
+class VulkanStreamBuffer
 {
 public:
-  StreamBuffer();
-  StreamBuffer(StreamBuffer&& move);
-  StreamBuffer(const StreamBuffer&) = delete;
-  ~StreamBuffer();
+  VulkanStreamBuffer();
+  VulkanStreamBuffer(VulkanStreamBuffer&& move);
+  VulkanStreamBuffer(const VulkanStreamBuffer&) = delete;
+  ~VulkanStreamBuffer();
 
-  StreamBuffer& operator=(StreamBuffer&& move);
-  StreamBuffer& operator=(const StreamBuffer&) = delete;
+  VulkanStreamBuffer& operator=(VulkanStreamBuffer&& move);
+  VulkanStreamBuffer& operator=(const VulkanStreamBuffer&) = delete;
 
   ALWAYS_INLINE bool IsValid() const { return (m_buffer != VK_NULL_HANDLE); }
   ALWAYS_INLINE VkBuffer GetBuffer() const { return m_buffer; }
-  ALWAYS_INLINE const VkBuffer* GetBufferPointer() const { return &m_buffer; }
-  ALWAYS_INLINE VmaAllocation GetAllocation() const { return m_allocation; }
+  ALWAYS_INLINE const VkBuffer* GetBufferPtr() const { return &m_buffer; }
   ALWAYS_INLINE u8* GetHostPointer() const { return m_host_pointer; }
   ALWAYS_INLINE u8* GetCurrentHostPointer() const { return m_host_pointer + m_current_offset; }
   ALWAYS_INLINE u32 GetCurrentSize() const { return m_size; }
@@ -57,5 +56,3 @@ private:
   // List of fences and the corresponding positions in the buffer
   std::deque<std::pair<u64, u32>> m_tracked_fences;
 };
-
-} // namespace Vulkan

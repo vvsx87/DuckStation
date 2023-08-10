@@ -5,7 +5,7 @@
 #include "opengl_pipeline.h"
 #include "opengl_stream_buffer.h"
 #include "opengl_texture.h"
-#include "postprocessing_shadergen.h"
+#include "postprocessing_chain.h" // TODO: Remove me
 
 #include "common/align.h"
 #include "common/assert.h"
@@ -419,6 +419,10 @@ bool OpenGLDevice::CheckFeatures()
 
   // noperspective is not supported in GLSL ES.
   m_features.noperspective_interpolation = !is_gles;
+
+  m_features.gpu_timing = !(m_gl_context->IsGLES() &&
+                            (!GLAD_GL_EXT_disjoint_timer_query || !glGetQueryObjectivEXT || !glGetQueryObjectui64vEXT));
+
   return true;
 }
 
@@ -726,12 +730,8 @@ bool OpenGLDevice::SetGPUTimingEnabled(bool enabled)
 {
   if (m_gpu_timing_enabled == enabled)
     return true;
-
-  if (enabled && m_gl_context->IsGLES() &&
-      (!GLAD_GL_EXT_disjoint_timer_query || !glGetQueryObjectivEXT || !glGetQueryObjectui64vEXT))
-  {
+  else if (!m_features.gpu_timing)
     return false;
-  }
 
   m_gpu_timing_enabled = enabled;
   if (m_gpu_timing_enabled)

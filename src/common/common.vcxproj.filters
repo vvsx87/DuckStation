@@ -18,7 +18,6 @@
     <ClInclude Include="hash_combine.h" />
     <ClInclude Include="progress_callback.h" />
     <ClInclude Include="bitutils.h" />
-    <ClInclude Include="window_info.h" />
     <ClInclude Include="dimensional_array.h" />
     <ClInclude Include="image.h" />
     <ClInclude Include="minizip_helpers.h" />
@@ -63,7 +62,6 @@
     </ClCompile>
     <ClCompile Include="crash_handler.cpp" />
     <ClCompile Include="error.cpp" />
-    <ClCompile Include="window_info.cpp" />
     <ClCompile Include="http_downloader_winhttp.cpp" />
     <ClCompile Include="http_downloader.cpp" />
     <ClCompile Include="layered_settings_interface.cpp" />

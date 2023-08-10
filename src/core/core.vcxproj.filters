@@ -39,7 +39,6 @@
     <ClCompile Include="guncon.cpp" />
     <ClCompile Include="playstation_mouse.cpp" />
     <ClCompile Include="negcon.cpp" />
-    <ClCompile Include="gpu_hw_vulkan.cpp" />
     <ClCompile Include="resources.cpp" />
     <ClCompile Include="host_interface_progress_callback.cpp" />
     <ClCompile Include="pgxp.cpp" />
@@ -67,9 +66,6 @@
       <Filter>gpu</Filter>
     </ClCompile>
     <ClCompile Include="gpu\opengl_device.cpp">
-      <Filter>gpu</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\vulkan_gpu_device.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
     <ClCompile Include="gpu\d3d12\shader_cache.cpp">
@@ -111,30 +107,6 @@
     <ClCompile Include="gpu\gl\context_egl.cpp">
       <Filter>gpu\gl</Filter>
     </ClCompile>
-    <ClCompile Include="gpu\vulkan\stream_buffer.cpp">
-      <Filter>gpu\vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\vulkan\swap_chain.cpp">
-      <Filter>gpu\vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\vulkan\util.cpp">
-      <Filter>gpu\vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\vulkan\builders.cpp">
-      <Filter>gpu\vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\vulkan\context.cpp">
-      <Filter>gpu\vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\vulkan\loader.cpp">
-      <Filter>gpu\vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\vulkan\shader_cache.cpp">
-      <Filter>gpu\vulkan</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\vulkan\shader_compiler.cpp">
-      <Filter>gpu\vulkan</Filter>
-    </ClCompile>
     <ClCompile Include="gpu\postprocessing_chain.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
@@ -145,9 +117,6 @@
       <Filter>gpu</Filter>
     </ClCompile>
     <ClCompile Include="gpu\imgui_impl_dx12.cpp">
-      <Filter>gpu</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\imgui_impl_vulkan.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
     <ClCompile Include="gpu\gpu_texture.cpp">
@@ -168,8 +137,32 @@
     <ClCompile Include="gpu\d3d12\texture.cpp">
       <Filter>gpu\d3d12</Filter>
     </ClCompile>
-    <ClCompile Include="gpu\vulkan\texture.cpp">
-      <Filter>gpu\vulkan</Filter>
+    <ClCompile Include="gpu\vulkan_loader.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan_stream_buffer.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan_swap_chain.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan_texture.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan_builders.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan_device.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\vulkan_pipeline.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\spirv_compiler.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\window_info.cpp">
+      <Filter>gpu</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -210,7 +203,6 @@
     <ClInclude Include="guncon.h" />
     <ClInclude Include="playstation_mouse.h" />
     <ClInclude Include="negcon.h" />
-    <ClInclude Include="gpu_hw_vulkan.h" />
     <ClInclude Include="resources.h" />
     <ClInclude Include="host_interface_progress_callback.h" />
     <ClInclude Include="gte_types.h" />
@@ -245,9 +237,6 @@
       <Filter>gpu</Filter>
     </ClInclude>
     <ClInclude Include="gpu\opengl_device.h">
-      <Filter>gpu</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan_gpu_device.h">
       <Filter>gpu</Filter>
     </ClInclude>
     <ClInclude Include="gpu\d3d12\shader_cache.h">
@@ -292,33 +281,6 @@
     <ClInclude Include="gpu\gl\context_egl.h">
       <Filter>gpu\gl</Filter>
     </ClInclude>
-    <ClInclude Include="gpu\vulkan\stream_buffer.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan\swap_chain.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan\util.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan\builders.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan\context.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan\entry_points.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan\loader.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan\shader_cache.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\vulkan\shader_compiler.h">
-      <Filter>gpu\vulkan</Filter>
-    </ClInclude>
     <ClInclude Include="gpu\postprocessing_chain.h">
       <Filter>gpu</Filter>
     </ClInclude>
@@ -329,9 +291,6 @@
       <Filter>gpu</Filter>
     </ClInclude>
     <ClInclude Include="gpu\imgui_impl_dx12.h">
-      <Filter>gpu</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\imgui_impl_vulkan.h">
       <Filter>gpu</Filter>
     </ClInclude>
     <ClInclude Include="gpu\gpu_texture.h">
@@ -358,8 +317,35 @@
     <ClInclude Include="gpu\d3d12\texture.h">
       <Filter>gpu\d3d12</Filter>
     </ClInclude>
-    <ClInclude Include="gpu\vulkan\texture.h">
-      <Filter>gpu\vulkan</Filter>
+    <ClInclude Include="gpu\vulkan_loader.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan_stream_buffer.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan_swap_chain.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan_texture.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan_builders.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan_device.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan_entry_points.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\vulkan_pipeline.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\spirv_compiler.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\window_info.h">
+      <Filter>gpu</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -372,16 +358,13 @@
     <Filter Include="gpu\gl">
       <UniqueIdentifier>{e2aeacc6-65aa-4110-bef9-5f3e1fc0470e}</UniqueIdentifier>
     </Filter>
-    <Filter Include="gpu\vulkan">
-      <UniqueIdentifier>{e4809e3b-2adc-440a-82df-044a408409b3}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="gpu\gl\context_agl.mm">
       <Filter>gpu\gl</Filter>
     </None>
-    <None Include="gpu\vulkan\entry_points.inl">
-      <Filter>gpu\vulkan</Filter>
+    <None Include="gpu\vulkan_entry_points.inl">
+      <Filter>gpu</Filter>
     </None>
   </ItemGroup>
 </Project>

@@ -19,6 +19,21 @@ GPUTexture::GPUTexture(u16 width, u16 height, u8 layers, u8 levels, u8 samples, 
 
 GPUTexture::~GPUTexture() = default;
 
+const char* GPUTexture::GetFormatName(Format format)
+{
+  static constexpr const char* format_names[static_cast<u8>(Format::MaxCount)] = {
+    "Unknown", // Unknown
+    "RGBA8",   // RGBA8
+    "BGRA8",   // BGRA8
+    "RGB565",  // RGB565
+    "RGB5551", // RGBA5551
+    "R8",      // R8
+    "D16",     // D16
+  };
+
+  return format_names[static_cast<u8>(format)];
+}
+
 void GPUTexture::ClearBaseProperties()
 {
   m_width = 0;
@@ -29,6 +44,11 @@ void GPUTexture::ClearBaseProperties()
   m_type = GPUTexture::Type::Unknown;
   m_format = GPUTexture::Format::Unknown;
   m_state = State::Dirty;
+}
+
+std::array<float, 4> GPUTexture::GetUNormClearColor() const
+{
+  return GPUDevice::RGBA8ToFloat(m_clear_value.color);
 }
 
 u32 GPUTexture::GetPixelSize(GPUTexture::Format format)
@@ -68,7 +88,8 @@ bool GPUTexture::ValidateConfig(u32 width, u32 height, u32 layers, u32 levels, u
   const u32 max_texture_size = g_gpu_device->GetMaxTextureSize();
   if (width > max_texture_size || height > max_texture_size)
   {
-    Log_ErrorPrintf("Texture width (%u) or height (%u) exceeds max texture size (%u).", width, height, max_texture_size);
+    Log_ErrorPrintf("Texture width (%u) or height (%u) exceeds max texture size (%u).", width, height,
+                    max_texture_size);
     return false;
   }
 

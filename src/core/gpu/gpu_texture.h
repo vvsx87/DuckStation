@@ -40,7 +40,7 @@ public:
     RGBA5551,
     R8,
     D16,
-    Count
+    MaxCount
   };
 
   enum class State : u8
@@ -58,6 +58,8 @@ public:
 
 public:
   virtual ~GPUTexture();
+
+  static const char* GetFormatName(Format format);
 
   ALWAYS_INLINE u32 GetWidth() const { return m_width; }
   ALWAYS_INLINE u32 GetHeight() const { return m_height; }
@@ -88,13 +90,7 @@ public:
   ALWAYS_INLINE const ClearValue& GetClearValue() const { return m_clear_value; }
   ALWAYS_INLINE u32 GetClearColor() const { return m_clear_value.color; }
   ALWAYS_INLINE float GetClearDepth() const { return m_clear_value.depth; }
-  ALWAYS_INLINE std::array<float, 4> GetUNormClearColor() const
-  {
-    return std::array<float, 4>{static_cast<float>((m_clear_value.color) & 0xFF) / 255.0f,
-                                static_cast<float>((m_clear_value.color >> 8) & 0xFF) / 255.0f,
-                                static_cast<float>((m_clear_value.color >> 16) & 0xFF) / 255.0f,
-                                static_cast<float>((m_clear_value.color >> 24) & 0xFF) / 255.0f};
-  }
+  std::array<float, 4> GetUNormClearColor() const;
 
   ALWAYS_INLINE void SetClearColor(u32 color)
   {

@@ -133,6 +133,8 @@ target_sources(core PRIVATE
   gpu/postprocessing_shader.h
   gpu/postprocessing_shadergen.cpp
   gpu/postprocessing_shadergen.h
+  gpu/window_info.cpp
+  gpu/window_info.h
 )
 
 if(WIN32)
@@ -308,42 +310,29 @@ endif()
 
 if(ENABLE_VULKAN)
   target_sources(core PRIVATE
-    gpu/vulkan/builders.cpp
-    gpu/vulkan/builders.h
-    gpu/vulkan/context.cpp
-    gpu/vulkan/context.h
-    gpu/vulkan/loader.h
-    gpu/vulkan/loader.cpp
-    gpu/vulkan/shader_cache.cpp
-    gpu/vulkan/shader_cache.h
-    gpu/vulkan/shader_compiler.cpp
-    gpu/vulkan/shader_compiler.h
-    gpu/vulkan/stream_buffer.cpp
-    gpu/vulkan/stream_buffer.h
-    gpu/vulkan/swap_chain.cpp
-    gpu/vulkan/swap_chain.h
-    gpu/vulkan/texture.cpp
-    gpu/vulkan/texture.h
-    gpu/vulkan/util.cpp
-    gpu/vulkan/util.h
-    gpu/vulkan_gpu_device.cpp
-    gpu/vulkan_gpu_device.h
-    gpu/imgui_impl_vulkan.cpp
-    gpu/imgui_impl_vulkan.h
+    gpu/vulkan_builders.cpp
+    gpu/vulkan_builders.h
+    gpu/vulkan_device.cpp
+    gpu/vulkan_device.h
+    gpu/vulkan_entry_points.h
+    gpu/vulkan_entry_points.inl
+    gpu/vulkan_loader.cpp
+    gpu/vulkan_loader.h
+    gpu/vulkan_pipeline.cpp
+    gpu/vulkan_pipeline.h
+    gpu/vulkan_stream_buffer.cpp
+    gpu/vulkan_stream_buffer.h
+    gpu/vulkan_swap_chain.cpp
+    gpu/vulkan_swap_chain.h
+    gpu/vulkan_texture.cpp
+    gpu/vulkan_texture.h
   )
   target_compile_definitions(core PUBLIC "WITH_VULKAN=1")
-  target_link_libraries(core PRIVATE glslang)
 
   if(APPLE)
     # Needed for Vulkan Swap Chain.
     target_link_libraries(core PRIVATE "objc")
   endif()
-endif()
-if(ENABLE_VULKAN)
-  target_sources(core PRIVATE
-    gpu_hw_vulkan.cpp
-    gpu_hw_vulkan.h
-  )
 endif()
 
 if(ENABLE_CUBEB)

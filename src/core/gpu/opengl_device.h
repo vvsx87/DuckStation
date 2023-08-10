@@ -9,13 +9,11 @@
 #include "opengl_loader.h"
 #include "opengl_pipeline.h"
 #include "opengl_texture.h"
-#include "postprocessing_chain.h"
+
+#include "common/rectangle.h"
 
 #include <memory>
 #include <tuple>
-
-#include "common/rectangle.h"
-#include "common/window_info.h"
 
 // TODO: build a cache for programs on top of the pipeline cache idea
 

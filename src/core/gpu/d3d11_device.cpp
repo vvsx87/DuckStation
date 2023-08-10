@@ -4,6 +4,7 @@
 #include "d3d11_device.h"
 #include "../host_settings.h"
 #include "../shader_cache_version.h"
+#include "postprocessing_chain.h" // TODO: Remove me
 
 #include "common/align.h"
 #include "common/assert.h"
@@ -24,7 +25,7 @@ Log_SetChannel(D3D11Device);
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
-static constexpr std::array<DXGI_FORMAT, static_cast<u32>(GPUTexture::Format::Count)> s_dxgi_mapping = {
+static constexpr std::array<DXGI_FORMAT, static_cast<u32>(GPUTexture::Format::MaxCount)> s_dxgi_mapping = {
   {DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B5G6R5_UNORM,
    DXGI_FORMAT_B5G5R5A1_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_D16_UNORM}};
 
@@ -513,6 +514,7 @@ void D3D11Device::SetFeatures()
   m_features.noperspective_interpolation = true;
   m_features.supports_texture_buffers = true;
   m_features.texture_buffers_emulated_with_ssbo = false;
+  m_features.gpu_timing = true;
 
   m_allow_tearing_supported = false;
   ComPtr<IDXGIFactory5> dxgi_factory5;

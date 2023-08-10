@@ -160,9 +160,13 @@ std::optional<SPIRVCompiler::SPIRVCodeVector> SPIRVCompiler::CompileShader(GPUSh
   }
 }
 
+#ifdef __APPLE__
+
 std::optional<std::string> SPIRVCompiler::CompileSPIRVToMSL(gsl::span<const SPIRVCodeType> spv)
 {
   spirv_cross::CompilerMSL compiler(spv.data(), spv.size());
   std::string msl = compiler.compile();
   return (msl.empty()) ? std::optional<std::string>() : std::optional<std::string>(std::move(msl));
 }
+
+#endif

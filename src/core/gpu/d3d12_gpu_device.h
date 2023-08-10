@@ -3,7 +3,6 @@
 
 #pragma once
 #include "common/timer.h"
-#include "common/window_info.h"
 #include "common/windows_headers.h"
 #include "d3d12/descriptor_heap_manager.h"
 #include "d3d12/staging_texture.h"

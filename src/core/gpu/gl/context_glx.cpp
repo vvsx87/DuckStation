@@ -196,16 +196,8 @@ bool ContextGLX::CreateWindow(int screen)
 
   switch (m_wi.surface_format)
   {
-    case WindowInfo::SurfaceFormat::RGB8:
-      attribs[nattribs++] = GLX_RED_SIZE;
-      attribs[nattribs++] = 8;
-      attribs[nattribs++] = GLX_GREEN_SIZE;
-      attribs[nattribs++] = 8;
-      attribs[nattribs++] = GLX_BLUE_SIZE;
-      attribs[nattribs++] = 8;
-      break;
-
-    case WindowInfo::SurfaceFormat::RGBA8:
+    case GPUTexture::Format::RGBA8:
+    case GPUTexture::Format::BGRA8:
       attribs[nattribs++] = GLX_RED_SIZE;
       attribs[nattribs++] = 8;
       attribs[nattribs++] = GLX_GREEN_SIZE;
@@ -216,7 +208,7 @@ bool ContextGLX::CreateWindow(int screen)
       attribs[nattribs++] = 8;
       break;
 
-    case WindowInfo::SurfaceFormat::RGB565:
+    case GPUTexture::Format::RGB565:
       attribs[nattribs++] = GLX_RED_SIZE;
       attribs[nattribs++] = 5;
       attribs[nattribs++] = GLX_GREEN_SIZE;
@@ -225,12 +217,12 @@ bool ContextGLX::CreateWindow(int screen)
       attribs[nattribs++] = 5;
       break;
 
-    case WindowInfo::SurfaceFormat::Auto:
+    case GPUTexture::Format::Undefined:
       break;
 
     default:
-      UnreachableCode();
-      break;
+      Log_ErrorPrintf("Texture format %s not handled", GPUTexture::GetFormatName(m_wi.surface_format));
+      return false;
   }
 
   attribs[nattribs++] = None;

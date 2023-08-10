@@ -1645,7 +1645,10 @@ bool System::CreateGPU(GPURenderer renderer)
 
     Host::ReleaseGPUDevice();
     if (!Host::CreateGPUDevice(api))
+    {
+      Host::ReleaseRenderWindow();
       return false;
+    }
   }
 
   if (renderer == GPURenderer::Software)

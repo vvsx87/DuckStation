@@ -26,6 +26,10 @@ Log_SetChannel(GPU_HW);
 static constexpr GPUTexture::Format VRAM_RT_FORMAT = GPUTexture::Format::RGBA8;
 static constexpr GPUTexture::Format VRAM_DS_FORMAT = GPUTexture::Format::D16;
 
+#ifdef _DEBUG
+static u32 s_draw_number = 0;
+#endif
+
 template<typename T>
 ALWAYS_INLINE static constexpr std::tuple<T, T> MinMax(T v1, T v2)
 {
@@ -107,6 +111,10 @@ private:
 GPU_HW::GPU_HW() : GPU()
 {
   m_vram_ptr = m_vram_shadow.data();
+
+#ifdef _DEBUG
+  s_draw_number = 0;
+#endif
 }
 
 GPU_HW::~GPU_HW()
@@ -660,7 +668,7 @@ bool GPU_HW::CompilePipelines()
   };
 
   GPUPipeline::GraphicsConfig plconfig = {};
-  plconfig.layout = GPUPipeline::Layout::SingleTextureUBO;
+  plconfig.layout = GPUPipeline::Layout::SingleTextureAndUBO;
   plconfig.input_layout.vertex_stride = sizeof(BatchVertex);
   plconfig.rasterization = GPUPipeline::RasterizationState::GetNoCullState();
   plconfig.primitive = GPUPipeline::Primitive::Triangles;
@@ -771,7 +779,7 @@ bool GPU_HW::CompilePipelines()
   // common state
   plconfig.input_layout.vertex_attributes = {};
   plconfig.input_layout.vertex_stride = 0;
-  plconfig.layout = GPUPipeline::Layout::SingleTexturePushConstants;
+  plconfig.layout = GPUPipeline::Layout::SingleTextureAndPushConstants;
   plconfig.per_sample_shading = false;
   plconfig.blend = GPUPipeline::BlendState::GetNoBlendingState();
   plconfig.vertex_shader = fullscreen_quad_vertex_shader.get();
@@ -821,7 +829,6 @@ bool GPU_HW::CompilePipelines()
   }
 
   // VRAM write
-  // TODO: SSBO path here...
   {
     const bool use_ssbo = features.texture_buffers_emulated_with_ssbo;
     std::unique_ptr<GPUShader> fs =
@@ -829,6 +836,7 @@ bool GPU_HW::CompilePipelines()
     if (!fs)
       return false;
 
+    plconfig.layout = GPUPipeline::Layout::SingleTextureBufferAndPushConstants;
     plconfig.fragment_shader = fs.get();
     for (u8 depth_test = 0; depth_test < 2; depth_test++)
     {
@@ -844,6 +852,8 @@ bool GPU_HW::CompilePipelines()
       progress.Increment();
     }
   }
+
+  plconfig.layout = GPUPipeline::Layout::SingleTextureAndPushConstants;
 
   // VRAM update depth
   {
@@ -2198,6 +2208,7 @@ void GPU_HW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32
   g_gpu_device->CopyTextureRegion(m_vram_texture.get(), dst_x * m_resolution_scale, dst_y * m_resolution_scale, 0, 0,
                                   m_vram_read_texture.get(), src_x * m_resolution_scale, src_y * m_resolution_scale, 0,
                                   0, width * m_resolution_scale, height * m_resolution_scale);
+  m_vram_read_texture->MakeReadyForSampling();
 }
 
 void GPU_HW::DispatchRenderCommand()
@@ -2324,6 +2335,10 @@ void GPU_HW::FlushRender()
 
   if (vertex_count == 0)
     return;
+
+#ifdef _DEBUG
+  GL_SCOPE("Hardware Draw %u", ++s_draw_number);
+#endif
 
   if (m_batch_ubo_dirty)
   {

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 // Expands the VULKAN_ENTRY_POINT macro for each function when this file is included.
@@ -52,14 +52,6 @@ VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceXlibPresentationSupportKHR, false
 VULKAN_INSTANCE_ENTRY_POINT(vkCreateWaylandSurfaceKHR, false)
 #endif
 
-#if defined(VK_USE_PLATFORM_ANDROID_KHR)
-VULKAN_INSTANCE_ENTRY_POINT(vkCreateAndroidSurfaceKHR, false)
-#endif
-
-#if defined(VK_USE_PLATFORM_MACOS_MVK)
-VULKAN_INSTANCE_ENTRY_POINT(vkCreateMacOSSurfaceMVK, false)
-#endif
-
 #if defined(VK_USE_PLATFORM_METAL_EXT)
 VULKAN_INSTANCE_ENTRY_POINT(vkCreateMetalSurfaceEXT, false)
 #endif
@@ -91,6 +83,9 @@ VULKAN_INSTANCE_ENTRY_POINT(vkCreateDisplayPlaneSurfaceKHR, false)
 VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceFeatures2, true)
 VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceProperties2, true)
 VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceMemoryProperties2, true)
+
+// VK_EXT_calibrated_timestamps
+VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceCalibrateableTimeDomainsEXT, false)
 
 #endif // VULKAN_INSTANCE_ENTRY_POINT
 
@@ -228,9 +223,16 @@ VULKAN_DEVICE_ENTRY_POINT(vkGetImageMemoryRequirements2, true)
 VULKAN_DEVICE_ENTRY_POINT(vkBindBufferMemory2, true)
 VULKAN_DEVICE_ENTRY_POINT(vkBindImageMemory2, true)
 
-#ifdef SUPPORTS_VULKAN_EXCLUSIVE_FULLSCREEN
+// Vulkan 1.3 functions.
+VULKAN_DEVICE_ENTRY_POINT(vkGetDeviceBufferMemoryRequirements, false)
+VULKAN_DEVICE_ENTRY_POINT(vkGetDeviceImageMemoryRequirements, false)
+
+#ifdef _WIN32
 VULKAN_DEVICE_ENTRY_POINT(vkAcquireFullScreenExclusiveModeEXT, false)
 VULKAN_DEVICE_ENTRY_POINT(vkReleaseFullScreenExclusiveModeEXT, false)
 #endif
+
+// VK_KHR_push_descriptor
+VULKAN_DEVICE_ENTRY_POINT(vkCmdPushDescriptorSetKHR, false)
 
 #endif // VULKAN_DEVICE_ENTRY_POINT

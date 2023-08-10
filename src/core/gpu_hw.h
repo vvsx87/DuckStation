@@ -196,6 +196,7 @@ private:
   /// on a per-pixel basis, and the opaque pixels shouldn't be blended at all.
   ALWAYS_INLINE bool NeedsTwoPassRendering() const
   {
+    // TODO: see if there's a better way we can do this. definitely can with fbfetch.
     return (m_batch.texture_mode != GPUTextureMode::Disabled &&
             (m_batch.transparency_mode == GPUTransparencyMode::BackgroundMinusForeground ||
              (!m_supports_dual_source_blend && m_batch.transparency_mode != GPUTransparencyMode::Disabled)));

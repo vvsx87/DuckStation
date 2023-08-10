@@ -4,10 +4,7 @@
 #pragma once
 
 #include "gpu_device.h"
-#include "postprocessing_chain.h"
 
-#include "common/timer.h"
-#include "common/window_info.h"
 #include "common/windows_headers.h"
 
 #include <d3d11_1.h>

@@ -11,7 +11,7 @@
 #include "util.h"
 Log_SetChannel(D3D12);
 
-static constexpr std::array<DXGI_FORMAT, static_cast<u32>(GPUTexture::Format::Count)> s_dxgi_mapping = {
+static constexpr std::array<DXGI_FORMAT, static_cast<u32>(GPUTexture::Format::MaxCount)> s_dxgi_mapping = {
   {DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B5G6R5_UNORM,
    DXGI_FORMAT_B5G5R5A1_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_D16_UNORM}};
 

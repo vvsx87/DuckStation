@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+#include "controllersettingsdialog.h"
+#include "displaywidget.h"
+#include "settingsdialog.h"
+#include "ui_mainwindow.h"
+
+#include "core/gpu/window_info.h"
+#include "core/types.h"
+
 #include <QtCore/QThread>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QMainWindow>
@@ -9,13 +18,6 @@
 #include <QtWidgets/QStackedWidget>
 #include <memory>
 #include <optional>
-
-#include "common/window_info.h"
-#include "controllersettingsdialog.h"
-#include "core/types.h"
-#include "displaywidget.h"
-#include "settingsdialog.h"
-#include "ui_mainwindow.h"
 
 class QLabel;
 class QThread;

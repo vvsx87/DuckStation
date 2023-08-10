@@ -304,7 +304,7 @@ bool PostProcessingShader::CompilePipeline(GPUTexture::Format target_format)
     return false;
 
   GPUPipeline::GraphicsConfig plconfig;
-  plconfig.layout = GPUPipeline::Layout::SingleTextureUBO;
+  plconfig.layout = GPUPipeline::Layout::SingleTextureAndUBO;
   plconfig.primitive = GPUPipeline::Primitive::Triangles;
   plconfig.color_format = target_format;
   plconfig.depth_format = GPUTexture::Format::Unknown;

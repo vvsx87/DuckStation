@@ -5,11 +5,11 @@
 
 #include "gpu_shader_cache.h"
 #include "gpu_texture.h"
+#include "window_info.h"
 
 #include "common/bitfield.h"
 #include "common/rectangle.h"
 #include "common/types.h"
-#include "common/window_info.h"
 
 #include "gsl/span"
 
@@ -140,10 +140,16 @@ public:
   enum class Layout : u8
   {
     // 1 streamed UBO, 1 texture in PS.
-    SingleTextureUBO,
+    SingleTextureAndUBO,
 
     // 128 byte UBO via push constants, 1 texture.
-    SingleTexturePushConstants,
+    SingleTextureAndPushConstants,
+
+    // 128 byte UBO via push constants, 1 texture buffer/SSBO.
+    SingleTextureBufferAndPushConstants,
+
+    // Multiple textures, 1 streamed UBO.
+    MultiTextureAndUBO,
 
     MaxCount
   };
@@ -396,6 +402,8 @@ public:
   virtual void* Map(u32 required_elements) = 0;
   virtual void Unmap(u32 used_elements) = 0;
 
+  // TODO: Debug Name
+
 protected:
   Format m_format;
   u32 m_size_in_elements;
@@ -410,6 +418,7 @@ class GPUDevice
 public:
   // TODO: drop virtuals
   // TODO: make windowinfo use GPUTexture format
+  // TODO: gpu crash handling on present
   using DrawIndex = u16;
 
   struct Features
@@ -419,6 +428,7 @@ public:
     bool noperspective_interpolation : 1;
     bool supports_texture_buffers : 1;
     bool texture_buffers_emulated_with_ssbo : 1;
+    bool gpu_timing : 1;
   };
 
   struct AdapterAndModeList
@@ -551,7 +561,7 @@ public:
   virtual void SetPipeline(GPUPipeline* pipeline) = 0;
   virtual void SetTextureSampler(u32 slot, GPUTexture* texture, GPUSampler* sampler) = 0;
   virtual void SetTextureBuffer(u32 slot, GPUTextureBuffer* buffer) = 0;
-  virtual void SetViewport(s32 x, s32 y, s32 width, s32 height) = 0;
+  virtual void SetViewport(s32 x, s32 y, s32 width, s32 height) = 0;// TODO: Rectangle
   virtual void SetScissor(s32 x, s32 y, s32 width, s32 height) = 0;
   void SetViewportAndScissor(s32 x, s32 y, s32 width, s32 height);
 

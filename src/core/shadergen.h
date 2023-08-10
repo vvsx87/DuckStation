@@ -61,6 +61,7 @@ protected:
   bool m_supports_dual_source_blend;
   bool m_use_glsl_interface_blocks;
   bool m_use_glsl_binding_layout;
+  bool m_has_uniform_buffer = false;
 
   std::string m_glsl_version_string;
 };

@@ -266,6 +266,8 @@ void ShaderGen::WriteHeader(std::stringstream& ss)
   }
 
   ss << "\n";
+
+  m_has_uniform_buffer = false;
 }
 
 void ShaderGen::WriteUniformBufferDeclaration(std::stringstream& ss, bool push_constant_on_vulkan)
@@ -273,13 +275,19 @@ void ShaderGen::WriteUniformBufferDeclaration(std::stringstream& ss, bool push_c
   if (IsVulkan())
   {
     if (push_constant_on_vulkan)
+    {
       ss << "layout(push_constant) uniform PushConstants\n";
+    }
     else
+    {
       ss << "layout(std140, set = 0, binding = 0) uniform UBOBlock\n";
+      m_has_uniform_buffer = true;
+    }
   }
   else if (IsMetal())
   {
     ss << "layout(std140, set = 0, binding = 0) uniform UBOBlock\n";
+    m_has_uniform_buffer = true;
   }
   else if (m_glsl)
   {
@@ -287,11 +295,15 @@ void ShaderGen::WriteUniformBufferDeclaration(std::stringstream& ss, bool push_c
       ss << "layout(std140, binding = 1) uniform UBOBlock\n";
     else
       ss << "layout(std140) uniform UBOBlock\n";
+
+    m_has_uniform_buffer = true;
   }
   else
   {
     ss << "cbuffer UBOBlock : register(b0)\n";
+    m_has_uniform_buffer = true;
   }
+
 }
 
 void ShaderGen::DeclareUniformBuffer(std::stringstream& ss, const std::initializer_list<const char*>& members,
@@ -310,7 +322,7 @@ void ShaderGen::DeclareTexture(std::stringstream& ss, const char* name, u32 inde
   if (m_glsl)
   {
     if (IsVulkan())
-      ss << "layout(set = 0, binding = " << (index + 1u) << ") ";
+      ss << "layout(set = " << (m_has_uniform_buffer ? 1 : 0) << ", binding = " << index << ") ";
     else if (m_use_glsl_binding_layout)
       ss << "layout(binding = " << index << ") ";
 

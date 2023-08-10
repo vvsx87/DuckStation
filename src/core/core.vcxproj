@@ -62,7 +62,6 @@
     <ClCompile Include="gpu\gpu_device.cpp" />
     <ClCompile Include="gpu\gpu_texture.cpp" />
     <ClCompile Include="gpu\imgui_impl_dx12.cpp" />
-    <ClCompile Include="gpu\imgui_impl_vulkan.cpp" />
     <ClCompile Include="gpu\opengl_device.cpp" />
     <ClCompile Include="gpu\opengl_pipeline.cpp" />
     <ClCompile Include="gpu\opengl_stream_buffer.cpp" />
@@ -71,23 +70,19 @@
     <ClCompile Include="gpu\postprocessing_shader.cpp" />
     <ClCompile Include="gpu\postprocessing_shadergen.cpp" />
     <ClCompile Include="gpu\gpu_shader_cache.cpp" />
-    <ClCompile Include="gpu\vulkan\builders.cpp" />
-    <ClCompile Include="gpu\vulkan\context.cpp" />
-    <ClCompile Include="gpu\vulkan\loader.cpp" />
-    <ClCompile Include="gpu\vulkan\shader_cache.cpp" />
-    <ClCompile Include="gpu\vulkan\shader_compiler.cpp" />
-    <ClCompile Include="gpu\vulkan\stream_buffer.cpp" />
-    <ClCompile Include="gpu\vulkan\swap_chain.cpp" />
-    <ClCompile Include="gpu\vulkan\texture.cpp" />
-    <ClCompile Include="gpu\vulkan\util.cpp" />
-    <ClCompile Include="gpu\vulkan_gpu_device.cpp" />
+    <ClCompile Include="gpu\spirv_compiler.cpp" />
+    <ClCompile Include="gpu\vulkan_builders.cpp" />
+    <ClCompile Include="gpu\vulkan_device.cpp" />
+    <ClCompile Include="gpu\vulkan_loader.cpp" />
+    <ClCompile Include="gpu\vulkan_pipeline.cpp" />
+    <ClCompile Include="gpu\vulkan_stream_buffer.cpp" />
+    <ClCompile Include="gpu\vulkan_swap_chain.cpp" />
+    <ClCompile Include="gpu\vulkan_texture.cpp" />
+    <ClCompile Include="gpu\window_info.cpp" />
     <ClCompile Include="gpu_backend.cpp" />
     <ClCompile Include="gpu_commands.cpp" />
     <ClCompile Include="gpu_hw_d3d12.cpp" />
     <ClCompile Include="gpu_hw_shadergen.cpp" />
-    <ClCompile Include="gpu_hw_vulkan.cpp">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="gpu_sw.cpp" />
     <ClCompile Include="gpu_sw_backend.cpp" />
     <ClCompile Include="gte.cpp" />
@@ -181,7 +176,6 @@
     <ClInclude Include="gpu\gpu_device.h" />
     <ClInclude Include="gpu\gpu_texture.h" />
     <ClInclude Include="gpu\imgui_impl_dx12.h" />
-    <ClInclude Include="gpu\imgui_impl_vulkan.h" />
     <ClInclude Include="gpu\opengl_device.h" />
     <ClInclude Include="gpu\opengl_loader.h" />
     <ClInclude Include="gpu\opengl_pipeline.h" />
@@ -191,23 +185,19 @@
     <ClInclude Include="gpu\postprocessing_shader.h" />
     <ClInclude Include="gpu\postprocessing_shadergen.h" />
     <ClInclude Include="gpu\gpu_shader_cache.h" />
-    <ClInclude Include="gpu\vulkan\builders.h" />
-    <ClInclude Include="gpu\vulkan\context.h" />
-    <ClInclude Include="gpu\vulkan\entry_points.h" />
-    <ClInclude Include="gpu\vulkan\loader.h" />
-    <ClInclude Include="gpu\vulkan\shader_cache.h" />
-    <ClInclude Include="gpu\vulkan\shader_compiler.h" />
-    <ClInclude Include="gpu\vulkan\stream_buffer.h" />
-    <ClInclude Include="gpu\vulkan\swap_chain.h" />
-    <ClInclude Include="gpu\vulkan\texture.h" />
-    <ClInclude Include="gpu\vulkan\util.h" />
-    <ClInclude Include="gpu\vulkan_gpu_device.h" />
+    <ClInclude Include="gpu\spirv_compiler.h" />
+    <ClInclude Include="gpu\vulkan_builders.h" />
+    <ClInclude Include="gpu\vulkan_device.h" />
+    <ClInclude Include="gpu\vulkan_entry_points.h" />
+    <ClInclude Include="gpu\vulkan_loader.h" />
+    <ClInclude Include="gpu\vulkan_pipeline.h" />
+    <ClInclude Include="gpu\vulkan_stream_buffer.h" />
+    <ClInclude Include="gpu\vulkan_swap_chain.h" />
+    <ClInclude Include="gpu\vulkan_texture.h" />
+    <ClInclude Include="gpu\window_info.h" />
     <ClInclude Include="gpu_backend.h" />
     <ClInclude Include="gpu_hw_d3d12.h" />
     <ClInclude Include="gpu_hw_shadergen.h" />
-    <ClInclude Include="gpu_hw_vulkan.h">
-      <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
-    </ClInclude>
     <ClInclude Include="gpu_sw.h" />
     <ClInclude Include="gpu_sw_backend.h" />
     <ClInclude Include="gpu_types.h" />
@@ -253,7 +243,7 @@
     <None Include="gpu\gl\context_agl.mm">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </None>
-    <None Include="gpu\vulkan\entry_points.inl" />
+    <None Include="gpu\vulkan_entry_points.inl" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{868B98C8-65A1-494B-8346-250A73A48C0A}</ProjectGuid>

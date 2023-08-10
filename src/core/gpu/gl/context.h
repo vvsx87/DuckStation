@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+#include "../window_info.h"
+
 #include "common/types.h"
-#include "common/window_info.h"
+
 #include <array>
 #include <memory>
 #include <vector>
@@ -40,7 +43,7 @@ public:
   ALWAYS_INLINE bool IsGLES() const { return (m_version.profile == Profile::ES); }
   ALWAYS_INLINE u32 GetSurfaceWidth() const { return m_wi.surface_width; }
   ALWAYS_INLINE u32 GetSurfaceHeight() const { return m_wi.surface_height; }
-  ALWAYS_INLINE WindowInfo::SurfaceFormat GetSurfaceFormat() const { return m_wi.surface_format; }
+  ALWAYS_INLINE GPUTexture::Format GetSurfaceFormat() const { return m_wi.surface_format; }
 
   virtual void* GetProcAddress(const char* name) = 0;
   virtual bool ChangeSurface(const WindowInfo& new_wi) = 0;

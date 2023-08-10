@@ -28,7 +28,7 @@ bool OpenGLTexture::s_use_pbo_for_uploads = false;
 
 const std::tuple<GLenum, GLenum, GLenum>& OpenGLTexture::GetPixelFormatMapping(GPUTexture::Format format)
 {
-  static constexpr std::array<std::tuple<GLenum, GLenum, GLenum>, static_cast<u32>(GPUTexture::Format::Count)> mapping =
+  static constexpr std::array<std::tuple<GLenum, GLenum, GLenum>, static_cast<u32>(GPUTexture::Format::MaxCount)> mapping =
     {{
       {},                                                   // Unknown
       {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},                // RGBA8

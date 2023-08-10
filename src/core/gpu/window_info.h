@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "types.h"
+#include "gpu_texture.h"
+#include "common/types.h"
 
 // Contains the information required to create a graphics context in a window.
 struct WindowInfo
@@ -18,16 +19,6 @@ struct WindowInfo
     Display,
   };
 
-  enum class SurfaceFormat
-  {
-    None,
-    Auto,
-    RGB8,
-    RGBA8,
-    RGB565,
-    Count
-  };
-
   Type type = Type::Surfaceless;
   void* display_connection = nullptr;
   void* window_handle = nullptr;
@@ -35,7 +26,7 @@ struct WindowInfo
   u32 surface_height = 0;
   float surface_refresh_rate = 0.0f;
   float surface_scale = 1.0f;
-  SurfaceFormat surface_format = SurfaceFormat::RGB8;
+  GPUTexture::Format surface_format = GPUTexture::Format::Unknown;
 
   // Needed for macOS.
 #ifdef __APPLE__

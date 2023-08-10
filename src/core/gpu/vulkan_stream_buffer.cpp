@@ -1,18 +1,19 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
-#include "stream_buffer.h"
+#include "vulkan_stream_buffer.h"
+#include "vulkan_builders.h"
+#include "vulkan_device.h"
+
 #include "common/align.h"
 #include "common/assert.h"
+#include "common/bitutils.h"
 #include "common/log.h"
-#include "context.h"
-#include "util.h"
-Log_SetChannel(Vulkan::StreamBuffer);
+Log_SetChannel(VulkanDevice);
 
-namespace Vulkan {
-StreamBuffer::StreamBuffer() = default;
+VulkanStreamBuffer::VulkanStreamBuffer() = default;
 
-StreamBuffer::StreamBuffer(StreamBuffer&& move)
+VulkanStreamBuffer::VulkanStreamBuffer(VulkanStreamBuffer&& move)
   : m_size(move.m_size), m_current_offset(move.m_current_offset), m_current_space(move.m_current_space),
     m_current_gpu_position(move.m_current_gpu_position), m_allocation(move.m_allocation), m_buffer(move.m_buffer),
     m_host_pointer(move.m_host_pointer), m_tracked_fences(std::move(move.m_tracked_fences))
@@ -26,13 +27,13 @@ StreamBuffer::StreamBuffer(StreamBuffer&& move)
   move.m_host_pointer = nullptr;
 }
 
-StreamBuffer::~StreamBuffer()
+VulkanStreamBuffer::~VulkanStreamBuffer()
 {
   if (IsValid())
     Destroy(true);
 }
 
-StreamBuffer& StreamBuffer::operator=(StreamBuffer&& move)
+VulkanStreamBuffer& VulkanStreamBuffer::operator=(VulkanStreamBuffer&& move)
 {
   if (IsValid())
     Destroy(true);
@@ -48,7 +49,7 @@ StreamBuffer& StreamBuffer::operator=(StreamBuffer&& move)
   return *this;
 }
 
-bool StreamBuffer::Create(VkBufferUsageFlags usage, u32 size)
+bool VulkanStreamBuffer::Create(VkBufferUsageFlags usage, u32 size)
 {
   const VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                                   nullptr,
@@ -67,7 +68,8 @@ bool StreamBuffer::Create(VkBufferUsageFlags usage, u32 size)
   VmaAllocationInfo ai = {};
   VkBuffer new_buffer = VK_NULL_HANDLE;
   VmaAllocation new_allocation = VK_NULL_HANDLE;
-  VkResult res = vmaCreateBuffer(g_vulkan_context->GetAllocator(), &bci, &aci, &new_buffer, &new_allocation, &ai);
+  VkResult res =
+    vmaCreateBuffer(VulkanDevice::GetInstance().GetAllocator(), &bci, &aci, &new_buffer, &new_allocation, &ai);
   if (res != VK_SUCCESS)
   {
     LOG_VULKAN_ERROR(res, "vkCreateBuffer failed: ");
@@ -88,14 +90,14 @@ bool StreamBuffer::Create(VkBufferUsageFlags usage, u32 size)
   return true;
 }
 
-void StreamBuffer::Destroy(bool defer)
+void VulkanStreamBuffer::Destroy(bool defer)
 {
   if (m_buffer != VK_NULL_HANDLE)
   {
     if (defer)
-      g_vulkan_context->DeferBufferDestruction(m_buffer, m_allocation);
+      VulkanDevice::GetInstance().DeferBufferDestruction(m_buffer, m_allocation);
     else
-      vmaDestroyBuffer(g_vulkan_context->GetAllocator(), m_buffer, m_allocation);
+      vmaDestroyBuffer(VulkanDevice::GetInstance().GetAllocator(), m_buffer, m_allocation);
   }
 
   m_size = 0;
@@ -107,7 +109,7 @@ void StreamBuffer::Destroy(bool defer)
   m_host_pointer = nullptr;
 }
 
-bool StreamBuffer::ReserveMemory(u32 num_bytes, u32 alignment)
+bool VulkanStreamBuffer::ReserveMemory(u32 num_bytes, u32 alignment)
 {
   const u32 required_bytes = num_bytes + alignment;
 
@@ -176,23 +178,23 @@ bool StreamBuffer::ReserveMemory(u32 num_bytes, u32 alignment)
   return false;
 }
 
-void StreamBuffer::CommitMemory(u32 final_num_bytes)
+void VulkanStreamBuffer::CommitMemory(u32 final_num_bytes)
 {
   DebugAssert((m_current_offset + final_num_bytes) <= m_size);
   DebugAssert(final_num_bytes <= m_current_space);
 
   // For non-coherent mappings, flush the memory range
-  vmaFlushAllocation(g_vulkan_context->GetAllocator(), m_allocation, m_current_offset, final_num_bytes);
+  vmaFlushAllocation(VulkanDevice::GetInstance().GetAllocator(), m_allocation, m_current_offset, final_num_bytes);
 
   m_current_offset += final_num_bytes;
   m_current_space -= final_num_bytes;
   UpdateCurrentFencePosition();
 }
 
-void StreamBuffer::UpdateCurrentFencePosition()
+void VulkanStreamBuffer::UpdateCurrentFencePosition()
 {
   // Has the offset changed since the last fence?
-  const u64 counter = g_vulkan_context->GetCurrentFenceCounter();
+  const u64 counter = VulkanDevice::GetInstance().GetCurrentFenceCounter();
   if (!m_tracked_fences.empty() && m_tracked_fences.back().first == counter)
   {
     // Still haven't executed a command buffer, so just update the offset.
@@ -204,12 +206,12 @@ void StreamBuffer::UpdateCurrentFencePosition()
   m_tracked_fences.emplace_back(counter, m_current_offset);
 }
 
-void StreamBuffer::UpdateGPUPosition()
+void VulkanStreamBuffer::UpdateGPUPosition()
 {
   auto start = m_tracked_fences.begin();
   auto end = start;
 
-  const u64 completed_counter = g_vulkan_context->GetCompletedFenceCounter();
+  const u64 completed_counter = VulkanDevice::GetInstance().GetCompletedFenceCounter();
   while (end != m_tracked_fences.end() && completed_counter >= end->first)
   {
     m_current_gpu_position = end->second;
@@ -229,7 +231,7 @@ void StreamBuffer::UpdateGPUPosition()
   }
 }
 
-bool StreamBuffer::WaitForClearSpace(u32 num_bytes)
+bool VulkanStreamBuffer::WaitForClearSpace(u32 num_bytes)
 {
   u32 new_offset = 0;
   u32 new_space = 0;
@@ -296,16 +298,14 @@ bool StreamBuffer::WaitForClearSpace(u32 num_bytes)
 
   // Did any fences satisfy this condition?
   // Has the command buffer been executed yet? If not, the caller should execute it.
-  if (iter == m_tracked_fences.end() || iter->first == g_vulkan_context->GetCurrentFenceCounter())
+  if (iter == m_tracked_fences.end() || iter->first == VulkanDevice::GetInstance().GetCurrentFenceCounter())
     return false;
 
   // Wait until this fence is signaled. This will fire the callback, updating the GPU position.
-  g_vulkan_context->WaitForFenceCounter(iter->first);
+  VulkanDevice::GetInstance().WaitForFenceCounter(iter->first);
   m_tracked_fences.erase(m_tracked_fences.begin(), m_current_offset == iter->second ? m_tracked_fences.end() : ++iter);
   m_current_offset = new_offset;
   m_current_space = new_space;
   m_current_gpu_position = new_gpu_position;
   return true;
 }
-
-} // namespace Vulkan

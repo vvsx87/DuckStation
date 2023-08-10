@@ -598,11 +598,7 @@ std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromBinary(GPUShaderStage st
 std::unique_ptr<GPUShader> MetalDevice::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
                                                                std::vector<u8>* out_binary /* = nullptr */)
 {
-#ifdef _DEBUG
-  static constexpr u32 options = SPIRVCompiler::DebugInfo | SPIRVCompiler::VulkanRules;
-#else
-  static constexpr u32 options = SPIRVCompiler::VulkanRules;
-#endif
+  const u32 options = (m_debug_device ? SPIRVCompiler::DebugInfo : 0) | SPIRVCompiler::VulkanRules;
   static constexpr bool dump_shaders = false;
 
   std::optional<SPIRVCompiler::SPIRVCodeVector> spirv = SPIRVCompiler::CompileShader(stage, source, options);
@@ -857,6 +853,9 @@ bool MetalTexture::Update(u32 x, u32 y, u32 width, u32 height, const void* data,
     return false;
   }
 
+  if (m_state == GPUTexture::State::Cleared && (x != 0 || y != 0 || width != m_width || height != m_height))
+    dev.CommitClear(this);
+
   const u32 offset = sb.GetCurrentOffset();
   StringUtil::StrideMemCpy(sb.GetCurrentHostPointer(), aligned_pitch, data, pitch, width * GetPixelSize(), height);
   sb.CommitMemory(req_size);
@@ -887,7 +886,8 @@ bool MetalTexture::Map(void** map, u32* map_stride, u32 x, u32 y, u32 width, u32
   const u32 req_size = height * aligned_pitch;
 
   MetalDevice& dev = MetalDevice::GetInstance();
-  dev.CommitClear(this);
+  if (m_state == GPUTexture::State::Cleared && (x != 0 || y != 0 || width != m_width || height != m_height))
+    dev.CommitClear(this);
 
   MetalStreamBuffer& sb = dev.GetTextureStreamBuffer();
   if (!sb.ReserveMemory(req_size, TEXTURE_UPLOAD_ALIGNMENT))
@@ -1597,6 +1597,7 @@ void MetalDevice::SetFramebuffer(GPUFramebuffer* fb)
 
   // Current pipeline might be incompatible, so unbind it.
   // Otherwise it'll get bound to the new render encoder.
+  // TODO: we shouldn't need to do this now
   m_current_pipeline = nullptr;
   m_current_depth_state = nil;
 }

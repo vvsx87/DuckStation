@@ -9,7 +9,6 @@
 #include "common/log.h"
 #include "common/path.h"
 #include "common/string_util.h"
-#include "common/window_info.h"
 #include "core/cheats.h"
 #include "core/controller.h"
 #include "core/game_database.h"

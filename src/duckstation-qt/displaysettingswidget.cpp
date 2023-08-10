@@ -16,7 +16,7 @@
 #include "core/gpu/d3d12_gpu_device.h"
 #endif
 #ifdef WITH_VULKAN
-#include "core/gpu/vulkan_gpu_device.h"
+#include "core/gpu/vulkan_device.h"
 #endif
 
 DisplaySettingsWidget::DisplaySettingsWidget(SettingsDialog* dialog, QWidget* parent)
@@ -205,7 +205,7 @@ void DisplaySettingsWidget::populateGPUAdaptersAndResolutions()
 #endif
 #ifdef WITH_VULKAN
     case GPURenderer::HardwareVulkan:
-      aml = VulkanGPUDevice::StaticGetAdapterAndModeList(nullptr);
+      aml = VulkanDevice::StaticGetAdapterAndModeList();
       threaded_presentation_supported = true;
       break;
 #endif
