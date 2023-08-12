@@ -1,47 +1,17 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
 #include "common/types.h"
 #include "common/windows_headers.h"
+
 #include <array>
 #include <d3d12.h>
+#include <string_view>
 #include <wrl/client.h>
 
 namespace D3D12 {
-
-class ShaderCache;
-
-void ResourceBarrier(ID3D12GraphicsCommandList* cmdlist, ID3D12Resource* resource, D3D12_RESOURCE_STATES from_state,
-                     D3D12_RESOURCE_STATES to_state);
-
-void SetViewport(ID3D12GraphicsCommandList* cmdlist, int x, int y, int width, int height, float min_depth = 0.0f,
-                 float max_depth = 1.0f);
-
-void SetScissor(ID3D12GraphicsCommandList* cmdlist, int x, int y, int width, int height);
-
-void SetViewportAndScissor(ID3D12GraphicsCommandList* cmdlist, int x, int y, int width, int height,
-                           float min_depth = 0.0f, float max_depth = 1.0f);
-
-void SetViewportAndClampScissor(ID3D12GraphicsCommandList* cmdlist, int x, int y, int width, int height,
-                                float min_depth = 0.0f, float max_depth = 1.0f);
-
-u32 GetTexelSize(DXGI_FORMAT format);
-
-void SetDefaultSampler(D3D12_SAMPLER_DESC* desc);
-
-#ifdef _DEBUG
-
-void SetObjectName(ID3D12Object* object, const char* name);
-void SetObjectNameFormatted(ID3D12Object* object, const char* format, ...);
-
-#else
-
-static inline void SetObjectName(ID3D12Object* object, const char* name) {}
-static inline void SetObjectNameFormatted(ID3D12Object* object, const char* format, ...) {}
-
-#endif
-
 class RootSignatureBuilder
 {
 public:
@@ -86,8 +56,8 @@ public:
 
   void Clear();
 
+  // TODO: Pipeline Cache
   Microsoft::WRL::ComPtr<ID3D12PipelineState> Create(ID3D12Device* device, bool clear = true);
-  Microsoft::WRL::ComPtr<ID3D12PipelineState> Create(ID3D12Device* device, ShaderCache& cache, bool clear = true);
 
   void SetRootSignature(ID3D12RootSignature* rs);
 
@@ -95,9 +65,9 @@ public:
   void SetGeometryShader(const void* data, u32 data_size);
   void SetPixelShader(const void* data, u32 data_size);
 
-  void SetVertexShader(ID3DBlob* blob);
-  void SetGeometryShader(ID3DBlob* blob);
-  void SetPixelShader(ID3DBlob* blob);
+  void SetVertexShader(const ID3DBlob* blob);
+  void SetGeometryShader(const ID3DBlob* blob);
+  void SetPixelShader(const ID3DBlob* blob);
 
   void AddVertexAttribute(const char* semantic_name, u32 semantic_index, DXGI_FORMAT format, u32 buffer, u32 offset);
 
@@ -110,12 +80,16 @@ public:
   void SetNoCullRasterizationState();
 
   void SetDepthState(bool depth_test, bool depth_write, D3D12_COMPARISON_FUNC compare_op);
+  void SetStencilState(bool stencil_test, u8 read_mask, u8 write_mask, const D3D12_DEPTH_STENCILOP_DESC& front,
+                       const D3D12_DEPTH_STENCILOP_DESC& back);
 
   void SetNoDepthTestState();
+  void SetNoStencilState();
 
   void SetBlendState(u32 rt, bool blend_enable, D3D12_BLEND src_factor, D3D12_BLEND dst_factor, D3D12_BLEND_OP op,
                      D3D12_BLEND alpha_src_factor, D3D12_BLEND alpha_dst_factor, D3D12_BLEND_OP alpha_op,
                      u8 write_mask = D3D12_COLOR_WRITE_ENABLE_ALL);
+  void SetColorWriteMask(u32 rt, u8 write_mask = D3D12_COLOR_WRITE_ENABLE_ALL);
 
   void SetNoBlendingState();
 
@@ -128,8 +102,38 @@ public:
   void SetDepthStencilFormat(DXGI_FORMAT format);
 
 private:
-  D3D12_GRAPHICS_PIPELINE_STATE_DESC m_desc{};
-  std::array<D3D12_INPUT_ELEMENT_DESC, MAX_VERTEX_ATTRIBUTES> m_input_elements{};
+  D3D12_GRAPHICS_PIPELINE_STATE_DESC m_desc;
+  std::array<D3D12_INPUT_ELEMENT_DESC, MAX_VERTEX_ATTRIBUTES> m_input_elements;
 };
 
+class ComputePipelineBuilder
+{
+public:
+  ComputePipelineBuilder();
+  ~ComputePipelineBuilder() = default;
+
+  void Clear();
+
+  // TODO: Pipeline Library
+  Microsoft::WRL::ComPtr<ID3D12PipelineState> Create(ID3D12Device* device, bool clear = true);
+
+  void SetRootSignature(ID3D12RootSignature* rs);
+
+  void SetShader(const void* data, u32 data_size);
+
+private:
+  D3D12_COMPUTE_PIPELINE_STATE_DESC m_desc;
+};
+
+#ifdef _DEBUG
+void SetObjectName(ID3D12Object* object, const std::string_view& name);
+void SetObjectNameFormatted(ID3D12Object* object, const char* format, ...);
+#else
+static inline void SetObjectName(ID3D12Object* object, const std::string_view& name)
+{
+}
+static inline void SetObjectNameFormatted(ID3D12Object* object, const char* format, ...)
+{
+}
+#endif
 } // namespace D3D12

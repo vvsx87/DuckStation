@@ -13,7 +13,7 @@
 // For enumerating adapters.
 #ifdef _WIN32
 #include "core/gpu/d3d11_device.h"
-#include "core/gpu/d3d12_gpu_device.h"
+#include "core/gpu/d3d12_device.h"
 #endif
 #ifdef WITH_VULKAN
 #include "core/gpu/vulkan_device.h"
@@ -200,7 +200,7 @@ void DisplaySettingsWidget::populateGPUAdaptersAndResolutions()
       break;
 
     case GPURenderer::HardwareD3D12:
-      aml = D3D12GPUDevice::StaticGetAdapterAndModeList();
+      aml = D3D12Device::StaticGetAdapterAndModeList();
       break;
 #endif
 #ifdef WITH_VULKAN

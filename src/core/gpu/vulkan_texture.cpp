@@ -333,10 +333,6 @@ bool VulkanTexture::Update(u32 x, u32 y, u32 width, u32 height, const void* data
 
   const VkCommandBuffer cmdbuf = GetCommandBufferForUpdate();
 
-  // first time the texture is used? don't leave it undefined
-  if (m_layout == Layout::Undefined)
-    TransitionToLayout(cmdbuf, Layout::TransferDst);
-
   // if we're an rt and have been cleared, and the full rect isn't being uploaded, do the clear
   if (m_type == Type::RenderTarget)
   {
@@ -345,6 +341,10 @@ bool VulkanTexture::Update(u32 x, u32 y, u32 width, u32 height, const void* data
     else
       m_state = State::Dirty;
   }
+
+  // first time the texture is used? don't leave it undefined
+  if (m_layout == Layout::Undefined)
+    TransitionToLayout(cmdbuf, Layout::TransferDst);
 
   UpdateFromBuffer(cmdbuf, x, y, width, height, layer, level, upload_pitch, buffer, buffer_offset);
   TransitionToLayout(cmdbuf, Layout::ShaderReadOnly);
@@ -415,23 +415,6 @@ void VulkanTexture::Unmap()
   m_map_layer = 0;
   m_map_level = 0;
 }
-
-#if 0
-void VulkanTexture::Swap(GSTexture* tex)
-{
-  GSTexture::Swap(tex);
-  std::swap(m_image, static_cast<VulkanTexture*>(tex)->m_image);
-  std::swap(m_allocation, static_cast<VulkanTexture*>(tex)->m_allocation);
-  std::swap(m_view, static_cast<VulkanTexture*>(tex)->m_view);
-  std::swap(m_vk_format, static_cast<VulkanTexture*>(tex)->m_vk_format);
-  std::swap(m_layout, static_cast<VulkanTexture*>(tex)->m_layout);
-  std::swap(m_use_fence_counter, static_cast<VulkanTexture*>(tex)->m_use_fence_counter);
-  std::swap(m_clear_value, static_cast<VulkanTexture*>(tex)->m_clear_value);
-  std::swap(m_map_area, static_cast<VulkanTexture*>(tex)->m_map_area);
-  std::swap(m_map_level, static_cast<VulkanTexture*>(tex)->m_map_level);
-  std::swap(m_framebuffers, static_cast<VulkanTexture*>(tex)->m_framebuffers);
-}
-#endif
 
 void VulkanTexture::CommitClear()
 {
@@ -710,44 +693,6 @@ VkDescriptorSet VulkanTexture::GetDescriptorSetWithSampler(VkSampler sampler)
   return ds;
 }
 
-#if 0
-VkFramebuffer VulkanTexture::GetLinkedFramebuffer(VulkanTexture* depth_texture, bool feedback_loop)
-{
-  pxAssertRel(m_type != Type::Texture, "Texture is a render target");
-
-  for (const auto& [other_tex, fb, other_feedback_loop] : m_framebuffers)
-  {
-    if (other_tex == depth_texture && other_feedback_loop == feedback_loop)
-      return fb;
-  }
-
-  const VkRenderPass rp = VulkanDevice::GetInstance()->GetRenderPass(
-    (m_type != GSTexture::Type::DepthStencil) ? m_vk_format : VK_FORMAT_UNDEFINED,
-    (m_type != GSTexture::Type::DepthStencil) ? (depth_texture ? depth_texture->m_vk_format : VK_FORMAT_UNDEFINED) :
-                                                m_vk_format,
-    VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE,
-    VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, feedback_loop);
-  if (!rp)
-    return VK_NULL_HANDLE;
-
-  Vulkan::FramebufferBuilder fbb;
-  fbb.AddAttachment(m_view);
-  if (depth_texture)
-    fbb.AddAttachment(depth_texture->m_view);
-  fbb.SetSize(m_size.x, m_size.y, 1);
-  fbb.SetRenderPass(rp);
-
-  VkFramebuffer fb = fbb.Create(VulkanDevice::GetInstance()->GetVulkanDevice());
-  if (!fb)
-    return VK_NULL_HANDLE;
-
-  m_framebuffers.emplace_back(depth_texture, fb, feedback_loop);
-  if (depth_texture)
-    depth_texture->m_framebuffers.emplace_back(this, fb, feedback_loop);
-  return fb;
-}
-#endif
-
 void VulkanTexture::MakeReadyForSampling()
 {
   if (m_layout == Layout::ShaderReadOnly)
@@ -778,6 +723,7 @@ bool VulkanDevice::DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width,
                                    u32 out_data_stride)
 {
   VulkanTexture* T = static_cast<VulkanTexture*>(texture);
+  T->CommitClear();
 
   const u32 pitch = Common::AlignUp(width * T->GetPixelSize(), GetBufferCopyRowPitchAlignment());
   const u32 size = pitch * height;
@@ -835,9 +781,7 @@ bool VulkanDevice::DownloadTexture(GPUTexture* texture, u32 x, u32 y, u32 width,
   if (res != VK_SUCCESS)
     LOG_VULKAN_ERROR(res, "vmaInvalidateAllocation() failed, readback may be incorrect: ");
 
-  StringUtil::StrideMemCpy(out_data, out_data_stride, m_download_buffer_map, pitch, std::min(pitch, out_data_stride),
-                           height);
-
+  StringUtil::StrideMemCpy(out_data, out_data_stride, m_download_buffer_map, pitch, width * T->GetPixelSize(), height);
   return true;
 }
 

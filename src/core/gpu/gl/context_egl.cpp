@@ -9,7 +9,9 @@
 Log_SetChannel(GL::ContextEGL);
 
 namespace GL {
-ContextEGL::ContextEGL(const WindowInfo& wi) : Context(wi) {}
+ContextEGL::ContextEGL(const WindowInfo& wi) : Context(wi)
+{
+}
 
 ContextEGL::~ContextEGL()
 {
@@ -245,16 +247,36 @@ bool ContextEGL::CheckConfigSurfaceFormat(EGLConfig config, WindowInfo::SurfaceF
   switch (format)
   {
     case GPUTexture::Format::Undefined:
-      return true;
+    {
+      if (red_size == 5 && green_size == 6 && red_size == 5)
+      {
+        m_wi.surface_format = GPUTexture::Format::RGB565;
+      }
+      else if (red_size == 5 && green_size == 5 && red_size == 5 && alpha_size == 1)
+      {
+        m_wi.surface_format = GPUTexture::Format::RGBA5551;
+      }
+      else if (red_size == 8 && green_size == 8 && blue_size == 8)
+      {
+        m_wi.surface_format = GPUTexture::Format::RGBA8;
+      }
+      else
+      {
+        Log_ErrorPrintf("Unknown surface format: R=%u, G=%u, B=%u, A=%u", red_size, green_size, blue_size, alpha_size);
+        m_wi.surface_format = GPUTexture::Format::RGBA8;
+      }
 
-    case GPUTexture::Format::RGB8:
-      return (red_size == 8 && green_size == 8 && blue_size == 8);
+      return true;
+    }
 
     case GPUTexture::Format::RGBA8:
       return (red_size == 8 && green_size == 8 && blue_size == 8 && alpha_size == 8);
 
     case GPUTexture::Format::RGB565:
       return (red_size == 5 && green_size == 6 && blue_size == 5);
+
+    case GPUTexture::Format::RGBA5551:
+      return (red_size == 5 && green_size == 5 && blue_size == 5 && alpha_size == 1);
 
     default:
       return false;

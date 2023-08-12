@@ -33,6 +33,8 @@ struct WindowInfo
   void* surface_handle = nullptr;
 #endif
 
+  ALWAYS_INLINE bool IsSurfaceless() const { return type == Type::Surfaceless; }
+
   // Changes the window to be surfaceless (i.e. no handle/size/etc).
   void SetSurfaceless();
 

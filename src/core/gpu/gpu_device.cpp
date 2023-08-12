@@ -33,7 +33,7 @@ Log_SetChannel(GPUDevice);
 #ifdef _WIN32
 #include "common/windows_headers.h"
 #include "d3d11_device.h"
-#include "d3d12_gpu_device.h"
+#include "d3d12_device.h"
 #endif
 
 #ifdef __APPLE__
@@ -263,6 +263,7 @@ bool GPUDevice::Create(const std::string_view& adapter, const std::string_view& 
 
 void GPUDevice::Destroy()
 {
+  m_post_processing_chain.reset();
   if (HasSurface())
     DestroySurface();
   DestroyResources();
@@ -1450,8 +1451,7 @@ std::unique_ptr<GPUDevice> GPUDevice::CreateDeviceForAPI(RenderAPI api)
 
 #ifdef _WIN32
     case RenderAPI::D3D12:
-      // return std::make_unique<D3D12GPUDevice>();
-      return {};
+      return std::make_unique<D3D12Device>();
 
     case RenderAPI::D3D11:
       return std::make_unique<D3D11Device>();

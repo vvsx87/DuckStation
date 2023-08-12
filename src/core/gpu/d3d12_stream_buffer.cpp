@@ -1,57 +1,67 @@
 // SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
-// Parts originally from Dolphin Emulator, also written by myself.
 
-#include "stream_buffer.h"
+#include "d3d12_stream_buffer.h"
+#include "d3d12_device.h"
+
 #include "common/align.h"
 #include "common/assert.h"
 #include "common/log.h"
-#include "context.h"
+
+#include "D3D12MemAlloc.h"
+
 #include <algorithm>
-#include <functional>
-Log_SetChannel(D3D12::StreamBuffer);
 
-namespace D3D12 {
-StreamBuffer::StreamBuffer() = default;
+Log_SetChannel(D3D12StreamBuffer);
 
-StreamBuffer::~StreamBuffer()
+D3D12StreamBuffer::D3D12StreamBuffer() = default;
+
+D3D12StreamBuffer::~D3D12StreamBuffer()
 {
   Destroy();
 }
 
-bool StreamBuffer::Create(u32 size)
+bool D3D12StreamBuffer::Create(u32 size)
 {
-  static const D3D12_HEAP_PROPERTIES heap_properties = {D3D12_HEAP_TYPE_UPLOAD};
   const D3D12_RESOURCE_DESC resource_desc = {
     D3D12_RESOURCE_DIMENSION_BUFFER, 0, size, 1, 1, 1, DXGI_FORMAT_UNKNOWN, {1, 0}, D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
     D3D12_RESOURCE_FLAG_NONE};
 
-  Microsoft::WRL::ComPtr<ID3D12Resource> buffer;
+  D3D12MA::ALLOCATION_DESC allocationDesc = {};
+  allocationDesc.Flags = D3D12MA::ALLOCATION_FLAG_COMMITTED;
+  allocationDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
 
-  HRESULT hr = g_d3d12_context->GetDevice()->CreateCommittedResource(&heap_properties, D3D12_HEAP_FLAG_NONE,
-                                                                     &resource_desc, D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                                     nullptr, IID_PPV_ARGS(buffer.GetAddressOf()));
-  AssertMsg(SUCCEEDED(hr), "Allocate buffer");
+  Microsoft::WRL::ComPtr<ID3D12Resource> buffer;
+  Microsoft::WRL::ComPtr<D3D12MA::Allocation> allocation;
+  HRESULT hr = D3D12Device::GetInstance().GetAllocator()->CreateResource(
+    &allocationDesc, &resource_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, allocation.ReleaseAndGetAddressOf(),
+    IID_PPV_ARGS(buffer.GetAddressOf()));
   if (FAILED(hr))
+  {
+    Log_ErrorPrintf("CreateResource() failed: %08X", hr);
     return false;
+  }
 
   static const D3D12_RANGE read_range = {};
   u8* host_pointer;
   hr = buffer->Map(0, &read_range, reinterpret_cast<void**>(&host_pointer));
-  AssertMsg(SUCCEEDED(hr), "Map buffer");
   if (FAILED(hr))
+  {
+    Log_ErrorPrintf("Map() failed: %08X", hr);
     return false;
+  }
 
   Destroy(true);
 
   m_buffer = std::move(buffer);
+  m_allocation = std::move(allocation);
   m_host_pointer = host_pointer;
   m_size = size;
   m_gpu_pointer = m_buffer->GetGPUVirtualAddress();
   return true;
 }
 
-bool StreamBuffer::ReserveMemory(u32 num_bytes, u32 alignment)
+bool D3D12StreamBuffer::ReserveMemory(u32 num_bytes, u32 alignment)
 {
   const u32 required_bytes = num_bytes + alignment;
 
@@ -120,15 +130,15 @@ bool StreamBuffer::ReserveMemory(u32 num_bytes, u32 alignment)
   return false;
 }
 
-void StreamBuffer::CommitMemory(u32 final_num_bytes)
+void D3D12StreamBuffer::CommitMemory(u32 final_num_bytes)
 {
-  Assert((m_current_offset + final_num_bytes) <= m_size);
-  Assert(final_num_bytes <= m_current_space);
+  DebugAssert((m_current_offset + final_num_bytes) <= m_size);
+  DebugAssert(final_num_bytes <= m_current_space);
   m_current_offset += final_num_bytes;
   m_current_space -= final_num_bytes;
 }
 
-void StreamBuffer::Destroy(bool defer)
+void D3D12StreamBuffer::Destroy(bool defer)
 {
   if (m_host_pointer)
   {
@@ -138,8 +148,9 @@ void StreamBuffer::Destroy(bool defer)
   }
 
   if (m_buffer && defer)
-    g_d3d12_context->DeferResourceDestruction(m_buffer.Get());
+    D3D12Device::GetInstance().DeferResourceDestruction(std::move(m_allocation), std::move(m_buffer));
   m_buffer.Reset();
+  m_allocation.Reset();
 
   m_current_offset = 0;
   m_current_space = 0;
@@ -147,14 +158,14 @@ void StreamBuffer::Destroy(bool defer)
   m_tracked_fences.clear();
 }
 
-void StreamBuffer::UpdateCurrentFencePosition()
+void D3D12StreamBuffer::UpdateCurrentFencePosition()
 {
   // Don't create a tracking entry if the GPU is caught up with the buffer.
   if (m_current_offset == m_current_gpu_position)
     return;
 
   // Has the offset changed since the last fence?
-  const u64 fence = g_d3d12_context->GetCurrentFenceValue();
+  const u64 fence = D3D12Device::GetInstance().GetCurrentFenceValue();
   if (!m_tracked_fences.empty() && m_tracked_fences.back().first == fence)
   {
     // Still haven't executed a command buffer, so just update the offset.
@@ -166,12 +177,12 @@ void StreamBuffer::UpdateCurrentFencePosition()
   m_tracked_fences.emplace_back(fence, m_current_offset);
 }
 
-void StreamBuffer::UpdateGPUPosition()
+void D3D12StreamBuffer::UpdateGPUPosition()
 {
   auto start = m_tracked_fences.begin();
   auto end = start;
 
-  const u64 completed_counter = g_d3d12_context->GetCompletedFenceValue();
+  const u64 completed_counter = D3D12Device::GetInstance().GetCompletedFenceValue();
   while (end != m_tracked_fences.end() && completed_counter >= end->first)
   {
     m_current_gpu_position = end->second;
@@ -182,7 +193,7 @@ void StreamBuffer::UpdateGPUPosition()
     m_tracked_fences.erase(start, end);
 }
 
-bool StreamBuffer::WaitForClearSpace(u32 num_bytes)
+bool D3D12StreamBuffer::WaitForClearSpace(u32 num_bytes)
 {
   u32 new_offset = 0;
   u32 new_space = 0;
@@ -249,16 +260,14 @@ bool StreamBuffer::WaitForClearSpace(u32 num_bytes)
 
   // Did any fences satisfy this condition?
   // Has the command buffer been executed yet? If not, the caller should execute it.
-  if (iter == m_tracked_fences.end() || iter->first == g_d3d12_context->GetCurrentFenceValue())
+  if (iter == m_tracked_fences.end() || iter->first == D3D12Device::GetInstance().GetCurrentFenceValue())
     return false;
 
   // Wait until this fence is signaled. This will fire the callback, updating the GPU position.
-  g_d3d12_context->WaitForFence(iter->first);
+  D3D12Device::GetInstance().WaitForFence(iter->first);
   m_tracked_fences.erase(m_tracked_fences.begin(), m_current_offset == iter->second ? m_tracked_fences.end() : ++iter);
   m_current_offset = new_offset;
   m_current_space = new_space;
   m_current_gpu_position = new_gpu_position;
   return true;
 }
-
-} // namespace D3D12

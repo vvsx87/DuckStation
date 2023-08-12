@@ -15,8 +15,8 @@ std::string PostProcessingShaderGen::GeneratePostProcessingVertexShader(const Po
   std::stringstream ss;
 
   WriteHeader(ss);
-  DeclareTexture(ss, "samp0", 0);
   WriteUniformBuffer(ss, shader, false);
+  DeclareTexture(ss, "samp0", 0);
 
   DeclareVertexEntryPoint(ss, {}, 0, 1, {}, true);
   ss << R"(
@@ -38,8 +38,8 @@ std::string PostProcessingShaderGen::GeneratePostProcessingFragmentShader(const 
   std::stringstream ss;
 
   WriteHeader(ss);
-  DeclareTexture(ss, "samp0", 0);
   WriteUniformBuffer(ss, shader, false);
+  DeclareTexture(ss, "samp0", 0);
 
   // Rename main, since we need to set up globals
   if (!m_glsl)

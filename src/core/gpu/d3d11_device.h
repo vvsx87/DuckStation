@@ -268,11 +268,6 @@ public:
   ALWAYS_INLINE static ID3D11Device* GetD3DDevice() { return GetInstance().m_device.Get(); }
   ALWAYS_INLINE static ID3D11DeviceContext1* GetD3DContext() { return GetInstance().m_context.Get(); }
 
-  // returns the fullscreen mode to use for the specified dimensions
-  static bool GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, const RECT& window_rect, u32 width,
-                                                      u32 height, float refresh_rate, DXGI_FORMAT format,
-                                                      DXGI_MODE_DESC* fullscreen_mode, IDXGIOutput** output);
-
   RenderAPI GetRenderAPI() const override;
 
   bool HasSurface() const override;
@@ -364,7 +359,7 @@ private:
   static constexpr u32 UNIFORM_BUFFER_ALIGNMENT = 256;
   static constexpr u8 NUM_TIMESTAMP_QUERIES = 3;
 
-  static AdapterAndModeList GetAdapterAndModeList(IDXGIFactory* dxgi_factory);
+  static void GetAdapterAndModeList(AdapterAndModeList* ret, IDXGIFactory5* factory);
 
   void SetFeatures();
 

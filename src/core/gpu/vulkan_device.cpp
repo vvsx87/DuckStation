@@ -1222,17 +1222,22 @@ void VulkanDevice::SubmitCommandBuffer(bool wait_for_completion, const char* rea
   const std::string reason_str(StringUtil::StdStringFromFormatV(reason, ap));
   va_end(ap);
 
-  Log_WarningPrintf("Vulkan: Executing command buffer due to '%s'", reason_str.c_str());
+  Log_WarningPrintf("Executing command buffer due to '%s'", reason_str.c_str());
   SubmitCommandBuffer(wait_for_completion);
 }
 
 void VulkanDevice::SubmitCommandBufferAndRestartRenderPass(const char* reason)
 {
-  Log_WarningPrintf("Vulkan: Executing command buffer due to '%s'", reason);
   if (InRenderPass())
     EndRenderPass();
 
+  VulkanFramebuffer* fb = m_current_framebuffer;
+  VulkanPipeline* pl = m_current_pipeline;
   SubmitCommandBuffer(false, "%s", reason);
+
+  if (fb)
+    SetFramebuffer(fb);
+  SetPipeline(pl);
   BeginRenderPass();
 }
 
@@ -2538,9 +2543,6 @@ void VulkanDevice::SetFramebuffer(GPUFramebuffer* fb)
 void VulkanDevice::BeginRenderPass()
 {
   DebugAssert(!InRenderPass());
-
-  if (m_current_render_pass != VK_NULL_HANDLE)
-    EndRenderPass();
 
   VkRenderPassBeginInfo bi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, nullptr};
   std::array<VkClearValue, 2> clear_values;

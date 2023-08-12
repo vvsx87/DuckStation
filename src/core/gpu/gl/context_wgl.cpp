@@ -10,9 +10,6 @@
 
 Log_SetChannel(GL::ContextWGL);
 
-// TODO: get rid of this
-#pragma comment(lib, "opengl32.lib")
-
 static void* GetProcAddressCallback(const char* name)
 {
   void* addr = wglGetProcAddress(name);
@@ -231,6 +228,7 @@ HDC ContextWGL::GetDCAndSetPixelFormat(HWND hwnd)
     return {};
   }
 
+  m_wi.surface_format = GPUTexture::Format::RGBA8;
   return hDC;
 }
 

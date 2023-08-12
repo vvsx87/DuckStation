@@ -1417,8 +1417,8 @@ std::string GPU_HW_ShaderGen::GenerateAdaptiveDownsampleBlurFragmentShader()
   std::stringstream ss;
   WriteHeader(ss);
   WriteCommonFunctions(ss);
-  DeclareTexture(ss, "samp0", 0, false);
   WriteAdaptiveDownsampleUniformBuffer(ss);
+  DeclareTexture(ss, "samp0", 0, false);
 
   // mipmap_blur.glsl ported from parallel-rsx.
   DeclareFragmentEntryPoint(ss, 0, 1, {}, false, 1, false, false, false, false);

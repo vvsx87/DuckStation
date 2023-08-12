@@ -509,6 +509,12 @@ bool GPU_HW::CreateBuffers()
     return false;
   }
 
+  GL_OBJECT_NAME(m_vram_texture, "VRAM Texture");
+  GL_OBJECT_NAME(m_vram_depth_texture, "VRAM Depth Texture");
+  GL_OBJECT_NAME(m_vram_read_texture, "VRAM Read Texture");
+  GL_OBJECT_NAME(m_display_texture, "Display Texture");
+  GL_OBJECT_NAME(m_vram_readback_texture, "VRAM Readback Texture");
+
   // vram framebuffer has both colour and depth
   if (!(m_vram_framebuffer = g_gpu_device->CreateFramebuffer(m_vram_texture.get(), m_vram_depth_texture.get())) ||
       !(m_vram_update_depth_framebuffer = g_gpu_device->CreateFramebuffer(m_vram_depth_texture.get())) ||
@@ -972,6 +978,7 @@ bool GPU_HW::CompilePipelines()
     if (!fs)
       return false;
     GL_OBJECT_NAME(fs, "Downsample Composite Pass Fragment Shader");
+    plconfig.layout = GPUPipeline::Layout::MultiTextureAndUBO;
     plconfig.fragment_shader = fs.get();
     plconfig.color_format = VRAM_RT_FORMAT;
     if (!(m_downsample_composite_pass_pipeline = g_gpu_device->CreatePipeline(plconfig)))

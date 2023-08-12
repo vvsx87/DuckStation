@@ -52,14 +52,10 @@
     <ClCompile Include="libcrypt_serials.cpp" />
     <ClCompile Include="texture_replacements.cpp" />
     <ClCompile Include="multitap.cpp" />
-    <ClCompile Include="gpu_hw_d3d12.cpp" />
     <ClCompile Include="host.cpp" />
     <ClCompile Include="game_database.cpp" />
     <ClCompile Include="pcdrv.cpp" />
     <ClCompile Include="gpu\d3d11_device.cpp">
-      <Filter>gpu</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d12_gpu_device.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
     <ClCompile Include="gpu\gpu_device.cpp">
@@ -67,24 +63,6 @@
     </ClCompile>
     <ClCompile Include="gpu\opengl_device.cpp">
       <Filter>gpu</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d12\shader_cache.cpp">
-      <Filter>gpu\d3d12</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d12\staging_texture.cpp">
-      <Filter>gpu\d3d12</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d12\stream_buffer.cpp">
-      <Filter>gpu\d3d12</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d12\util.cpp">
-      <Filter>gpu\d3d12</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d12\context.cpp">
-      <Filter>gpu\d3d12</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d12\descriptor_heap_manager.cpp">
-      <Filter>gpu\d3d12</Filter>
     </ClCompile>
     <ClCompile Include="gpu\gl\context_egl_wayland.cpp">
       <Filter>gpu\gl</Filter>
@@ -116,9 +94,6 @@
     <ClCompile Include="gpu\postprocessing_shadergen.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
-    <ClCompile Include="gpu\imgui_impl_dx12.cpp">
-      <Filter>gpu</Filter>
-    </ClCompile>
     <ClCompile Include="gpu\gpu_texture.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
@@ -133,9 +108,6 @@
     </ClCompile>
     <ClCompile Include="gpu\opengl_pipeline.cpp">
       <Filter>gpu</Filter>
-    </ClCompile>
-    <ClCompile Include="gpu\d3d12\texture.cpp">
-      <Filter>gpu\d3d12</Filter>
     </ClCompile>
     <ClCompile Include="gpu\vulkan_loader.cpp">
       <Filter>gpu</Filter>
@@ -162,6 +134,27 @@
       <Filter>gpu</Filter>
     </ClCompile>
     <ClCompile Include="gpu\window_info.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12_pipeline.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12_texture.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12_device.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12_builders.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12_descriptor_heap_manager.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d12_stream_buffer.cpp">
+      <Filter>gpu</Filter>
+    </ClCompile>
+    <ClCompile Include="gpu\d3d_common.cpp">
       <Filter>gpu</Filter>
     </ClCompile>
   </ItemGroup>
@@ -219,7 +212,6 @@
     <ClInclude Include="texture_replacements.h" />
     <ClInclude Include="shader_cache_version.h" />
     <ClInclude Include="multitap.h" />
-    <ClInclude Include="gpu_hw_d3d12.h" />
     <ClInclude Include="gdb_protocol.h" />
     <ClInclude Include="host.h" />
     <ClInclude Include="host_settings.h" />
@@ -230,32 +222,11 @@
     <ClInclude Include="gpu\d3d11_device.h">
       <Filter>gpu</Filter>
     </ClInclude>
-    <ClInclude Include="gpu\d3d12_gpu_device.h">
-      <Filter>gpu</Filter>
-    </ClInclude>
     <ClInclude Include="gpu\gpu_device.h">
       <Filter>gpu</Filter>
     </ClInclude>
     <ClInclude Include="gpu\opengl_device.h">
       <Filter>gpu</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d12\shader_cache.h">
-      <Filter>gpu\d3d12</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d12\staging_texture.h">
-      <Filter>gpu\d3d12</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d12\stream_buffer.h">
-      <Filter>gpu\d3d12</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d12\util.h">
-      <Filter>gpu\d3d12</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d12\context.h">
-      <Filter>gpu\d3d12</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d12\descriptor_heap_manager.h">
-      <Filter>gpu\d3d12</Filter>
     </ClInclude>
     <ClInclude Include="gpu\gl\context_egl_wayland.h">
       <Filter>gpu\gl</Filter>
@@ -290,13 +261,7 @@
     <ClInclude Include="gpu\postprocessing_shadergen.h">
       <Filter>gpu</Filter>
     </ClInclude>
-    <ClInclude Include="gpu\imgui_impl_dx12.h">
-      <Filter>gpu</Filter>
-    </ClInclude>
     <ClInclude Include="gpu\gpu_texture.h">
-      <Filter>gpu</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d_shaders.h">
       <Filter>gpu</Filter>
     </ClInclude>
     <ClInclude Include="gpu\gpu_shader_cache.h">
@@ -313,9 +278,6 @@
     </ClInclude>
     <ClInclude Include="gpu\opengl_pipeline.h">
       <Filter>gpu</Filter>
-    </ClInclude>
-    <ClInclude Include="gpu\d3d12\texture.h">
-      <Filter>gpu\d3d12</Filter>
     </ClInclude>
     <ClInclude Include="gpu\vulkan_loader.h">
       <Filter>gpu</Filter>
@@ -347,13 +309,31 @@
     <ClInclude Include="gpu\window_info.h">
       <Filter>gpu</Filter>
     </ClInclude>
+    <ClInclude Include="gpu\d3d12_device.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12_pipeline.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12_texture.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12_stream_buffer.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12_builders.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d12_descriptor_heap_manager.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
+    <ClInclude Include="gpu\d3d_common.h">
+      <Filter>gpu</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="gpu">
       <UniqueIdentifier>{7b18fac1-ee2b-4816-8537-eb8f32d40ada}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="gpu\d3d12">
-      <UniqueIdentifier>{17c2f89b-5cf4-4d3a-9343-a03c1c668b85}</UniqueIdentifier>
     </Filter>
     <Filter Include="gpu\gl">
       <UniqueIdentifier>{e2aeacc6-65aa-4110-bef9-5f3e1fc0470e}</UniqueIdentifier>

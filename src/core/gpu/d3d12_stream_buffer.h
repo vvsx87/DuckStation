@@ -1,22 +1,25 @@
 // SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
-// Parts originally from Dolphin Emulator, also written by myself.
 
 #pragma once
 
 #include "common/types.h"
 #include "common/windows_headers.h"
+
 #include <d3d12.h>
 #include <deque>
 #include <utility>
 #include <wrl/client.h>
 
-namespace D3D12 {
-class StreamBuffer
+namespace D3D12MA {
+class Allocation;
+}
+
+class D3D12StreamBuffer
 {
 public:
-  StreamBuffer();
-  ~StreamBuffer();
+  D3D12StreamBuffer();
+  ~D3D12StreamBuffer();
 
   bool Create(u32 size);
 
@@ -48,11 +51,10 @@ private:
   u32 m_current_gpu_position = 0;
 
   Microsoft::WRL::ComPtr<ID3D12Resource> m_buffer;
+  Microsoft::WRL::ComPtr<D3D12MA::Allocation> m_allocation;
   D3D12_GPU_VIRTUAL_ADDRESS m_gpu_pointer = {};
   u8* m_host_pointer = nullptr;
 
   // List of fences and the corresponding positions in the buffer
   std::deque<std::pair<u64, u32>> m_tracked_fences;
 };
-
-} // namespace D3D12

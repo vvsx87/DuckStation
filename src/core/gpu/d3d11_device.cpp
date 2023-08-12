@@ -4,6 +4,7 @@
 #include "d3d11_device.h"
 #include "../host_settings.h"
 #include "../shader_cache_version.h"
+#include "d3d_common.h"
 #include "postprocessing_chain.h" // TODO: Remove me
 
 #include "common/align.h"
@@ -22,16 +23,15 @@
 
 Log_SetChannel(D3D11Device);
 
-#pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "dxgi.lib")
+// We need to synchronize instance creation because of adapter enumeration from the UI thread.
+static std::mutex s_instance_mutex;
 
 static constexpr std::array<DXGI_FORMAT, static_cast<u32>(GPUTexture::Format::MaxCount)> s_dxgi_mapping = {
   {DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B5G6R5_UNORM,
    DXGI_FORMAT_B5G5R5A1_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_D16_UNORM}};
 
 static constexpr std::array<float, 4> s_clear_color = {};
-
-static unsigned s_next_bad_shader_id = 1;
+static constexpr GPUTexture::Format s_swap_chain_format = GPUTexture::Format::RGBA8;
 
 static void SetD3DDebugObjectName(ID3D11DeviceChild* obj, const std::string_view& name)
 {
@@ -367,69 +367,43 @@ void D3D11Device::SetVSync(bool enabled)
 
 bool D3D11Device::CreateDevice(const std::string_view& adapter)
 {
+  std::unique_lock lock(s_instance_mutex);
+
   UINT create_flags = 0;
   if (m_debug_device)
     create_flags |= D3D11_CREATE_DEVICE_DEBUG;
 
-  ComPtr<IDXGIFactory> temp_dxgi_factory;
-  HRESULT hr = CreateDXGIFactory(IID_PPV_ARGS(temp_dxgi_factory.GetAddressOf()));
-  if (FAILED(hr))
-  {
-    Log_ErrorPrintf("Failed to create DXGI factory: 0x%08X", hr);
+  m_dxgi_factory = D3DCommon::CreateFactory(m_debug_device);
+  if (!m_dxgi_factory)
     return false;
-  }
 
-  u32 adapter_index;
-  if (!adapter.empty())
-  {
-    AdapterAndModeList adapter_info(GetAdapterAndModeList(temp_dxgi_factory.Get()));
-    for (adapter_index = 0; adapter_index < static_cast<u32>(adapter_info.adapter_names.size()); adapter_index++)
-    {
-      if (adapter == adapter_info.adapter_names[adapter_index])
-        break;
-    }
-    if (adapter_index == static_cast<u32>(adapter_info.adapter_names.size()))
-    {
-      // TODO: Log_Fmt
-      Log_WarningPrintf(
-        fmt::format("Could not find adapter '{}', using first ({})", adapter, adapter_info.adapter_names[0]).c_str());
-      adapter_index = 0;
-    }
-  }
-  else
-  {
-    Log_InfoPrintf("No adapter selected, using first.");
-    adapter_index = 0;
-  }
-
-  ComPtr<IDXGIAdapter> dxgi_adapter;
-  hr = temp_dxgi_factory->EnumAdapters(adapter_index, dxgi_adapter.GetAddressOf());
-  if (FAILED(hr))
-    Log_WarningPrintf("Failed to enumerate adapter %u, using default", adapter_index);
+  ComPtr<IDXGIAdapter1> dxgi_adapter = D3DCommon::GetAdapterByName(m_dxgi_factory.Get(), adapter);
 
   static constexpr std::array<D3D_FEATURE_LEVEL, 3> requested_feature_levels = {
     {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0}};
 
-  ComPtr<ID3D11Device> device;
-  ComPtr<ID3D11DeviceContext> context;
-  hr =
+  ComPtr<ID3D11Device> temp_device;
+  ComPtr<ID3D11DeviceContext> temp_context;
+  HRESULT hr =
     D3D11CreateDevice(dxgi_adapter.Get(), dxgi_adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr,
                       create_flags, requested_feature_levels.data(), static_cast<UINT>(requested_feature_levels.size()),
-                      D3D11_SDK_VERSION, device.GetAddressOf(), nullptr, context.GetAddressOf());
-  // we re-grab these later, see below
-  dxgi_adapter.Reset();
-  temp_dxgi_factory.Reset();
+                      D3D11_SDK_VERSION, temp_device.GetAddressOf(), nullptr, temp_context.GetAddressOf());
 
   if (FAILED(hr))
   {
     Log_ErrorPrintf("Failed to create D3D device: 0x%08X", hr);
     return false;
   }
-  else if (FAILED(hr = device.As(&m_device)) || FAILED(hr = context.As(&m_context)))
+  else if (FAILED(hr = temp_device.As(&m_device)) || FAILED(hr = temp_context.As(&m_context)))
   {
     Log_ErrorPrintf("Failed to get D3D11.1 device: 0x%08X", hr);
     return false;
   }
+
+  // we re-grab these later, see below
+  dxgi_adapter.Reset();
+  temp_context.Reset();
+  temp_device.Reset();
 
   if (m_debug_device && IsDebuggerPresent())
   {
@@ -447,31 +421,17 @@ bool D3D11Device::CreateDevice(const std::string_view& adapter)
     m_context.As(&m_annotation);
 #endif
 
-  // we need the specific factory for the device, otherwise MakeWindowAssociation() is flaky.
   ComPtr<IDXGIDevice> dxgi_device;
-  if (FAILED(m_device.As(&dxgi_device)) || FAILED(dxgi_device->GetParent(IID_PPV_ARGS(dxgi_adapter.GetAddressOf()))) ||
-      FAILED(dxgi_adapter->GetParent(IID_PPV_ARGS(m_dxgi_factory.GetAddressOf()))))
-  {
-    Log_WarningPrint("Failed to get parent adapter/device/factory");
-    return false;
-  }
-  ComPtr<IDXGIDevice1> dxgi_device1;
-  if (SUCCEEDED(dxgi_device.As(&dxgi_device1)))
-    dxgi_device1->SetMaximumFrameLatency(1);
+  if (SUCCEEDED(m_device.As(&dxgi_device)) &&
+      SUCCEEDED(dxgi_device->GetParent(IID_PPV_ARGS(dxgi_adapter.GetAddressOf()))))
+    Log_InfoPrintf("D3D Adapter: %s", D3DCommon::GetAdapterName(dxgi_adapter.Get()).c_str());
+  else
+    Log_ErrorPrint("Failed to obtain D3D adapter name.");
 
-  DXGI_ADAPTER_DESC adapter_desc;
-  if (SUCCEEDED(dxgi_adapter->GetDesc(&adapter_desc)))
-  {
-    char adapter_name_buffer[128];
-    const int name_length =
-      WideCharToMultiByte(CP_UTF8, 0, adapter_desc.Description, static_cast<int>(std::wcslen(adapter_desc.Description)),
-                          adapter_name_buffer, countof(adapter_name_buffer), 0, nullptr);
-    if (name_length >= 0)
-    {
-      adapter_name_buffer[name_length] = 0;
-      Log_InfoPrintf("D3D Adapter: %s", adapter_name_buffer);
-    }
-  }
+  BOOL allow_tearing_supported = false;
+  hr = m_dxgi_factory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing_supported,
+                                           sizeof(allow_tearing_supported));
+  m_allow_tearing_supported = (SUCCEEDED(hr) && allow_tearing_supported == TRUE);
 
   SetFeatures();
 
@@ -486,6 +446,8 @@ bool D3D11Device::CreateDevice(const std::string_view& adapter)
 
 void D3D11Device::DestroyDevice()
 {
+  std::unique_lock lock(s_instance_mutex);
+
   DestroyStagingBuffer();
   DestroyBuffers();
   m_context.Reset();
@@ -515,102 +477,14 @@ void D3D11Device::SetFeatures()
   m_features.supports_texture_buffers = true;
   m_features.texture_buffers_emulated_with_ssbo = false;
   m_features.gpu_timing = true;
-
-  m_allow_tearing_supported = false;
-  ComPtr<IDXGIFactory5> dxgi_factory5;
-  HRESULT hr = m_dxgi_factory.As(&dxgi_factory5);
-  if (SUCCEEDED(hr))
-  {
-    BOOL allow_tearing_supported = false;
-    hr = dxgi_factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing_supported,
-                                            sizeof(allow_tearing_supported));
-    if (SUCCEEDED(hr))
-      m_allow_tearing_supported = (allow_tearing_supported == TRUE);
-  }
-}
-
-bool D3D11Device::GetRequestedExclusiveFullscreenModeDesc(IDXGIFactory5* factory, const RECT& window_rect, u32 width,
-                                                          u32 height, float refresh_rate, DXGI_FORMAT format,
-                                                          DXGI_MODE_DESC* fullscreen_mode, IDXGIOutput** output)
-{
-  // We need to find which monitor the window is located on.
-  const Common::Rectangle<s32> client_rc_vec(window_rect.left, window_rect.top, window_rect.right, window_rect.bottom);
-
-  // The window might be on a different adapter to which we are rendering.. so we have to enumerate them all.
-  HRESULT hr;
-  ComPtr<IDXGIOutput> first_output, intersecting_output;
-
-  for (u32 adapter_index = 0; !intersecting_output; adapter_index++)
-  {
-    ComPtr<IDXGIAdapter1> adapter;
-    hr = factory->EnumAdapters1(adapter_index, adapter.GetAddressOf());
-    if (hr == DXGI_ERROR_NOT_FOUND)
-      break;
-    else if (FAILED(hr))
-      continue;
-
-    for (u32 output_index = 0;; output_index++)
-    {
-      ComPtr<IDXGIOutput> this_output;
-      DXGI_OUTPUT_DESC output_desc;
-      hr = adapter->EnumOutputs(output_index, this_output.GetAddressOf());
-      if (hr == DXGI_ERROR_NOT_FOUND)
-        break;
-      else if (FAILED(hr) || FAILED(this_output->GetDesc(&output_desc)))
-        continue;
-
-      const Common::Rectangle<s32> output_rc(output_desc.DesktopCoordinates.left, output_desc.DesktopCoordinates.top,
-                                             output_desc.DesktopCoordinates.right,
-                                             output_desc.DesktopCoordinates.bottom);
-      if (!client_rc_vec.Intersects(output_rc))
-      {
-        intersecting_output = std::move(this_output);
-        break;
-      }
-
-      // Fallback to the first monitor.
-      if (!first_output)
-        first_output = std::move(this_output);
-    }
-  }
-
-  if (!intersecting_output)
-  {
-    if (!first_output)
-    {
-      Log_ErrorPrintf("No DXGI output found. Can't use exclusive fullscreen.");
-      return false;
-    }
-
-    Log_WarningPrint("No DXGI output found for window, using first.");
-    intersecting_output = std::move(first_output);
-  }
-
-  DXGI_MODE_DESC request_mode = {};
-  request_mode.Width = width;
-  request_mode.Height = height;
-  request_mode.Format = format;
-  request_mode.RefreshRate.Numerator = static_cast<UINT>(std::floor(refresh_rate * 1000.0f));
-  request_mode.RefreshRate.Denominator = 1000u;
-
-  if (FAILED(hr = intersecting_output->FindClosestMatchingMode(&request_mode, fullscreen_mode, nullptr)) ||
-      request_mode.Format != format)
-  {
-    Log_ErrorPrintf("Failed to find closest matching mode, hr=%08X", hr);
-    return false;
-  }
-
-  *output = intersecting_output.Get();
-  intersecting_output->AddRef();
-  return true;
 }
 
 bool D3D11Device::CreateSwapChain()
 {
-  constexpr DXGI_FORMAT swap_chain_format = DXGI_FORMAT_R8G8B8A8_UNORM;
-
   if (m_window_info.type != WindowInfo::Type::Win32)
     return false;
+
+  const DXGI_FORMAT dxgi_format = s_dxgi_mapping[static_cast<u8>(s_swap_chain_format)];
 
   const HWND window_hwnd = reinterpret_cast<HWND>(m_window_info.window_handle);
   RECT client_rc{};
@@ -624,9 +498,9 @@ bool D3D11Device::CreateSwapChain()
     float fullscreen_refresh_rate;
     m_is_exclusive_fullscreen =
       GetRequestedExclusiveFullscreenMode(&fullscreen_width, &fullscreen_height, &fullscreen_refresh_rate) &&
-      GetRequestedExclusiveFullscreenModeDesc(m_dxgi_factory.Get(), client_rc, fullscreen_width, fullscreen_height,
-                                              fullscreen_refresh_rate, swap_chain_format, &fullscreen_mode,
-                                              fullscreen_output.GetAddressOf());
+      D3DCommon::GetRequestedExclusiveFullscreenModeDesc(m_dxgi_factory.Get(), client_rc, fullscreen_width,
+                                                         fullscreen_height, fullscreen_refresh_rate, dxgi_format,
+                                                         &fullscreen_mode, fullscreen_output.GetAddressOf());
   }
   else
   {
@@ -639,7 +513,7 @@ bool D3D11Device::CreateSwapChain()
   DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};
   swap_chain_desc.Width = static_cast<u32>(client_rc.right - client_rc.left);
   swap_chain_desc.Height = static_cast<u32>(client_rc.bottom - client_rc.top);
-  swap_chain_desc.Format = swap_chain_format;
+  swap_chain_desc.Format = dxgi_format;
   swap_chain_desc.SampleDesc.Count = 1;
   swap_chain_desc.BufferCount = 3;
   swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -741,6 +615,7 @@ bool D3D11Device::CreateSwapChainRTV()
 
   m_window_info.surface_width = backbuffer_desc.Width;
   m_window_info.surface_height = backbuffer_desc.Height;
+  m_window_info.surface_format = s_swap_chain_format;
   Log_VerbosePrintf("Swap chain buffer size: %ux%u", m_window_info.surface_width, m_window_info.surface_height);
 
   if (m_window_info.type == WindowInfo::Type::Win32)
@@ -912,85 +787,35 @@ void D3D11Device::EndPresent()
 
 GPUDevice::AdapterAndModeList D3D11Device::StaticGetAdapterAndModeList()
 {
-  ComPtr<IDXGIFactory> dxgi_factory;
-  HRESULT hr = CreateDXGIFactory(IID_PPV_ARGS(dxgi_factory.GetAddressOf()));
-  if (FAILED(hr))
-    return {};
+  AdapterAndModeList ret;
+  std::unique_lock lock(s_instance_mutex);
 
-  return GetAdapterAndModeList(dxgi_factory.Get());
-}
-
-GPUDevice::AdapterAndModeList D3D11Device::GetAdapterAndModeList(IDXGIFactory* dxgi_factory)
-{
-  AdapterAndModeList adapter_info;
-  ComPtr<IDXGIAdapter> current_adapter;
-  while (SUCCEEDED(dxgi_factory->EnumAdapters(static_cast<UINT>(adapter_info.adapter_names.size()),
-                                              current_adapter.ReleaseAndGetAddressOf())))
+  // Device shouldn't be torn down since we have the lock.
+  if (g_gpu_device && g_gpu_device->GetRenderAPI() == RenderAPI::D3D12)
   {
-    DXGI_ADAPTER_DESC adapter_desc;
-    std::string adapter_name;
-    if (SUCCEEDED(current_adapter->GetDesc(&adapter_desc)))
-    {
-      char adapter_name_buffer[128];
-      const int name_length = WideCharToMultiByte(CP_UTF8, 0, adapter_desc.Description,
-                                                  static_cast<int>(std::wcslen(adapter_desc.Description)),
-                                                  adapter_name_buffer, countof(adapter_name_buffer), 0, nullptr);
-      if (name_length >= 0)
-        adapter_name.assign(adapter_name_buffer, static_cast<size_t>(name_length));
-      else
-        adapter_name.assign("(Unknown)");
-    }
-    else
-    {
-      adapter_name.assign("(Unknown)");
-    }
-
-    if (adapter_info.fullscreen_modes.empty())
-    {
-      ComPtr<IDXGIOutput> output;
-      if (SUCCEEDED(current_adapter->EnumOutputs(0, &output)))
-      {
-        UINT num_modes = 0;
-        if (SUCCEEDED(output->GetDisplayModeList(DXGI_FORMAT_R8G8B8A8_UNORM, 0, &num_modes, nullptr)))
-        {
-          std::vector<DXGI_MODE_DESC> modes(num_modes);
-          if (SUCCEEDED(output->GetDisplayModeList(DXGI_FORMAT_R8G8B8A8_UNORM, 0, &num_modes, modes.data())))
-          {
-            for (const DXGI_MODE_DESC& mode : modes)
-            {
-              adapter_info.fullscreen_modes.push_back(GetFullscreenModeString(
-                mode.Width, mode.Height,
-                static_cast<float>(mode.RefreshRate.Numerator) / static_cast<float>(mode.RefreshRate.Denominator)));
-            }
-          }
-        }
-      }
-    }
-
-    // handle duplicate adapter names
-    if (std::any_of(adapter_info.adapter_names.begin(), adapter_info.adapter_names.end(),
-                    [&adapter_name](const std::string& other) { return (adapter_name == other); }))
-    {
-      std::string original_adapter_name = std::move(adapter_name);
-
-      u32 current_extra = 2;
-      do
-      {
-        adapter_name = StringUtil::StdStringFromFormat("%s (%u)", original_adapter_name.c_str(), current_extra);
-        current_extra++;
-      } while (std::any_of(adapter_info.adapter_names.begin(), adapter_info.adapter_names.end(),
-                           [&adapter_name](const std::string& other) { return (adapter_name == other); }));
-    }
-
-    adapter_info.adapter_names.push_back(std::move(adapter_name));
+    GetAdapterAndModeList(&ret, D3D11Device::GetInstance().m_dxgi_factory.Get());
+  }
+  else
+  {
+    ComPtr<IDXGIFactory5> factory = D3DCommon::CreateFactory(false);
+    if (factory)
+      GetAdapterAndModeList(&ret, factory.Get());
   }
 
-  return adapter_info;
+  return ret;
+}
+
+void D3D11Device::GetAdapterAndModeList(AdapterAndModeList* ret, IDXGIFactory5* factory)
+{
+  ret->adapter_names = D3DCommon::GetAdapterNames(factory);
+  ret->fullscreen_modes = D3DCommon::GetFullscreenModes(factory, {});
 }
 
 GPUDevice::AdapterAndModeList D3D11Device::GetAdapterAndModeList()
 {
-  return GetAdapterAndModeList(m_dxgi_factory.Get());
+  AdapterAndModeList ret;
+  GetAdapterAndModeList(&ret, m_dxgi_factory.Get());
+  return ret;
 }
 
 bool D3D11Device::CreateTimestampQueries()
@@ -1197,15 +1022,22 @@ std::unique_ptr<GPUSampler> D3D11Device::CreateSampler(const GPUSampler::Config&
     D3D11_TEXTURE_ADDRESS_CLAMP,  // ClampToEdge
     D3D11_TEXTURE_ADDRESS_BORDER, // ClampToBorder
   }};
+  static constexpr u8 filter_count = static_cast<u8>(GPUSampler::Filter::MaxCount);
+  static constexpr D3D11_FILTER filters[filter_count][filter_count][filter_count] = {
+    {
+      {D3D11_FILTER_MIN_MAG_MIP_POINT, D3D11_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT},
+      {D3D11_FILTER_MIN_LINEAR_MAG_MIP_POINT, D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT},
+    },
+    {
+      {D3D11_FILTER_MIN_MAG_POINT_MIP_LINEAR, D3D11_FILTER_MIN_POINT_MAG_MIP_LINEAR},
+      {D3D11_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR, D3D11_FILTER_MIN_MAG_MIP_LINEAR},
+    }};
 
   D3D11_SAMPLER_DESC desc = {};
   desc.AddressU = ta[static_cast<u8>(config.address_u.GetValue())];
   desc.AddressV = ta[static_cast<u8>(config.address_v.GetValue())];
   desc.AddressW = ta[static_cast<u8>(config.address_w.GetValue())];
-  desc.BorderColor[0] = static_cast<float>(config.border_color & 0xFF) / 255.0f;
-  desc.BorderColor[1] = static_cast<float>((config.border_color >> 8) & 0xFF) / 255.0f;
-  desc.BorderColor[2] = static_cast<float>((config.border_color >> 16) & 0xFF) / 255.0f;
-  desc.BorderColor[3] = static_cast<float>((config.border_color >> 24) & 0xFF) / 255.0f;
+  std::memcpy(desc.BorderColor, RGBA8ToFloat(config.border_color).data(), sizeof(desc.BorderColor));
   desc.MinLOD = static_cast<float>(config.min_lod);
   desc.MaxLOD = static_cast<float>(config.max_lod);
 
@@ -1216,17 +1048,6 @@ std::unique_ptr<GPUSampler> D3D11Device::CreateSampler(const GPUSampler::Config&
   }
   else
   {
-    static constexpr u8 filter_count = static_cast<u8>(GPUSampler::Filter::MaxCount);
-    static constexpr D3D11_FILTER filters[filter_count][filter_count][filter_count] = {
-      {
-        {D3D11_FILTER_MIN_MAG_MIP_POINT, D3D11_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT},
-        {D3D11_FILTER_MIN_LINEAR_MAG_MIP_POINT, D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT},
-      },
-      {
-        {D3D11_FILTER_MIN_MAG_POINT_MIP_LINEAR, D3D11_FILTER_MIN_POINT_MAG_MIP_LINEAR},
-        {D3D11_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR, D3D11_FILTER_MIN_MAG_MIP_LINEAR},
-      }};
-
     desc.Filter = filters[static_cast<u8>(config.mip_filter.GetValue())][static_cast<u8>(config.min_filter.GetValue())]
                          [static_cast<u8>(config.mag_filter.GetValue())];
     desc.MaxAnisotropy = 1;
@@ -1313,83 +1134,16 @@ std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromBinary(GPUShaderStage st
 std::unique_ptr<GPUShader> D3D11Device::CreateShaderFromSource(GPUShaderStage stage, const std::string_view& source,
                                                                std::vector<u8>* out_binary /* = nullptr */)
 {
-  const char* target;
-  switch (m_device->GetFeatureLevel())
-  {
-    case D3D_FEATURE_LEVEL_10_0:
-    {
-      static constexpr std::array<const char*, 4> targets = {{"vs_4_0", "ps_4_0", "cs_4_0"}};
-      target = targets[static_cast<int>(stage)];
-    }
-    break;
-
-    case D3D_FEATURE_LEVEL_10_1:
-    {
-      static constexpr std::array<const char*, 4> targets = {{"vs_4_1", "ps_4_1", "cs_4_1"}};
-      target = targets[static_cast<int>(stage)];
-    }
-    break;
-
-    case D3D_FEATURE_LEVEL_11_0:
-    {
-      static constexpr std::array<const char*, 4> targets = {{"vs_5_0", "ps_5_0", "cs_5_0"}};
-      target = targets[static_cast<int>(stage)];
-    }
-    break;
-
-    case D3D_FEATURE_LEVEL_11_1:
-    default:
-    {
-      static constexpr std::array<const char*, 4> targets = {{"vs_5_1", "ps_5_1", "cs_5_1"}};
-      target = targets[static_cast<int>(stage)];
-    }
-    break;
-  }
-
-  static constexpr UINT flags_non_debug = D3DCOMPILE_OPTIMIZATION_LEVEL3;
-  static constexpr UINT flags_debug = D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_DEBUG;
-
-  ComPtr<ID3DBlob> blob;
-  ComPtr<ID3DBlob> error_blob;
-  const HRESULT hr =
-    D3DCompile(source.data(), source.size(), "0", nullptr, nullptr, "main", target,
-               m_debug_device ? flags_debug : flags_non_debug, 0, blob.GetAddressOf(), error_blob.GetAddressOf());
-
-  std::string error_string;
-  if (error_blob)
-  {
-    error_string.append(static_cast<const char*>(error_blob->GetBufferPointer()), error_blob->GetBufferSize());
-    error_blob.Reset();
-  }
-
-  if (FAILED(hr))
-  {
-    Log_ErrorPrintf("Failed to compile '%s':\n%s", target, error_string.c_str());
-
-    auto fp = FileSystem::OpenManagedCFile(
-      GetShaderDumpPath(fmt::format("bad_shader_{}.txt", s_next_bad_shader_id++)).c_str(), "wb");
-    if (fp)
-    {
-      std::fwrite(source.data(), source.size(), 1, fp.get());
-      std::fprintf(fp.get(), "\n\nCompile as %s failed: %08X\n", target, hr);
-      std::fwrite(error_string.c_str(), error_string.size(), 1, fp.get());
-    }
-
+  std::optional<std::vector<u8>> bytecode =
+    D3DCommon::CompileShader(m_device->GetFeatureLevel(), m_debug_device, stage, source);
+  if (!bytecode.has_value())
     return {};
-  }
 
-  if (!error_string.empty())
-    Log_WarningPrintf("'%s' compiled with warnings:\n%s", target, error_string.c_str());
+  std::unique_ptr<GPUShader> ret = CreateShaderFromBinary(stage, bytecode.value());
+  if (ret && out_binary)
+    *out_binary = std::move(bytecode.value());
 
-  if (out_binary)
-  {
-    const size_t size = blob->GetBufferSize();
-    out_binary->resize(size);
-    std::memcpy(out_binary->data(), blob->GetBufferPointer(), size);
-  }
-
-  return CreateShaderFromBinary(
-    stage, gsl::span<const u8>(static_cast<const u8*>(blob->GetBufferPointer()), blob->GetBufferSize()));
+  return ret;
 }
 
 D3D11Pipeline::D3D11Pipeline(ComPtr<ID3D11RasterizerState> rs, ComPtr<ID3D11DepthStencilState> ds,

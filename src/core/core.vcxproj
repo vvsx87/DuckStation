@@ -34,14 +34,13 @@
     <ClCompile Include="digital_controller.cpp" />
     <ClCompile Include="game_database.cpp" />
     <ClCompile Include="gpu\d3d11_device.cpp" />
-    <ClCompile Include="gpu\d3d12\context.cpp" />
-    <ClCompile Include="gpu\d3d12\descriptor_heap_manager.cpp" />
-    <ClCompile Include="gpu\d3d12\shader_cache.cpp" />
-    <ClCompile Include="gpu\d3d12\staging_texture.cpp" />
-    <ClCompile Include="gpu\d3d12\stream_buffer.cpp" />
-    <ClCompile Include="gpu\d3d12\texture.cpp" />
-    <ClCompile Include="gpu\d3d12\util.cpp" />
-    <ClCompile Include="gpu\d3d12_gpu_device.cpp" />
+    <ClCompile Include="gpu\d3d12_builders.cpp" />
+    <ClCompile Include="gpu\d3d12_descriptor_heap_manager.cpp" />
+    <ClCompile Include="gpu\d3d12_device.cpp" />
+    <ClCompile Include="gpu\d3d12_pipeline.cpp" />
+    <ClCompile Include="gpu\d3d12_stream_buffer.cpp" />
+    <ClCompile Include="gpu\d3d12_texture.cpp" />
+    <ClCompile Include="gpu\d3d_common.cpp" />
     <ClCompile Include="gpu\gl\context.cpp" />
     <ClCompile Include="gpu\gl\context_egl.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
@@ -61,7 +60,6 @@
     </ClCompile>
     <ClCompile Include="gpu\gpu_device.cpp" />
     <ClCompile Include="gpu\gpu_texture.cpp" />
-    <ClCompile Include="gpu\imgui_impl_dx12.cpp" />
     <ClCompile Include="gpu\opengl_device.cpp" />
     <ClCompile Include="gpu\opengl_pipeline.cpp" />
     <ClCompile Include="gpu\opengl_stream_buffer.cpp" />
@@ -81,7 +79,6 @@
     <ClCompile Include="gpu\window_info.cpp" />
     <ClCompile Include="gpu_backend.cpp" />
     <ClCompile Include="gpu_commands.cpp" />
-    <ClCompile Include="gpu_hw_d3d12.cpp" />
     <ClCompile Include="gpu_hw_shadergen.cpp" />
     <ClCompile Include="gpu_sw.cpp" />
     <ClCompile Include="gpu_sw_backend.cpp" />
@@ -144,15 +141,13 @@
     <ClInclude Include="digital_controller.h" />
     <ClInclude Include="game_database.h" />
     <ClInclude Include="gpu\d3d11_device.h" />
-    <ClInclude Include="gpu\d3d12\texture.h" />
-    <ClInclude Include="gpu\d3d_shaders.h" />
-    <ClInclude Include="gpu\d3d12\context.h" />
-    <ClInclude Include="gpu\d3d12\descriptor_heap_manager.h" />
-    <ClInclude Include="gpu\d3d12\shader_cache.h" />
-    <ClInclude Include="gpu\d3d12\staging_texture.h" />
-    <ClInclude Include="gpu\d3d12\stream_buffer.h" />
-    <ClInclude Include="gpu\d3d12\util.h" />
-    <ClInclude Include="gpu\d3d12_gpu_device.h" />
+    <ClInclude Include="gpu\d3d12_builders.h" />
+    <ClInclude Include="gpu\d3d12_descriptor_heap_manager.h" />
+    <ClInclude Include="gpu\d3d12_device.h" />
+    <ClInclude Include="gpu\d3d12_pipeline.h" />
+    <ClInclude Include="gpu\d3d12_stream_buffer.h" />
+    <ClInclude Include="gpu\d3d12_texture.h" />
+    <ClInclude Include="gpu\d3d_common.h" />
     <ClInclude Include="gpu\gl\context.h" />
     <ClInclude Include="gpu\gl\context_agl.h">
       <ExcludedFromBuild>true</ExcludedFromBuild>
@@ -175,7 +170,6 @@
     </ClInclude>
     <ClInclude Include="gpu\gpu_device.h" />
     <ClInclude Include="gpu\gpu_texture.h" />
-    <ClInclude Include="gpu\imgui_impl_dx12.h" />
     <ClInclude Include="gpu\opengl_device.h" />
     <ClInclude Include="gpu\opengl_loader.h" />
     <ClInclude Include="gpu\opengl_pipeline.h" />
@@ -196,7 +190,6 @@
     <ClInclude Include="gpu\vulkan_texture.h" />
     <ClInclude Include="gpu\window_info.h" />
     <ClInclude Include="gpu_backend.h" />
-    <ClInclude Include="gpu_hw_d3d12.h" />
     <ClInclude Include="gpu_hw_shadergen.h" />
     <ClInclude Include="gpu_sw.h" />
     <ClInclude Include="gpu_sw_backend.h" />

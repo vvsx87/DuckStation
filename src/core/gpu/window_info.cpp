@@ -25,8 +25,6 @@ void WindowInfo::SetSurfaceless()
 #include "common/windows_headers.h"
 #include <dwmapi.h>
 
-#pragma comment(lib, "Dwmapi.lib")
-
 static bool GetRefreshRateFromDWM(HWND hwnd, float* refresh_rate)
 {
   BOOL composition_enabled;
