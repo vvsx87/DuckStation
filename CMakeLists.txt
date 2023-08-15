@@ -23,6 +23,7 @@ endif()
 # Renderer options.
 option(ENABLE_OPENGL "Build with OpenGL renderer" ON)
 option(ENABLE_VULKAN "Build with Vulkan renderer" ON)
+option(ENABLE_NEWREC "Build with experimental new dynarec (needed for RISC-V)" ON)
 
 # Global options.
 if(NOT ANDROID)

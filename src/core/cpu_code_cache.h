@@ -134,7 +134,7 @@ using SingleBlockDispatcherFunction = void (*)(const CodeBlock::HostCodePointer)
 FastMapTable* GetFastMapPointer();
 #endif
 
-#if defined(ENABLE_RECOMPILER)
+#if defined(ENABLE_RECOMPILER) || defined(ENABLE_NEWREC)
 JitCodeBuffer& GetCodeBuffer();
 #endif
 

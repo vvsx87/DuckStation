@@ -8,6 +8,7 @@
 #include "cpu_core.h"
 #include "cpu_core_private.h"
 #include "cpu_disasm.h"
+#include "cpu_newrec_private.h"
 #include "cpu_recompiler_types.h"
 #include "settings.h"
 #include "system.h"
@@ -29,7 +30,7 @@ static constexpr u32 RECOMPILE_FRAMES_TO_FALL_BACK_TO_INTERPRETER = 100;
 static constexpr u32 RECOMPILE_COUNT_TO_FALL_BACK_TO_INTERPRETER = 20;
 static constexpr u32 INVALIDATE_THRESHOLD_TO_DISABLE_LINKING = 10;
 
-#ifdef ENABLE_RECOMPILER
+#if defined(ENABLE_RECOMPILER) || defined(ENABLE_NEWREC)
 
 // Currently remapping the code buffer doesn't work in macOS or Haiku.
 #if !defined(__HAIKU__) && !defined(__APPLE__)
@@ -247,8 +248,8 @@ void Initialize()
 {
   Assert(s_blocks.empty());
 
-#ifdef ENABLE_RECOMPILER
-  if (g_settings.IsUsingRecompiler())
+#if defined(ENABLE_RECOMPILER) || defined(ENABLE_NEWREC)
+  if (g_settings.IsUsingAnyRecompiler())
   {
 #ifdef USE_STATIC_CODE_BUFFER
     const bool has_buffer = s_code_buffer.Initialize(s_code_storage, sizeof(s_code_storage),
@@ -263,7 +264,15 @@ void Initialize()
   }
 #endif
 
-  AllocateFastMap();
+#ifdef ENABLE_NEWREC
+  if (g_settings.IsUsingNewRec())
+  {
+    if (!CPU::NewRec::Initialize())
+      Panic("Failed to initialize newrec");
+
+    return;
+  }
+#endif
 
 #ifdef ENABLE_RECOMPILER
   if (g_settings.IsUsingRecompiler())
@@ -297,7 +306,12 @@ void ClearState()
 
 void Shutdown()
 {
+#ifdef ENABLE_NEWREC
+  NewRec::Shutdown();
+#endif
+
   ClearState();
+
 #ifdef ENABLE_RECOMPILER
   ShutdownFastmem();
   FreeFastMap();
@@ -455,6 +469,12 @@ FastMapTable* GetFastMapPointer()
       break;
 #endif
 
+#ifdef ENABLE_NEWREC
+    case CPUExecutionMode::NewRec:
+      CPU::NewRec::Execute();
+      break;
+#endif
+
     default:
     {
       if (g_settings.gpu_pgxp_enable)
@@ -473,7 +493,7 @@ FastMapTable* GetFastMapPointer()
   }
 }
 
-#if defined(ENABLE_RECOMPILER)
+#if defined(ENABLE_RECOMPILER) || defined(ENABLE_NEWREC)
 
 JitCodeBuffer& GetCodeBuffer()
 {
@@ -484,16 +504,18 @@ JitCodeBuffer& GetCodeBuffer()
 
 void Reinitialize()
 {
-  ClearState();
+#ifdef ENABLE_NEWREC
+  NewRec::Shutdown();
+#endif
 
 #ifdef ENABLE_RECOMPILER
   ShutdownFastmem();
 #endif
 
-#if defined(ENABLE_RECOMPILER)
+#if defined(ENABLE_RECOMPILER) || defined(ENABLE_NEWREC)
   s_code_buffer.Destroy();
 
-  if (g_settings.IsUsingRecompiler())
+  if (g_settings.IsUsingAnyRecompiler())
   {
 #ifdef USE_STATIC_CODE_BUFFER
     if (!s_code_buffer.Initialize(s_code_storage, sizeof(s_code_storage), RECOMPILER_FAR_CODE_CACHE_SIZE,
@@ -504,6 +526,14 @@ void Reinitialize()
     {
       Panic("Failed to initialize code space");
     }
+  }
+#endif
+
+#ifdef ENABLE_NEWREC
+  if (g_settings.IsUsingNewRec())
+  {
+    if (!CPU::NewRec::Initialize())
+      Panic("Failed to reinitialize NewRec");
   }
 #endif
 
@@ -522,6 +552,15 @@ void Reinitialize()
 
 void Flush()
 {
+#ifdef ENABLE_NEWREC
+  if (g_settings.IsUsingNewRec())
+  {
+    s_code_buffer.Reset();
+    NewRec::Reset();
+    return;
+  }
+#endif
+
   ClearState();
 #ifdef ENABLE_RECOMPILER
   if (g_settings.IsUsingRecompiler())
@@ -929,6 +968,14 @@ static void InvalidateBlock(CodeBlock* block, bool allow_frame_invalidation)
 
 void InvalidateBlocksWithPageIndex(u32 page_index)
 {
+#ifdef ENABLE_NEWREC
+  if (g_settings.IsUsingNewRec())
+  {
+    NewRec::InvalidateBlocksWithPageNumber(page_index);
+    return;
+  }
+#endif
+
   DebugAssert(page_index < Bus::RAM_8MB_CODE_PAGE_COUNT);
   auto& blocks = m_ram_block_map[page_index];
   for (CodeBlock* block : blocks)
@@ -941,6 +988,14 @@ void InvalidateBlocksWithPageIndex(u32 page_index)
 
 void InvalidateAll()
 {
+#ifdef ENABLE_NEWREC
+  if (g_settings.IsUsingNewRec())
+  {
+    NewRec::InvalidateAllRAMBlocks();
+    return;
+  }
+#endif
+
   for (auto& it : s_blocks)
   {
     CodeBlock* block = it.second;

@@ -662,17 +662,6 @@ void Settings::FixIncompatibleSettings(bool display_osd_messages)
     g_settings.rewind_enable = false;
   }
 
-  if (g_settings.IsRunaheadEnabled())
-  {
-    // Block linking is good for performance, but hurts when regularly loading (i.e. runahead), since everything has to
-    // be unlinked. Which would be thousands of blocks.
-    if (g_settings.cpu_recompiler_block_linking)
-    {
-      Log_WarningPrintf("Disabling block linking due to runahead.");
-      g_settings.cpu_recompiler_block_linking = false;
-    }
-  }
-
   // if challenge mode is enabled, disable things like rewind since they use save states
   if (Achievements::IsHardcoreModeActive())
   {
@@ -834,11 +823,13 @@ const char* Settings::GetDiscRegionDisplayName(DiscRegion region)
   return Host::TranslateToCString("DiscRegion", s_disc_region_display_names[static_cast<int>(region)]);
 }
 
-static constexpr const std::array s_cpu_execution_mode_names = {"Interpreter", "CachedInterpreter", "Recompiler"};
+static constexpr const std::array s_cpu_execution_mode_names = {"Interpreter", "CachedInterpreter", "Recompiler",
+                                                                "NewRec"};
 static constexpr const std::array s_cpu_execution_mode_display_names = {
   TRANSLATE_NOOP("CPUExecutionMode", "Interpreter (Slowest)"),
   TRANSLATE_NOOP("CPUExecutionMode", "Cached Interpreter (Faster)"),
-  TRANSLATE_NOOP("CPUExecutionMode", "Recompiler (Fastest)")};
+  TRANSLATE_NOOP("CPUExecutionMode", "Recompiler (Fastest)"),
+  TRANSLATE_NOOP("CPUExecutionMode", "New Recompiler (Experimental)")};
 
 std::optional<CPUExecutionMode> Settings::ParseCPUExecutionMode(const char* str)
 {
