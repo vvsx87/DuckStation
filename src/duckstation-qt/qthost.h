@@ -187,6 +187,10 @@ public Q_SLOTS:
   void setCheatEnabled(quint32 index, bool enabled);
   void applyCheat(quint32 index);
   void reloadPostProcessingShaders();
+  void createNetplaySession(const QString& nickname, qint32 port, qint32 max_players, const QString& password,
+                            int inputdelay, bool traversal);
+  void joinNetplaySession(const QString& nickname, const QString& hostname, qint32 port, const QString& password,
+                          bool spectating, int inputdelay, bool traversal, const QString& hostcode);
   void clearInputBindStateFromSource(InputBindingKey key);
 
 private Q_SLOTS:
@@ -233,6 +237,7 @@ private:
   float m_last_video_fps = std::numeric_limits<float>::infinity();
   u32 m_last_render_width = std::numeric_limits<u32>::max();
   u32 m_last_render_height = std::numeric_limits<u32>::max();
+  u32 m_last_ping = std::numeric_limits<u32>::max();
   GPURenderer m_last_renderer = GPURenderer::Count;
 };
 

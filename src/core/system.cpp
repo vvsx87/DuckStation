@@ -33,6 +33,7 @@
 #include "mdec.h"
 #include "memory_card.h"
 #include "multitap.h"
+#include "netplay.h"
 #include "pad.h"
 #include "pcdrv.h"
 #include "pgxp.h"
@@ -92,7 +93,8 @@ static void ClearRunningGame();
 static void DestroySystem();
 static std::string GetMediaPathFromSaveState(const char* path);
 static bool DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display, bool is_memory_state);
-static void DoRunFrame();
+static void WrappedRunFrame();
+static void RunFramesToNow();
 static bool CreateGPU(GPURenderer renderer);
 static bool SaveUndoLoadState();
 
@@ -106,6 +108,7 @@ static void DoRunahead();
 static void DoMemorySaveStates();
 
 static bool Initialize(bool force_software_renderer);
+static bool FastForwardToFirstFrame();
 
 static bool UpdateGameSettingsLayer();
 static void UpdateRunningGame(const char* path, CDImage* image, bool booting);
@@ -1347,6 +1350,9 @@ bool System::BootSystem(SystemBootParameters parameters)
   if (parameters.load_image_to_ram || g_settings.cdrom_load_image_to_ram)
     CDROM::PrecacheMedia();
 
+  if (parameters.fast_forward_to_first_frame)
+    FastForwardToFirstFrame();
+
   if (g_settings.audio_dump_on_boot)
     StartDumpingAudio();
 
@@ -1551,14 +1557,32 @@ void System::ClearRunningGame()
 #endif
 }
 
+bool System::FastForwardToFirstFrame()
+{
+  // If we're taking more than 60 seconds to load the game, oof..
+  static constexpr u32 MAX_FRAMES_TO_SKIP = 30 * 60;
+  const u32 current_frame_number = s_frame_number;
+  const u32 current_internal_frame_number = s_internal_frame_number;
+
+  SPU::SetAudioOutputMuted(true);
+  while (s_internal_frame_number == current_internal_frame_number &&
+         (s_frame_number - current_frame_number) <= MAX_FRAMES_TO_SKIP)
+  {
+    System::RunFrame();
+  }
+  SPU::SetAudioOutputMuted(false);
+
+  return (s_internal_frame_number != current_internal_frame_number);
+}
+
 void System::Execute()
 {
-  while (System::IsRunning())
+  while (IsRunning())
   {
     if (s_display_all_frames)
-      System::RunFrame();
+      WrappedRunFrame();
     else
-      System::RunFrames();
+      RunFramesToNow();
 
     // this can shut us down
     Host::PumpMessagesOnCPUThread();
@@ -1571,13 +1595,7 @@ void System::Execute()
       PauseSystem(true);
     }
 
-    const bool skip_present = g_host_display->ShouldSkipDisplayingFrame();
-    Host::RenderDisplay(skip_present);
-    if (!skip_present && g_host_display->IsGPUTimingEnabled())
-    {
-      s_accumulated_gpu_time += g_host_display->GetAndResetAccumulatedGPUTime();
-      s_presents_since_last_update++;
-    }
+    PresentFrame();
 
     if (s_throttler_enabled)
       System::Throttle();
@@ -1586,6 +1604,17 @@ void System::Execute()
     // to start-of-frame, not end-of-frame to end-of-frame (will be noisy due to different
     // amounts of computation happening in each frame).
     System::UpdatePerformanceCounters();
+  }
+}
+
+void System::PresentFrame()
+{
+  const bool skip_present = g_host_display->ShouldSkipDisplayingFrame();
+  Host::RenderDisplay(skip_present);
+  if (!skip_present && g_host_display->IsGPUTimingEnabled())
+  {
+    s_accumulated_gpu_time += g_host_display->GetAndResetAccumulatedGPUTime();
+    s_presents_since_last_update++;
   }
 }
 
@@ -2188,7 +2217,7 @@ void System::SingleStepCPU()
   g_gpu->ResetGraphicsAPIState();
 }
 
-void System::DoRunFrame()
+void System::RunFrame()
 {
   g_gpu->RestoreGraphicsAPIState();
 
@@ -2228,7 +2257,7 @@ void System::DoRunFrame()
   g_gpu->ResetGraphicsAPIState();
 }
 
-void System::RunFrame()
+void System::WrappedRunFrame()
 {
   if (s_rewind_load_counter >= 0)
   {
@@ -2239,7 +2268,7 @@ void System::RunFrame()
   if (s_runahead_frames > 0)
     DoRunahead();
 
-  DoRunFrame();
+  RunFrame();
 
   s_next_frame_time += s_frame_period;
 
@@ -2272,6 +2301,9 @@ void System::UpdateThrottlePeriod()
   }
 
   ResetThrottler();
+
+  if (Netplay::IsActive())
+    Netplay::UpdateThrottlePeriod();
 }
 
 void System::ResetThrottler()
@@ -2301,7 +2333,7 @@ void System::Throttle()
 #endif
 }
 
-void System::RunFrames()
+void System::RunFramesToNow()
 {
   // If we're running more than this in a single loop... we're in for a bad time.
   const u32 max_frames_to_run = 2;
@@ -2313,7 +2345,7 @@ void System::RunFrames()
     if (value < s_next_frame_time)
       break;
 
-    RunFrame();
+    WrappedRunFrame();
     frames_run++;
 
     value = Common::Timer::GetCurrentValue();
@@ -3722,7 +3754,7 @@ void System::DoRunahead()
 
     while (frames_to_run > 0)
     {
-      DoRunFrame();
+      RunFrame();
       SaveRunaheadState();
       frames_to_run--;
     }
@@ -3779,6 +3811,9 @@ void System::ShutdownSystem(bool save_resume_state)
 {
   if (!IsValid())
     return;
+
+  if (Netplay::IsActive())
+    Netplay::SystemDestroyed();
 
   if (save_resume_state)
     SaveResumeState();

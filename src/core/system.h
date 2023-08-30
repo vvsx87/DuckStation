@@ -3,6 +3,7 @@
 
 #pragma once
 #include "common/timer.h"
+#include "netplay.h"
 #include "settings.h"
 #include "timing_event.h"
 #include "types.h"
@@ -45,6 +46,7 @@ struct SystemBootParameters
   u32 media_playlist_index = 0;
   bool load_image_to_ram = false;
   bool force_software_renderer = false;
+  bool fast_forward_to_first_frame = false;
 };
 
 struct SaveStateInfo
@@ -254,7 +256,7 @@ bool RecreateGPU(GPURenderer renderer, bool force_recreate_display = false, bool
 
 void SingleStepCPU();
 void RunFrame();
-void RunFrames();
+void PresentFrame();
 
 /// Sets target emulation speed.
 float GetTargetSpeed();
@@ -519,4 +521,7 @@ bool IsFullscreen();
 
 /// Alters fullscreen state of hosting application.
 void SetFullscreen(bool enabled);
+// netplay
+void OnNetplayMessage(std::string message);
+void ClearNetplayMessages();
 } // namespace Host

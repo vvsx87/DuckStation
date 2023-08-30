@@ -168,6 +168,9 @@ private Q_SLOTS:
   void openCPUDebugger();
   void onCPUDebuggerClosed();
 
+  void onCreateNetplaySessionClicked();
+  void onJoinNetplaySessionClicked();
+
 protected:
   void showEvent(QShowEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
