@@ -51,6 +51,7 @@
 #ifdef _WIN32
 #include "common/windows_headers.h"
 #include <Dbt.h>
+#include <WinSock2.h>
 #endif
 
 Log_SetChannel(MainWindow);
@@ -106,6 +107,12 @@ MainWindow::MainWindow() : QMainWindow(nullptr)
 #if !defined(_WIN32) && !defined(__APPLE__)
   s_use_central_widget = DisplayContainer::isRunningOnWayland();
 #endif
+
+#if defined(_WIN32)
+  // Setup WinSock
+  WSADATA wd = {};
+  WSAStartup(MAKEWORD(2, 2), &wd);
+#endif
 }
 
 MainWindow::~MainWindow()
@@ -120,6 +127,8 @@ MainWindow::~MainWindow()
 
 #ifdef _WIN32
   unregisterForDeviceNotifications();
+  // Cleanup WinSock
+  WSACleanup();
 #endif
 #ifdef __APPLE__
   FrontendCommon::RemoveThemeChangeHandler(this);
