@@ -86,7 +86,7 @@ static bool ReadExecutableFromImage(ISOReader& iso, std::string* out_executable_
 
 static void StallCPU(TickCount ticks);
 
-static bool LoadBIOS();
+static bool LoadBIOS(const std::string& override_bios_path);
 static void InternalReset();
 static void ClearRunningGame();
 static void DestroySystem();
@@ -138,6 +138,7 @@ static std::string s_running_game_serial;
 static std::string s_running_game_title;
 static System::GameHash s_running_game_hash;
 static bool s_running_unknown_game;
+static bool s_was_fast_booted;
 
 static float s_throttle_frequency = 60.0f;
 static float s_target_speed = 1.0f;
@@ -327,6 +328,11 @@ System::GameHash System::GetGameHash()
 bool System::IsRunningUnknownGame()
 {
   return s_running_unknown_game;
+}
+
+bool System::WasFastBooted()
+{
+  return s_was_fast_booted;
 }
 
 const BIOS::ImageInfo* System::GetBIOSImageInfo()
@@ -1241,7 +1247,7 @@ bool System::BootSystem(SystemBootParameters parameters)
 #endif
 
   // Load BIOS image.
-  if (!LoadBIOS())
+  if (!LoadBIOS(parameters.override_bios))
   {
     s_state = State::Shutdown;
     ClearRunningGame();
@@ -1293,9 +1299,15 @@ bool System::BootSystem(SystemBootParameters parameters)
                                                                         g_settings.bios_patch_fast_boot))
   {
     if (s_bios_image_info && s_bios_image_info->patch_compatible)
+    {
+      // TODO: Fast boot without patches...
       BIOS::PatchBIOSFastBoot(Bus::g_bios, Bus::BIOS_SIZE);
+      s_was_fast_booted = true;
+    }
     else
+    {
       Log_ErrorPrintf("Not patching fast boot, as BIOS is not patch compatible.");
+    }
   }
 
   // Good to go.
@@ -1517,6 +1529,7 @@ void System::DestroySystem()
 
   s_bios_hash = {};
   s_bios_image_info = nullptr;
+  s_was_fast_booted = false;
 
   Host::OnSystemDestroyed();
 }
@@ -1794,9 +1807,10 @@ bool System::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_di
   return !sw.HasError();
 }
 
-bool System::LoadBIOS()
+bool System::LoadBIOS(const std::string& override_bios_path)
 {
-  std::optional<BIOS::Image> bios_image(BIOS::GetBIOSImage(s_region));
+  std::optional<BIOS::Image> bios_image(
+    override_bios_path.empty() ? BIOS::GetBIOSImage(s_region) : FileSystem::ReadBinaryFile(override_bios_path.c_str()));
   if (!bios_image.has_value())
   {
     Host::ReportFormattedErrorAsync("Error", Host::TranslateString("System", "Failed to load %s BIOS."),
