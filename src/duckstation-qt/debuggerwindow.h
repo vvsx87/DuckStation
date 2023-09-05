@@ -59,6 +59,8 @@ private Q_SLOTS:
   void onMemorySearchTriggered();
   void onMemorySearchStringChanged(const QString&);
 
+  void onThreadsItemDoubleClicked(const QTreeWidgetItem* item, int column);
+  void updateThreadsList();
 
 private:
   void setupAdditionalUi();

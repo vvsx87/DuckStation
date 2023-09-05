@@ -60,6 +60,7 @@
     <ClCompile Include="hotkeys.cpp" />
     <ClCompile Include="gpu_shadergen.cpp" />
     <ClCompile Include="pch.cpp" />
+    <ClCompile Include="cpu_stack_walk.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="types.h" />
@@ -124,5 +125,6 @@
     <ClInclude Include="shader_cache_version.h" />
     <ClInclude Include="gpu_shadergen.h" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="cpu_stack_walk.h" />
   </ItemGroup>
 </Project>

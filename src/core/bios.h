@@ -1,9 +1,10 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>.
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>.
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
 #include "types.h"
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -88,4 +89,22 @@ std::vector<std::pair<std::string, const BIOS::ImageInfo*>> FindBIOSImagesInDire
 
 /// Returns true if any BIOS images are found in the configured BIOS directory.
 bool HasAnyBIOSImages();
+
+#pragma pack(push, 1)
+struct ThreadControlBlock
+{
+  u32 status;
+  u32 unused;
+  u32 regs[32];
+  u32 epc;
+  u32 hi;
+  u32 lo;
+  u32 sr;
+  u32 cause;
+  u32 unused2[9];
+};
+#pragma pack(pop)
+
+std::span<const ThreadControlBlock> GetTCBs();
+const ThreadControlBlock* GetCurrentThreadTCB();
 } // namespace BIOS

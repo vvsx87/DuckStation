@@ -1,12 +1,18 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "debuggerwindow.h"
-#include "common/assert.h"
-#include "core/cpu_core_private.h"
 #include "debuggermodels.h"
 #include "qthost.h"
 #include "qtutils.h"
+
+#include "core/bios.h"
+#include "core/bus.h"
+#include "core/cpu_core_private.h"
+#include "core/cpu_stack_walk.h"
+
+#include "common/assert.h"
+
 #include <QtCore/QSignalBlocker>
 #include <QtGui/QFontDatabase>
 #include <QtWidgets/QFileDialog>
@@ -57,6 +63,7 @@ void DebuggerWindow::refreshAll()
   m_registers_model->invalidateView();
   m_stack_model->invalidateView();
   m_ui.memoryView->repaint();
+  updateThreadsList();
 
   m_code_model->setPC(CPU::g_state.pc);
   scrollToPC();
@@ -70,6 +77,7 @@ void DebuggerWindow::scrollToPC()
 void DebuggerWindow::scrollToCodeAddress(VirtualMemoryAddress address)
 {
   m_code_model->ensureAddressVisible(address);
+  m_code_model->setHighlightAddress(address);
 
   int row = m_code_model->getRowForAddress(address);
   if (row >= 0)
@@ -388,6 +396,23 @@ void DebuggerWindow::onMemorySearchStringChanged(const QString&)
   m_next_memory_search_address = 0;
 }
 
+void DebuggerWindow::onThreadsItemDoubleClicked(const QTreeWidgetItem* item, int column)
+{
+  if (column != 0)
+    return;
+
+  const QVariant vdata = item->data(0, Qt::UserRole);
+  if (!vdata.isValid())
+    return;
+
+  bool okay;
+  uint addr = vdata.toUInt(&okay);
+  if (!okay)
+    return;
+
+  scrollToCodeAddress(addr);
+}
+
 void DebuggerWindow::closeEvent(QCloseEvent* event)
 {
   g_emu_thread->disconnect(this);
@@ -450,6 +475,8 @@ void DebuggerWindow::connectSignals()
 
   connect(m_ui.memorySearch, &QPushButton::clicked, this, &DebuggerWindow::onMemorySearchTriggered);
   connect(m_ui.memorySearchString, &QLineEdit::textChanged, this, &DebuggerWindow::onMemorySearchStringChanged);
+
+  connect(m_ui.threadsView, &QTreeWidget::itemDoubleClicked, this, &DebuggerWindow::onThreadsItemDoubleClicked);
 }
 
 void DebuggerWindow::disconnectSignals()
@@ -612,5 +639,50 @@ void DebuggerWindow::refreshBreakpointList()
     item->setText(1, QString::asprintf("0x%08X", bp.address));
     item->setText(2, QString::asprintf("%u", bp.hit_count));
     m_ui.breakpointsWidget->addTopLevelItem(item);
+  }
+}
+
+void DebuggerWindow::updateThreadsList()
+{
+  const std::span<const BIOS::ThreadControlBlock> tcbs = BIOS::GetTCBs();
+  const BIOS::ThreadControlBlock* current_tcb = BIOS::GetCurrentThreadTCB();
+
+  while (m_ui.threadsView->topLevelItemCount() > 0)
+    delete m_ui.threadsView->takeTopLevelItem(0);
+
+  for (u32 i = 0; i < tcbs.size(); i++)
+  {
+    const BIOS::ThreadControlBlock& tcb = tcbs[i];
+    const bool is_current = (&tcb == current_tcb);
+    const bool is_unused = (tcb.status & 0x4000) != 0x4000;
+
+    // This is awful.
+    // TODO: Only walk stack when it's the current thread...
+    QTreeWidgetItem* item = new QTreeWidgetItem(m_ui.threadsView);
+    item->setText(0,
+                  QString::asprintf("Thread %08X%s", static_cast<u32>(reinterpret_cast<const u8*>(&tcb) - Bus::g_ram),
+                                    is_current ? " [current]" : (is_unused ? "[unused]" : "")));
+    if (is_unused)
+      continue;
+
+    const u32 pc = is_current ? CPU::g_state.pc : tcb.regs[static_cast<u8>(CPU::Reg::ra)];
+    const u32 ra = is_current ? CPU::g_state.regs.ra : tcb.regs[static_cast<u8>(CPU::Reg::ra)];
+    const u32 sp = is_current ? CPU::g_state.regs.sp : tcb.regs[static_cast<u8>(CPU::Reg::sp)];
+
+    if (is_current)
+    {
+      const std::vector<MipsStackWalk::StackFrame> stack = MipsStackWalk::Walk(pc, ra, sp, 0xFFFFFFFFu, 0xFFFFFFFFu);
+      for (const MipsStackWalk::StackFrame& frame : stack)
+      {
+        QTreeWidgetItem* framei = new QTreeWidgetItem(item);
+        framei->setData(0, Qt::UserRole, QVariant(frame.pc));
+        framei->setText(0, QString::asprintf("0x%08X", frame.pc));
+      }
+    }
+    else
+    {
+      QTreeWidgetItem* frame = new QTreeWidgetItem(item);
+      frame->setText(0, QString::asprintf("0x%08X", pc));
+    }
   }
 }

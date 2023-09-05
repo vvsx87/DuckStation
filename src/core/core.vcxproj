@@ -31,6 +31,7 @@
     <ClCompile Include="cpu_recompiler_register_cache.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="cpu_stack_walk.cpp" />
     <ClCompile Include="cpu_types.cpp" />
     <ClCompile Include="digital_controller.cpp" />
     <ClCompile Include="fullscreen_ui.cpp" />
@@ -101,6 +102,7 @@
     <ClInclude Include="cpu_recompiler_types.h">
       <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
     </ClInclude>
+    <ClInclude Include="cpu_stack_walk.h" />
     <ClInclude Include="digital_controller.h" />
     <ClInclude Include="fullscreen_ui.h" />
     <ClInclude Include="game_database.h" />

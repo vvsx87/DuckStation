@@ -140,6 +140,8 @@ QVariant DebuggerCodeModel::data(const QModelIndex& index, int role /*= Qt::Disp
     //       return QApplication::palette().toolTipBase();
     if (address == m_last_pc)
       return QColor(100, 100, 0);
+    else if (address == m_last_highlight_address)
+      return QColor(80, 80, 80);
     else
       return QVariant();
   }
@@ -242,6 +244,16 @@ void DebuggerCodeModel::setPC(VirtualMemoryAddress pc)
     emitDataChangedForAddress(prev_pc);
     emitDataChangedForAddress(pc);
   }
+}
+
+void DebuggerCodeModel::setHighlightAddress(VirtualMemoryAddress address)
+{
+  if (m_last_highlight_address == address)
+    return;
+
+  emitDataChangedForAddress(m_last_highlight_address);
+  m_last_highlight_address = address;
+  emitDataChangedForAddress(address);
 }
 
 void DebuggerCodeModel::ensureAddressVisible(VirtualMemoryAddress address)

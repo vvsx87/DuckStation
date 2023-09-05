@@ -1,16 +1,21 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com> and contributors.
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com> and contributors.
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "bios.h"
+
+#include "bus.h"
+#include "cpu_disasm.h"
+#include "host.h"
+#include "settings.h"
+
 #include "common/assert.h"
 #include "common/file_system.h"
 #include "common/log.h"
 #include "common/md5_digest.h"
 #include "common/path.h"
-#include "cpu_disasm.h"
-#include "host.h"
-#include "settings.h"
+
 #include <cerrno>
+
 Log_SetChannel(BIOS);
 
 static constexpr BIOS::Hash MakeHashFromString(const char str[])
@@ -425,4 +430,48 @@ std::vector<std::pair<std::string, const BIOS::ImageInfo*>> BIOS::FindBIOSImages
 bool BIOS::HasAnyBIOSImages()
 {
   return FindBIOSImageInDirectory(ConsoleRegion::Auto, EmuFolders::Bios.c_str()).has_value();
+}
+
+std::span<const BIOS::ThreadControlBlock> BIOS::GetTCBs()
+{
+  if (!Bus::g_ram)
+    return {};
+
+  u32 base_address, num_threads;
+  std::memcpy(&base_address, &Bus::g_ram[0x110], sizeof(base_address));
+  std::memcpy(&num_threads, &Bus::g_ram[0x114], sizeof(num_threads));
+
+  base_address &= CPU::PHYSICAL_MEMORY_ADDRESS_MASK;
+  num_threads /= sizeof(ThreadControlBlock);
+
+  if (base_address == 0 || num_threads == 0 ||
+      (base_address + num_threads * sizeof(ThreadControlBlock)) > Bus::RAM_2MB_SIZE)
+  {
+    return {};
+  }
+
+  return std::span<const ThreadControlBlock>(reinterpret_cast<const ThreadControlBlock*>(&Bus::g_ram[base_address]),
+                                             num_threads);
+}
+
+const BIOS::ThreadControlBlock* BIOS::GetCurrentThreadTCB()
+{
+  if (!Bus::g_ram)
+    return nullptr;
+
+  u32 pcb_base_address;
+  std::memcpy(&pcb_base_address, &Bus::g_ram[0x108], sizeof(pcb_base_address));
+  pcb_base_address &= CPU::PHYSICAL_MEMORY_ADDRESS_MASK;
+
+  if (pcb_base_address == 0 || (pcb_base_address + sizeof(u32)) > Bus::RAM_2MB_SIZE)
+    return nullptr;
+
+  u32 tcb_address;
+  std::memcpy(&tcb_address, &Bus::g_ram[pcb_base_address], sizeof(tcb_address));
+  tcb_address &= CPU::PHYSICAL_MEMORY_ADDRESS_MASK;
+
+  if (tcb_address == 0 || (tcb_address + sizeof(ThreadControlBlock)) > Bus::RAM_2MB_SIZE)
+    return nullptr;
+
+  return reinterpret_cast<const ThreadControlBlock*>(&Bus::g_ram[tcb_address]);
 }

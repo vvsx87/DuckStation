@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1210</width>
+    <width>1299</width>
     <height>800</height>
    </rect>
   </property>
@@ -22,8 +22,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1210</width>
-     <height>21</height>
+     <width>1299</width>
+     <height>22</height>
     </rect>
    </property>
    <widget class="QMenu" name="menu_Debugger">
@@ -36,15 +36,14 @@
     <addaction name="actionGoToPC"/>
     <addaction name="actionGoToAddress"/>
     <addaction name="actionDumpAddress"/>
-    <addaction name="separator"/>    
-    <addaction name="actionTrace"/>    
+    <addaction name="separator"/>
+    <addaction name="actionTrace"/>
     <addaction name="separator"/>
     <addaction name="actionStepInto"/>
     <addaction name="actionStepOver"/>
     <addaction name="actionStepOut"/>
     <addaction name="separator"/>
     <addaction name="actionClose"/>
-
    </widget>
    <widget class="QMenu" name="menuBreakpoints">
     <property name="title">
@@ -82,7 +81,7 @@
    <addaction name="actionStepInto"/>
    <addaction name="actionStepOver"/>
    <addaction name="actionStepOut"/>
-   <addaction name="separator"/>   
+   <addaction name="separator"/>
    <addaction name="actionTrace"/>
   </widget>
   <widget class="QDockWidget" name="dockWidget_2">
@@ -223,6 +222,33 @@
       </layout>
      </item>
     </layout>
+   </widget>
+  </widget>
+  <widget class="QDockWidget" name="dockWidget_6">
+   <property name="maximumSize">
+    <size>
+     <width>200</width>
+     <height>524287</height>
+    </size>
+   </property>
+   <property name="features">
+    <set>QDockWidget::DockWidgetFloatable|QDockWidget::DockWidgetMovable</set>
+   </property>
+   <property name="windowTitle">
+    <string>Threads</string>
+   </property>
+   <attribute name="dockWidgetArea">
+    <number>8</number>
+   </attribute>
+   <widget class="QTreeWidget" name="threadsView">
+    <property name="headerHidden">
+     <bool>true</bool>
+    </property>
+    <column>
+     <property name="text">
+      <string>1</string>
+     </property>
+    </column>
    </widget>
   </widget>
   <widget class="QDockWidget" name="dockWidget_5">
@@ -481,8 +507,6 @@
     <string>Ctrl+T</string>
    </property>
   </action>
-  
-  
  </widget>
  <customwidgets>
   <customwidget>
