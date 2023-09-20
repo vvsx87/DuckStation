@@ -349,7 +349,7 @@ bool OpenGLDevice::CheckFeatures(bool* buggy_pbo)
   const bool is_gles = m_gl_context->IsGLES();
 
   bool vendor_id_amd = false;
-  //bool vendor_id_nvidia = false;
+  // bool vendor_id_nvidia = false;
   bool vendor_id_intel = false;
   bool vendor_id_arm = false;
   bool vendor_id_qualcomm = false;
@@ -411,6 +411,8 @@ bool OpenGLDevice::CheckFeatures(bool* buggy_pbo)
   m_features.dual_source_blend =
     (max_dual_source_draw_buffers > 0) &&
     (GLAD_GL_VERSION_3_3 || GLAD_GL_ARB_blend_func_extended || GLAD_GL_EXT_blend_func_extended);
+
+  m_features.framebuffer_fetch = (GLAD_GL_EXT_shader_framebuffer_fetch || GLAD_GL_ARM_shader_framebuffer_fetch);
 
 #ifdef __APPLE__
   // Partial texture buffer uploads appear to be broken in macOS's OpenGL driver.

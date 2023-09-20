@@ -105,9 +105,9 @@ public:
   }
   ~ShaderCompileProgressTracker() = default;
 
-  void Increment()
+  void Increment(u32 progress = 1)
   {
-    m_progress++;
+    m_progress += progress;
 
     const u64 tv = Common::Timer::GetCurrentValue();
     if ((tv - m_start_time) >= m_min_time && (tv - m_last_update_time) >= m_update_interval)
@@ -209,6 +209,7 @@ bool GPU_HW::Initialize()
   m_resolution_scale = CalculateResolutionScale();
   m_multisamples = std::min(g_settings.gpu_multisamples, g_gpu_device->GetMaxMultisamples());
   m_supports_dual_source_blend = features.dual_source_blend;
+  m_supports_framebuffer_fetch = features.framebuffer_fetch;
   m_per_sample_shading = g_settings.gpu_per_sample_shading && features.per_sample_shading;
   m_true_color = g_settings.gpu_true_color;
   m_scaled_dithering = g_settings.gpu_scaled_dithering;
@@ -727,16 +728,17 @@ bool GPU_HW::CompilePipelines()
   const GPUDevice::Features features = g_gpu_device->GetFeatures();
   GPU_HW_ShaderGen shadergen(g_gpu_device->GetRenderAPI(), m_resolution_scale, m_multisamples, m_per_sample_shading,
                              m_true_color, m_scaled_dithering, m_texture_filtering, m_using_uv_limits,
-                             m_pgxp_depth_buffer, m_disable_color_perspective, m_supports_dual_source_blend);
+                             m_pgxp_depth_buffer, m_disable_color_perspective, m_supports_dual_source_blend,
+                             m_supports_framebuffer_fetch);
 
-  ShaderCompileProgressTracker progress("Compiling Pipelines", 2 + (4 * 9 * 2 * 2) + (3 * 4 * 5 * 9 * 2 * 2) + 1 + 2 +
-                                                                 (2 * 2) + 2 + 1 + 1 + (2 * 3) + 1);
+  ShaderCompileProgressTracker progress("Compiling Pipelines", 2 + (4 * 5 * 9 * 2 * 2) + (3 * 4 * 5 * 9 * 2 * 2) + 1 +
+                                                                 2 + (2 * 2) + 2 + 1 + 1 + (2 * 3) + 1);
 
   // vertex shaders - [textured]
   // fragment shaders - [render_mode][texture_mode][dithering][interlacing]
   static constexpr auto destroy_shader = [](std::unique_ptr<GPUShader>& s) { s.reset(); };
   DimensionalArray<std::unique_ptr<GPUShader>, 2> batch_vertex_shaders{};
-  DimensionalArray<std::unique_ptr<GPUShader>, 2, 2, 9, 4> batch_fragment_shaders{};
+  DimensionalArray<std::unique_ptr<GPUShader>, 2, 2, 9, 5, 4> batch_fragment_shaders{};
   ScopedGuard batch_shader_guard([&batch_vertex_shaders, &batch_fragment_shaders]() {
     batch_vertex_shaders.enumerate(destroy_shader);
     batch_fragment_shaders.enumerate(destroy_shader);
@@ -753,23 +755,47 @@ bool GPU_HW::CompilePipelines()
 
   for (u8 render_mode = 0; render_mode < 4; render_mode++)
   {
-    for (u8 texture_mode = 0; texture_mode < 9; texture_mode++)
+    for (u8 transparency_mode = 0; transparency_mode < 5; transparency_mode++)
     {
-      for (u8 dithering = 0; dithering < 2; dithering++)
+      if (m_supports_framebuffer_fetch)
       {
-        for (u8 interlacing = 0; interlacing < 2; interlacing++)
+        // Don't need multipass shaders.
+        if (render_mode != static_cast<u8>(BatchRenderMode::TransparencyDisabled) &&
+            render_mode != static_cast<u8>(BatchRenderMode::TransparentAndOpaque))
         {
-          const std::string fs = shadergen.GenerateBatchFragmentShader(
-            static_cast<BatchRenderMode>(render_mode), static_cast<GPUTextureMode>(texture_mode),
-            ConvertToBoolUnchecked(dithering), ConvertToBoolUnchecked(interlacing));
+          progress.Increment(2 * 2 * 9);
+          continue;
+        }
+      }
+      else
+      {
+        // Can't generate shader blending.
+        if (transparency_mode != static_cast<u8>(GPUTransparencyMode::Disabled))
+        {
+          progress.Increment(2 * 2 * 9);
+          continue;
+        }
+      }
 
-          if (!(batch_fragment_shaders[render_mode][texture_mode][dithering][interlacing] =
-                  g_gpu_device->CreateShader(GPUShaderStage::Fragment, fs)))
+      for (u8 texture_mode = 0; texture_mode < 9; texture_mode++)
+      {
+        for (u8 dithering = 0; dithering < 2; dithering++)
+        {
+          for (u8 interlacing = 0; interlacing < 2; interlacing++)
           {
-            return false;
-          }
+            const std::string fs = shadergen.GenerateBatchFragmentShader(
+              static_cast<BatchRenderMode>(render_mode), static_cast<GPUTransparencyMode>(transparency_mode),
+              static_cast<GPUTextureMode>(texture_mode), ConvertToBoolUnchecked(dithering),
+              ConvertToBoolUnchecked(interlacing));
 
-          progress.Increment();
+            if (!(batch_fragment_shaders[render_mode][transparency_mode][texture_mode][dithering][interlacing] =
+                    g_gpu_device->CreateShader(GPUShaderStage::Fragment, fs)))
+            {
+              return false;
+            }
+
+            progress.Increment();
+          }
         }
       }
     }
@@ -807,6 +833,17 @@ bool GPU_HW::CompilePipelines()
   {
     for (u8 render_mode = 0; render_mode < 4; render_mode++)
     {
+      if (m_supports_framebuffer_fetch)
+      {
+        // Don't need multipass shaders.
+        if (render_mode != static_cast<u8>(BatchRenderMode::TransparencyDisabled) &&
+            render_mode != static_cast<u8>(BatchRenderMode::TransparentAndOpaque))
+        {
+          progress.Increment(2 * 2 * 9 * 5);
+          continue;
+        }
+      }
+
       for (u8 transparency_mode = 0; transparency_mode < 5; transparency_mode++)
       {
         for (u8 texture_mode = 0; texture_mode < 9; texture_mode++)
@@ -819,6 +856,11 @@ bool GPU_HW::CompilePipelines()
                 GPUPipeline::DepthFunc::Always, GPUPipeline::DepthFunc::GreaterEqual,
                 GPUPipeline::DepthFunc::LessEqual};
               const bool textured = (static_cast<GPUTextureMode>(texture_mode) != GPUTextureMode::Disabled);
+              const bool use_shader_blending =
+                (textured && m_supports_framebuffer_fetch &&
+                 (transparency_mode == static_cast<u8>(GPUTransparencyMode::BackgroundMinusForeground) ||
+                  (!m_supports_dual_source_blend &&
+                   transparency_mode != static_cast<u8>(GPUTransparencyMode::Disabled))));
 
               plconfig.input_layout.vertex_attributes =
                 textured ?
@@ -830,16 +872,21 @@ bool GPU_HW::CompilePipelines()
 
               plconfig.vertex_shader = batch_vertex_shaders[BoolToUInt8(textured)].get();
               plconfig.fragment_shader =
-                batch_fragment_shaders[render_mode][texture_mode][dithering][interlacing].get();
+                batch_fragment_shaders[render_mode]
+                                      [use_shader_blending ? transparency_mode :
+                                                             static_cast<u8>(GPUTransparencyMode::Disabled)]
+                                      [texture_mode][dithering][interlacing]
+                                        .get();
 
               plconfig.depth.depth_test = depth_test_values[depth_test];
               plconfig.depth.depth_write = !m_pgxp_depth_buffer || depth_test != 0;
               plconfig.blend = GPUPipeline::BlendState::GetNoBlendingState();
 
-              if ((static_cast<GPUTransparencyMode>(transparency_mode) != GPUTransparencyMode::Disabled &&
-                   (static_cast<BatchRenderMode>(render_mode) != BatchRenderMode::TransparencyDisabled &&
-                    static_cast<BatchRenderMode>(render_mode) != BatchRenderMode::OnlyOpaque)) ||
-                  m_texture_filtering != GPUTextureFilter::Nearest)
+              if (!use_shader_blending &&
+                  ((static_cast<GPUTransparencyMode>(transparency_mode) != GPUTransparencyMode::Disabled &&
+                    (static_cast<BatchRenderMode>(render_mode) != BatchRenderMode::TransparencyDisabled &&
+                     static_cast<BatchRenderMode>(render_mode) != BatchRenderMode::OnlyOpaque)) ||
+                   m_texture_filtering != GPUTextureFilter::Nearest))
               {
                 plconfig.blend.enable = true;
                 plconfig.blend.src_alpha_blend = GPUPipeline::BlendFunc::One;
@@ -2041,8 +2088,7 @@ ALWAYS_INLINE bool GPU_HW::NeedsTwoPassRendering() const
   // We need two-pass rendering when using BG-FG blending and texturing, as the transparency can be enabled
   // on a per-pixel basis, and the opaque pixels shouldn't be blended at all.
 
-  // TODO: see if there's a better way we can do this. definitely can with fbfetch.
-  return (m_batch.texture_mode != GPUTextureMode::Disabled &&
+  return (m_batch.texture_mode != GPUTextureMode::Disabled && !m_supports_framebuffer_fetch &&
           (m_batch.transparency_mode == GPUTransparencyMode::BackgroundMinusForeground ||
            (!m_supports_dual_source_blend && m_batch.transparency_mode != GPUTransparencyMode::Disabled)));
 }
@@ -2469,7 +2515,9 @@ void GPU_HW::DispatchRenderCommand()
   EnsureVertexBufferSpaceForCurrentCommand();
 
   // transparency mode change
-  if (m_batch.transparency_mode != transparency_mode && transparency_mode != GPUTransparencyMode::Disabled)
+  if (m_batch.transparency_mode != transparency_mode && transparency_mode != GPUTransparencyMode::Disabled &&
+      (!m_supports_framebuffer_fetch ||
+       (transparency_mode != GPUTransparencyMode::BackgroundMinusForeground && !m_supports_dual_source_blend)))
   {
     static constexpr float transparent_alpha[4][2] = {{0.5f, 0.5f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {0.25f, 1.0f}};
 
