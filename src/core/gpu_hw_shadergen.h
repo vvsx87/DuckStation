@@ -1,8 +1,10 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
-#include "gpu_hw.h"
+
+#include "gpu_hw_backend.h"
+
 #include "util/shadergen.h"
 
 class GPU_HW_ShaderGen : public ShaderGen
@@ -15,9 +17,9 @@ public:
   ~GPU_HW_ShaderGen();
 
   std::string GenerateBatchVertexShader(bool textured);
-  std::string GenerateBatchFragmentShader(GPU_HW::BatchRenderMode render_mode, GPUTransparencyMode transparency,
+  std::string GenerateBatchFragmentShader(GPUHWBackend::BatchRenderMode render_mode, GPUTransparencyMode transparency,
                                           GPUTextureMode texture_mode, bool dithering, bool interlacing);
-  std::string GenerateDisplayFragmentShader(bool depth_24bit, GPU_HW::InterlacedRenderMode interlace_mode,
+  std::string GenerateDisplayFragmentShader(bool depth_24bit, GPUHWBackend::InterlacedRenderMode interlace_mode,
                                             bool smooth_chroma);
   std::string GenerateWireframeGeometryShader();
   std::string GenerateWireframeFragmentShader();

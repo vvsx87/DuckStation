@@ -11,6 +11,7 @@
 #include "core/fullscreen_ui.h"
 #include "core/game_list.h"
 #include "core/gpu.h"
+#include "core/gpu_thread.h"
 #include "core/host.h"
 #include "core/imgui_overlays.h"
 #include "core/settings.h"
@@ -597,7 +598,7 @@ void NoGUIHost::ProcessCPUThreadEvents(bool block)
       do
       {
         ProcessCPUThreadPlatformMessages();
-        InputManager::PollSources();
+        System::Internal::IdlePollUpdate();
       } while (!s_cpu_thread_event_posted.wait_for(lock, CPU_THREAD_POLL_INTERVAL,
                                                    []() { return !s_cpu_thread_events.empty(); }));
     }
@@ -619,6 +620,17 @@ void NoGUIHost::ProcessCPUThreadEvents(bool block)
   }
 }
 
+void NoGUIHost::CPUThreadMainLoop()
+{
+  while (s_running.load(std::memory_order_acquire))
+  {
+    if (System::IsRunning())
+      System::Execute();
+    else
+      ProcessCPUThreadEvents(true);
+  }
+}
+
 void NoGUIHost::CPUThreadEntryPoint()
 {
   Threading::SetNameOfCurrentThread("CPU Thread");
@@ -627,7 +639,7 @@ void NoGUIHost::CPUThreadEntryPoint()
   System::Internal::ProcessStartup();
 
   // start the fullscreen UI and get it going
-  if (Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer)) && FullscreenUI::Initialize())
+  if (GPUThread::StartFullscreenUI())
   {
     // kick a game list refresh if we're not in batch mode
     if (!InBatchMode())
@@ -647,29 +659,10 @@ void NoGUIHost::CPUThreadEntryPoint()
 
   if (System::IsValid())
     System::ShutdownSystem(false);
-  Host::ReleaseGPUDevice();
-  Host::ReleaseRenderWindow();
+  GPUThread::Shutdown();
 
   System::Internal::ProcessShutdown();
   g_nogui_window->QuitMessageLoop();
-}
-
-void NoGUIHost::CPUThreadMainLoop()
-{
-  while (s_running.load(std::memory_order_acquire))
-  {
-    if (System::IsRunning())
-    {
-      System::Execute();
-      continue;
-    }
-
-    Host::PumpMessagesOnCPUThread();
-    System::Internal::IdlePollUpdate();
-    System::PresentDisplay(false);
-    if (!g_gpu_device->IsVsyncEnabled())
-      g_gpu_device->ThrottlePresentation();
-  }
 }
 
 std::optional<WindowInfo> Host::AcquireRenderWindow(bool recreate_window)

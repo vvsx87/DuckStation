@@ -21,10 +21,10 @@ extern const DitherLUT g_dither_lut;
 
 extern Common::Rectangle<u32> g_drawing_area;
 
-using DrawRectangleFunction = void (*)(const GPUBackendDrawRectangleCommand* cmd);
+using DrawRectangleFunction = void (*)(const GPUBackendDrawSpriteCommand* cmd);
 typedef const DrawRectangleFunction DrawRectangleFunctionTable[2][2][2];
 
-using DrawTriangleFunction = void (*)(const GPUBackendDrawPolygonCommand* cmd,
+using DrawTriangleFunction = void (*)(const GPUBackendDrawCommand* cmd,
                                       const GPUBackendDrawPolygonCommand::Vertex* v0,
                                       const GPUBackendDrawPolygonCommand::Vertex* v1,
                                       const GPUBackendDrawPolygonCommand::Vertex* v2);

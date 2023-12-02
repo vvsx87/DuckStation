@@ -222,8 +222,8 @@ float GetMaximumFrameTime();
 float GetThrottleFrequency();
 float GetCPUThreadUsage();
 float GetCPUThreadAverageTime();
-float GetSWThreadUsage();
-float GetSWThreadAverageTime();
+float GetGPUThreadUsage();
+float GetGPUThreadAverageTime();
 float GetGPUUsage();
 float GetGPUAverageTime();
 const FrameTimeHistory& GetFrameTimeHistory();
@@ -283,6 +283,8 @@ void ResetThrottler();
 
 void UpdatePerformanceCounters();
 void ResetPerformanceCounters();
+bool ShouldDisplayAllFrames();
+Common::Timer::Value GetNextFrameTime();
 
 /// Resets vsync/max present fps state.
 void UpdateDisplaySync();
@@ -464,10 +466,6 @@ void RequestDisplaySize(float scale = 0.0f);
 
 /// Call when host display size changes, use with "match display" aspect ratio setting.
 void HostDisplayResized();
-
-/// Renders the display.
-bool PresentDisplay(bool allow_skip_present);
-void InvalidateDisplay();
 
 //////////////////////////////////////////////////////////////////////////
 // Memory Save States (Rewind and Runahead)
