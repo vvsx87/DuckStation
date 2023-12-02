@@ -1,9 +1,9 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
 
-#include "gpu.h"
+#include "gpu_backend.h"
 #include "texture_replacements.h"
 
 #include "util/gpu_device.h"
@@ -21,7 +21,7 @@ class GPU_SW_Backend;
 struct GPUBackendCommand;
 struct GPUBackendDrawCommand;
 
-class GPU_HW final : public GPU
+class GPUHWBackend final : public GPUBackend
 {
 public:
   enum class BatchRenderMode : u8
@@ -39,32 +39,45 @@ public:
     SeparateFields
   };
 
-  GPU_HW();
-  ~GPU_HW() override;
-
-  const Threading::Thread* GetSWThread() const override;
-  bool IsHardwareRenderer() const override;
+  GPUHWBackend();
+  ~GPUHWBackend() override;
 
   bool Initialize() override;
+  void Shutdown() override;
+
+protected:
   void Reset(bool clear_vram) override;
   bool DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display) override;
 
   void RestoreDeviceContext() override;
 
   void UpdateSettings(const Settings& old_settings) override;
-  void UpdateResolutionScale() override final;
-  std::tuple<u32, u32> GetEffectiveDisplayResolution(bool scaled = true) override final;
-  std::tuple<u32, u32> GetFullDisplayResolution(bool scaled = true) override final;
+  // void UpdateResolutionScale() override final;
+
+  void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color, GPUBackendCommandParameters params) override;
+  void ReadVRAM(u32 x, u32 y, u32 width, u32 height) override;
+  void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, GPUBackendCommandParameters params) override;
+  void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height,
+                GPUBackendCommandParameters params) override;
+
+  void DrawPolygon(const GPUBackendDrawPolygonCommand* cmd) override;
+  void DrawPrecisePolygon(const GPUBackendDrawPrecisePolygonCommand* cmd) override;
+  void DrawSprite(const GPUBackendDrawSpriteCommand* cmd) override;
+  void DrawLine(const GPUBackendDrawLineCommand* cmd) override;
+
+  void FlushRender() override;
+  void DrawingAreaChanged() override;
 
   void ClearDisplay() override;
-  void UpdateDisplay() override;
+  void UpdateDisplay(const GPUBackendUpdateDisplayCommand* cmd) override;
 
 private:
   enum : u32
   {
     MAX_BATCH_VERTEX_COUNTER_IDS = 65536 - 2,
-    MAX_VERTICES_FOR_RECTANGLE = 6 * (((MAX_PRIMITIVE_WIDTH + (TEXTURE_PAGE_WIDTH - 1)) / TEXTURE_PAGE_WIDTH) + 1u) *
-                                 (((MAX_PRIMITIVE_HEIGHT + (TEXTURE_PAGE_HEIGHT - 1)) / TEXTURE_PAGE_HEIGHT) + 1u)
+    MAX_VERTICES_FOR_SPRITE = 6 * (((MAX_PRIMITIVE_WIDTH + (TEXTURE_PAGE_WIDTH - 1)) / TEXTURE_PAGE_WIDTH) + 1u) *
+                                 (((MAX_PRIMITIVE_HEIGHT + (TEXTURE_PAGE_HEIGHT - 1)) / TEXTURE_PAGE_HEIGHT) + 1u),
+    INVALID_TEXPAGE_BITS = 0xFFFFFFFFu,
   };
   enum : u8
   {
@@ -152,25 +165,25 @@ private:
   GPUDownsampleMode GetDownsampleMode(u32 resolution_scale) const;
 
   bool IsUsingMultisampling() const;
-  bool IsUsingDownsampling() const;
+  bool IsUsingDownsampling(const GPUBackendUpdateDisplayCommand* cmd) const;
 
   void SetFullVRAMDirtyRectangle();
   void ClearVRAMDirtyRectangle();
   void IncludeVRAMDirtyRectangle(Common::Rectangle<u32>& rect, const Common::Rectangle<u32>& new_rect);
-  void CheckForTexPageOverlap(u32 texpage, u32 min_u, u32 min_v, u32 max_u, u32 max_v);
+  void CheckForTexPageOverlap(const GPUBackendDrawCommand* cmd, u32 texpage, u32 min_u, u32 min_v, u32 max_u, u32 max_v);
 
   bool IsFlushed() const;
   u32 GetBatchVertexSpace() const;
   u32 GetBatchVertexCount() const;
   void EnsureVertexBufferSpace(u32 required_vertices);
-  void EnsureVertexBufferSpaceForCurrentCommand();
+  void PrepareDraw(const GPUBackendDrawCommand* cmd, u32 num_vertices);
   void ResetBatchVertexDepth();
 
   /// Returns the value to be written to the depth buffer for the current operation for mask bit emulation.
   float GetCurrentNormalizedVertexDepth() const;
 
   /// Returns the interlaced mode to use when scanning out/displaying.
-  InterlacedRenderMode GetInterlacedRenderMode() const;
+  InterlacedRenderMode GetInterlacedRenderMode(const GPUBackendUpdateDisplayCommand* cmd) const;
 
   /// Returns if the draw needs to be broken into opaque/transparent passes.
   bool NeedsTwoPassRendering() const;
@@ -178,17 +191,7 @@ private:
   /// Returns true if the draw is going to use shader blending/framebuffer fetch.
   bool NeedsShaderBlending(GPUTransparencyMode transparency) const;
 
-  void FillBackendCommandParameters(GPUBackendCommand* cmd) const;
-  void FillDrawCommand(GPUBackendDrawCommand* cmd, GPURenderCommand rc) const;
   void UpdateSoftwareRenderer(bool copy_vram_from_hw);
-
-  void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color) override;
-  void ReadVRAM(u32 x, u32 y, u32 width, u32 height) override;
-  void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask) override;
-  void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height) override;
-  void DispatchRenderCommand() override;
-  void FlushRender() override;
-  void DrawRendererStats(bool is_idle_frame) override;
 
   bool BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u32 dst_x, u32 dst_y, u32 width, u32 height);
 
@@ -199,10 +202,10 @@ private:
   static void HandleFlippedQuadTextureCoordinates(BatchVertex* vertices);
 
   /// Computes polygon U/V boundaries.
-  void ComputePolygonUVLimits(u32 texpage, BatchVertex* vertices, u32 num_vertices);
+  void ComputePolygonUVLimits(const GPUBackendDrawCommand* cmd, BatchVertex* vertices, u32 num_vertices);
 
   /// Sets the depth test flag for PGXP depth buffering.
-  void SetBatchDepthBuffer(bool enabled);
+  void SetBatchDepthBuffer(bool enabled, u32 num_vertices);
   void CheckForDepthClear(const BatchVertex* vertices, u32 num_vertices);
 
   /// Returns the number of mipmap levels used for adaptive smoothing.
@@ -222,9 +225,7 @@ private:
   std::unique_ptr<GPUTextureBuffer> m_vram_upload_buffer;
   std::unique_ptr<GPUTexture> m_vram_write_texture;
 
-  FixedHeapArray<u16, VRAM_WIDTH * VRAM_HEIGHT> m_vram_shadow;
-
-  std::unique_ptr<GPU_SW_Backend> m_sw_renderer;
+  // std::unique_ptr<GPU_SW_Backend> m_sw_renderer;
 
   BatchVertex* m_batch_start_vertex_ptr = nullptr;
   BatchVertex* m_batch_end_vertex_ptr = nullptr;
@@ -255,11 +256,14 @@ private:
   bool m_clamp_uvs = false;
   bool m_compute_uv_range = false;
   bool m_pgxp_depth_buffer = false;
+  u32 m_last_texture_window_bits = 0;
+  u32 m_texpage_bits = INVALID_TEXPAGE_BITS;
   u8 m_texpage_dirty = 0;
 
   BatchConfig m_batch;
 
   // Changed state
+  bool m_drawing_area_changed = true;
   bool m_batch_ubo_dirty = true;
   BatchUBOData m_batch_ubo_data = {};
 

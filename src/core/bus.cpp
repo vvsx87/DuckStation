@@ -158,7 +158,9 @@ static constexpr size_t BIOS_OFFSET = RAM_OFFSET + RAM_SIZE;
 static constexpr size_t BIOS_SIZE = Bus::BIOS_SIZE;
 static constexpr size_t LUT_OFFSET = BIOS_OFFSET + BIOS_SIZE;
 static constexpr size_t LUT_SIZE = (sizeof(void*) * Bus::MEMORY_LUT_SLOTS) * 2; // normal and isolated
-static constexpr size_t TOTAL_SIZE = LUT_OFFSET + LUT_SIZE;
+static constexpr size_t VRAM_OFFSET = LUT_OFFSET + LUT_SIZE;
+// static constexpr size_t VRAM_SIZE = ::VRAM_SIZE;
+static constexpr size_t TOTAL_SIZE = VRAM_OFFSET + VRAM_SIZE;
 } // namespace MemoryMap
 
 #define FIXUP_HALFWORD_OFFSET(size, offset) ((size >= MemoryAccessSize::HalfWord) ? (offset) : ((offset) & ~1u))
@@ -219,6 +221,15 @@ bool Bus::AllocateMemory()
   g_memory_handlers_isc = g_memory_handlers + MEMORY_LUT_SLOTS;
   SetHandlers();
 
+  GPU::m_vram_ptr = static_cast<u16*>(
+    MemMap::MapSharedMemory(s_shmem_handle, MemoryMap::VRAM_OFFSET, nullptr, VRAM_SIZE, PageProtect::ReadWrite));
+  if (!GPU::m_vram_ptr)
+  {
+    Host::ReportErrorAsync("Error", "Failed to map memory for VRAM");
+    ReleaseMemory();
+    return false;
+  }
+
 #ifdef ENABLE_MMAP_FASTMEM
   if (!s_fastmem_arena.Create(FASTMEM_ARENA_SIZE))
   {
@@ -253,6 +264,12 @@ void Bus::ReleaseMemory()
 
   std::free(s_fastmem_lut);
   s_fastmem_lut = nullptr;
+
+  if (GPU::m_vram_ptr)
+  {
+    MemMap::UnmapSharedMemory(GPU::m_vram_ptr, VRAM_SIZE);
+    GPU::m_vram_ptr = nullptr;
+  }
 
   g_memory_handlers_isc = nullptr;
   if (g_memory_handlers)

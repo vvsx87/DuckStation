@@ -2,16 +2,10 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "host.h"
-#include "fullscreen_ui.h"
 #include "gpu.h"
-#include "imgui_overlays.h"
-#include "shader_cache_version.h"
 #include "system.h"
 
 #include "scmversion/scmversion.h"
-
-#include "util/gpu_device.h"
-#include "util/imgui_manager.h"
 
 #include "common/assert.h"
 #include "common/layered_settings_interface.h"
@@ -232,102 +226,6 @@ void Host::ReportFormattedDebuggerMessage(const char* format, ...)
   va_end(ap);
 
   ReportDebuggerMessage(message);
-}
-
-bool Host::CreateGPUDevice(RenderAPI api)
-{
-  DebugAssert(!g_gpu_device);
-
-  Log_InfoPrintf("Trying to create a %s GPU device...", GPUDevice::RenderAPIToString(api));
-  g_gpu_device = GPUDevice::CreateDeviceForAPI(api);
-
-  u32 disabled_features = 0;
-  if (g_settings.gpu_disable_dual_source_blend)
-    disabled_features |= GPUDevice::FEATURE_MASK_DUAL_SOURCE_BLEND;
-  if (g_settings.gpu_disable_framebuffer_fetch)
-    disabled_features |= GPUDevice::FEATURE_MASK_FRAMEBUFFER_FETCH;
-
-  // TODO: FSUI should always use vsync..
-  const bool vsync = System::IsValid() ? System::ShouldUseVSync() : g_settings.video_sync_enabled;
-  if (!g_gpu_device || !g_gpu_device->Create(
-                         g_settings.gpu_adapter,
-                         g_settings.gpu_disable_shader_cache ? std::string_view() : std::string_view(EmuFolders::Cache),
-                         SHADER_CACHE_VERSION, g_settings.gpu_use_debug_device, vsync,
-                         g_settings.gpu_threaded_presentation, static_cast<GPUDevice::FeatureMask>(disabled_features)))
-  {
-    Log_ErrorPrintf("Failed to create GPU device.");
-    if (g_gpu_device)
-      g_gpu_device->Destroy();
-    g_gpu_device.reset();
-
-    Host::ReportErrorAsync("Error",
-                           fmt::format("Failed to create render device. This may be due to your GPU not supporting the "
-                                       "chosen renderer ({}), or because your graphics drivers need to be updated.",
-                                       GPUDevice::RenderAPIToString(api)));
-    return false;
-  }
-
-  if (!ImGuiManager::Initialize(g_settings.display_osd_scale / 100.0f, g_settings.display_show_osd_messages))
-  {
-    Log_ErrorPrintf("Failed to initialize ImGuiManager.");
-    g_gpu_device->Destroy();
-    g_gpu_device.reset();
-    return false;
-  }
-
-  return true;
-}
-
-void Host::UpdateDisplayWindow()
-{
-  if (!g_gpu_device)
-    return;
-
-  if (!g_gpu_device->UpdateWindow())
-  {
-    Host::ReportErrorAsync("Error", "Failed to change window after update. The log may contain more information.");
-    return;
-  }
-
-  ImGuiManager::WindowResized();
-
-  // If we're paused, re-present the current frame at the new window size.
-  if (System::IsValid() && System::IsPaused())
-    System::InvalidateDisplay();
-}
-
-void Host::ResizeDisplayWindow(s32 width, s32 height, float scale)
-{
-  if (!g_gpu_device)
-    return;
-
-  Log_DevPrintf("Display window resized to %dx%d", width, height);
-
-  g_gpu_device->ResizeWindow(width, height, scale);
-  ImGuiManager::WindowResized();
-
-  // If we're paused, re-present the current frame at the new window size.
-  if (System::IsValid())
-  {
-    if (System::IsPaused())
-      System::InvalidateDisplay();
-
-    System::HostDisplayResized();
-  }
-}
-
-void Host::ReleaseGPUDevice()
-{
-  if (!g_gpu_device)
-    return;
-
-  ImGuiManager::DestroyOverlayTextures();
-  FullscreenUI::Shutdown();
-  ImGuiManager::Shutdown();
-
-  Log_InfoPrintf("Destroying %s GPU device...", GPUDevice::RenderAPIToString(g_gpu_device->GetRenderAPI()));
-  g_gpu_device->Destroy();
-  g_gpu_device.reset();
 }
 
 #ifndef __ANDROID__

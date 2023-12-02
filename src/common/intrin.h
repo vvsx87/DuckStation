@@ -12,7 +12,7 @@
 #if defined(CPU_ARCH_X86) || defined(CPU_ARCH_X64)
 #define CPU_ARCH_SSE 1
 #include <emmintrin.h>
-#elif defined(CPU_ARCH_ARM64)
+#elif defined(CPU_ARCH_ARM64) // TODO: ARM32 can do NEON too...
 #define CPU_ARCH_NEON 1
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <arm64_neon.h>

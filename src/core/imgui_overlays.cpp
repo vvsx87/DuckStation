@@ -9,6 +9,8 @@
 #include "dma.h"
 #include "fullscreen_ui.h"
 #include "gpu.h"
+#include "gpu_backend.h"
+#include "gpu_thread.h"
 #include "host.h"
 #include "mdec.h"
 #include "resources.h"
@@ -210,17 +212,17 @@ void ImGuiManager::RenderDebugWindows()
 {
   if (System::IsValid())
   {
-    if (g_settings.debugging.show_gpu_state)
+    if (g_gpu_settings.debugging.show_gpu_state)
       g_gpu->DrawDebugStateWindow();
-    if (g_settings.debugging.show_cdrom_state)
+    if (g_gpu_settings.debugging.show_cdrom_state)
       CDROM::DrawDebugWindow();
-    if (g_settings.debugging.show_timers_state)
+    if (g_gpu_settings.debugging.show_timers_state)
       Timers::DrawDebugStateWindow();
-    if (g_settings.debugging.show_spu_state)
+    if (g_gpu_settings.debugging.show_spu_state)
       SPU::DrawDebugStateWindow();
-    if (g_settings.debugging.show_mdec_state)
+    if (g_gpu_settings.debugging.show_mdec_state)
       MDEC::DrawDebugStateWindow();
-    if (g_settings.debugging.show_dma_state)
+    if (g_gpu_settings.debugging.show_dma_state)
       DMA::DrawDebugStateWindow();
   }
 }
@@ -228,14 +230,14 @@ void ImGuiManager::RenderDebugWindows()
 void ImGuiManager::RenderTextOverlays()
 {
   const System::State state = System::GetState();
-  if (state != System::State::Shutdown)
+  if (state == System::State::Paused || state == System::State::Running)
   {
     DrawPerformanceOverlay();
 
-    if (g_settings.display_show_enhancements && state != System::State::Paused)
+    if (g_gpu_settings.display_show_enhancements && state != System::State::Paused)
       DrawEnhancementsOverlay();
 
-    if (g_settings.display_show_inputs && state != System::State::Paused)
+    if (g_gpu_settings.display_show_inputs && state != System::State::Paused)
       DrawInputsOverlay();
   }
 }
@@ -253,9 +255,9 @@ void ImGuiManager::FormatProcessorStat(SmallStringBase& text, double usage, doub
 
 void ImGuiManager::DrawPerformanceOverlay()
 {
-  if (!(g_settings.display_show_fps || g_settings.display_show_speed || g_settings.display_show_resolution ||
-        g_settings.display_show_cpu ||
-        (g_settings.display_show_status_indicators &&
+  if (!(g_gpu_settings.display_show_fps || g_gpu_settings.display_show_speed ||
+        g_gpu_settings.display_show_resolution || g_gpu_settings.display_show_cpu ||
+        (g_gpu_settings.display_show_status_indicators &&
          (System::IsPaused() || System::IsFastForwardEnabled() || System::IsTurboEnabled()))))
   {
     return;
@@ -292,12 +294,12 @@ void ImGuiManager::DrawPerformanceOverlay()
   if (state == System::State::Running)
   {
     const float speed = System::GetEmulationSpeed();
-    if (g_settings.display_show_fps)
+    if (g_gpu_settings.display_show_fps)
     {
       text.append_format("G: {:.2f} | V: {:.2f}", System::GetFPS(), System::GetVPS());
       first = false;
     }
-    if (g_settings.display_show_speed)
+    if (g_gpu_settings.display_show_speed)
     {
       text.append_format("{}{}%", first ? "" : " | ", static_cast<u32>(std::round(speed)));
 
@@ -322,18 +324,18 @@ void ImGuiManager::DrawPerformanceOverlay()
       DRAW_LINE(fixed_font, text, color);
     }
 
-    if (g_settings.display_show_resolution)
+    if (g_gpu_settings.display_show_resolution)
     {
       // TODO: this seems wrong?
-      const auto [effective_width, effective_height] = g_gpu->GetEffectiveDisplayResolution();
+      const auto [src_width, src_height] = GPUBackend::GetLastDisplaySourceSize();
       const bool interlaced = g_gpu->IsInterlacedDisplayEnabled();
       const bool pal = g_gpu->IsInPALMode();
-      text.format("{}x{} {} {}", effective_width, effective_height, pal ? "PAL" : "NTSC",
+      text.format("{}x{} {} {}", src_width, src_height, pal ? "PAL" : "NTSC",
                   interlaced ? "Interlaced" : "Progressive");
       DRAW_LINE(fixed_font, text, IM_COL32(255, 255, 255, 255));
     }
 
-    if (g_settings.display_show_cpu)
+    if (g_gpu_settings.display_show_cpu)
     {
       text.format("{:.2f}ms | {:.2f}ms | {:.2f}ms", System::GetMinimumFrameTime(), System::GetAverageFrameTime(),
                   System::GetMaximumFrameTime());
@@ -388,12 +390,9 @@ void ImGuiManager::DrawPerformanceOverlay()
       FormatProcessorStat(text, System::GetCPUThreadUsage(), System::GetCPUThreadAverageTime());
       DRAW_LINE(fixed_font, text, IM_COL32(255, 255, 255, 255));
 
-      if (g_gpu->GetSWThread())
-      {
-        text.assign("SW: ");
-        FormatProcessorStat(text, System::GetSWThreadUsage(), System::GetSWThreadAverageTime());
-        DRAW_LINE(fixed_font, text, IM_COL32(255, 255, 255, 255));
-      }
+      text.assign("Render: ");
+      FormatProcessorStat(text, System::GetGPUThreadUsage(), System::GetGPUThreadAverageTime());
+      DRAW_LINE(fixed_font, text, IM_COL32(255, 255, 255, 255));
 
 #if 0
       {
@@ -405,7 +404,7 @@ void ImGuiManager::DrawPerformanceOverlay()
 #endif
     }
 
-    if (g_settings.display_show_gpu)
+    if (g_gpu_settings.display_show_gpu)
     {
       if (g_gpu_device->IsGPUTimingEnabled())
       {
@@ -418,7 +417,7 @@ void ImGuiManager::DrawPerformanceOverlay()
       DRAW_LINE(fixed_font, text, IM_COL32(255, 255, 255, 255));
     }
 
-    if (g_settings.display_show_status_indicators)
+    if (g_gpu_settings.display_show_status_indicators)
     {
       const bool rewinding = System::IsRewinding();
       if (rewinding || System::IsFastForwardEnabled() || System::IsTurboEnabled())
@@ -428,7 +427,7 @@ void ImGuiManager::DrawPerformanceOverlay()
       }
     }
 
-    if (g_settings.display_show_frame_times)
+    if (g_gpu_settings.display_show_frame_times)
     {
       const ImVec2 history_size(200.0f * scale, 50.0f * scale);
       ImGui::SetNextWindowSize(ImVec2(history_size.x, history_size.y));
@@ -489,7 +488,7 @@ void ImGuiManager::DrawPerformanceOverlay()
       ImGui::PopStyleColor(3);
     }
   }
-  else if (g_settings.display_show_status_indicators && state == System::State::Paused &&
+  else if (g_gpu_settings.display_show_status_indicators && state == System::State::Paused &&
            !FullscreenUI::HasActiveWindow())
   {
     text.assign(ICON_FA_PAUSE);
@@ -504,7 +503,7 @@ void ImGuiManager::DrawEnhancementsOverlay()
   LargeString text;
   text.append_format("{} {}-{}", Settings::GetConsoleRegionName(System::GetRegion()),
                      GPUDevice::RenderAPIToString(g_gpu_device->GetRenderAPI()),
-                     g_gpu->IsHardwareRenderer() ? "HW" : "SW");
+                     GPUBackend::IsUsingHardwareBackend() ? "HW" : "SW");
 
   if (g_settings.rewind_enable)
     text.append_format(" RW={}/{}", g_settings.rewind_save_frequency, g_settings.rewind_save_slots);
@@ -797,7 +796,11 @@ void SaveStateSelectorUI::ClearList()
   for (ListEntry& li : s_slots)
   {
     if (li.preview_texture)
-      g_gpu_device->RecycleTexture(std::move(li.preview_texture));
+    {
+      GPUThread::RunOnThread([tex = li.preview_texture.release()]() {
+        g_gpu_device->RecycleTexture(std::unique_ptr<GPUTexture>(tex));
+      });
+    }
   }
   s_slots.clear();
 }
@@ -1107,7 +1110,7 @@ void SaveStateSelectorUI::LoadCurrentSlot()
     }
   }
 
-  Close();
+  GPUThread::RunOnThread(&Close);
 }
 
 void SaveStateSelectorUI::SaveCurrentSlot()
@@ -1115,7 +1118,7 @@ void SaveStateSelectorUI::SaveCurrentSlot()
   if (std::string path = GetCurrentSlotPath(); !path.empty())
     System::SaveState(path.c_str(), g_settings.create_save_state_backups);
 
-  Close();
+  GPUThread::RunOnThread(&Close);
 }
 
 void SaveStateSelectorUI::ShowSlotOSDMessage()
@@ -1139,7 +1142,7 @@ void SaveStateSelectorUI::ShowSlotOSDMessage()
 void ImGuiManager::RenderOverlayWindows()
 {
   const System::State state = System::GetState();
-  if (state != System::State::Shutdown)
+  if (state == System::State::Paused || state == System::State::Running)
   {
     if (SaveStateSelectorUI::s_open)
       SaveStateSelectorUI::Draw();

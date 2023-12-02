@@ -1,25 +1,28 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+#include "gpu.h"
 #include "gpu_backend.h"
+
+#include "util/gpu_device.h"
+
+#include "common/heap_array.h"
+
 #include <array>
 #include <memory>
 #include <vector>
 
-class GPU_SW_Backend final : public GPUBackend
+// TODO: Move to cpp
+
+class GPUSWBackend final : public GPUBackend
 {
 public:
-  GPU_SW_Backend();
-  ~GPU_SW_Backend() override;
+  GPUSWBackend();
+  ~GPUSWBackend() override;
 
-  bool Initialize(bool force_thread) override;
-  void Reset(bool clear_vram) override;
-
-  ALWAYS_INLINE_RELEASE u16 GetPixel(const u32 x, const u32 y) const { return m_vram[VRAM_WIDTH * y + x]; }
-  ALWAYS_INLINE_RELEASE const u16* GetPixelPtr(const u32 x, const u32 y) const { return &m_vram[VRAM_WIDTH * y + x]; }
-  ALWAYS_INLINE_RELEASE u16* GetPixelPtr(const u32 x, const u32 y) { return &m_vram[VRAM_WIDTH * y + x]; }
-  ALWAYS_INLINE_RELEASE void SetPixel(const u32 x, const u32 y, const u16 value) { m_vram[VRAM_WIDTH * y + x] = value; }
+  bool Initialize() override;
+  void Shutdown() override;
 
   // this is actually (31 * 255) >> 4) == 494, but to simplify addressing we use the next power of two (512)
   static constexpr u32 DITHER_LUT_SIZE = 512;
@@ -27,6 +30,22 @@ public:
   static constexpr DitherLUT ComputeDitherLUT();
 
 protected:
+  bool DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display) override;
+  void Reset(bool clear_vram) override;
+
+  void ReadVRAM(u32 x, u32 y, u32 width, u32 height) override;
+
+  void DrawPolygon(const GPUBackendDrawPolygonCommand* cmd) override;
+  void DrawPrecisePolygon(const GPUBackendDrawPrecisePolygonCommand* cmd) override;
+  void DrawLine(const GPUBackendDrawLineCommand* cmd) override;
+  void DrawSprite(const GPUBackendDrawSpriteCommand* cmd) override;
+  void FlushRender() override;
+  void DrawingAreaChanged() override;
+
+  void ClearDisplay() override;
+  void UpdateDisplay(const GPUBackendUpdateDisplayCommand* cmd) override;
+
+private:
   union VRAMPixel
   {
     u16 bits;
@@ -87,17 +106,6 @@ protected:
     return std::make_tuple(static_cast<u8>(rgb24), static_cast<u8>(rgb24 >> 8), static_cast<u8>(rgb24 >> 16));
   }
 
-  void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color, GPUBackendCommandParameters params) override;
-  void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, GPUBackendCommandParameters params) override;
-  void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height,
-                GPUBackendCommandParameters params) override;
-
-  void DrawPolygon(const GPUBackendDrawPolygonCommand* cmd) override;
-  void DrawLine(const GPUBackendDrawLineCommand* cmd) override;
-  void DrawRectangle(const GPUBackendDrawRectangleCommand* cmd) override;
-  void FlushRender() override;
-  void DrawingAreaChanged() override;
-
   //////////////////////////////////////////////////////////////////////////
   // Rasterization
   //////////////////////////////////////////////////////////////////////////
@@ -106,11 +114,10 @@ protected:
                   u8 texcoord_y);
 
   template<bool texture_enable, bool raw_texture_enable, bool transparency_enable>
-  void DrawRectangle(const GPUBackendDrawRectangleCommand* cmd);
+  void DrawSprite(const GPUBackendDrawSpriteCommand* cmd);
 
-  using DrawRectangleFunction = void (GPU_SW_Backend::*)(const GPUBackendDrawRectangleCommand* cmd);
-  DrawRectangleFunction GetDrawRectangleFunction(bool texture_enable, bool raw_texture_enable,
-                                                 bool transparency_enable);
+  using DrawSpriteFunction = void (GPUSWBackend::*)(const GPUBackendDrawSpriteCommand* cmd);
+  DrawSpriteFunction GetDrawSpriteFunction(bool texture_enable, bool raw_texture_enable, bool transparency_enable);
 
   //////////////////////////////////////////////////////////////////////////
   // Polygon and line rasterization ported from Mednafen
@@ -142,18 +149,18 @@ protected:
 
   template<bool shading_enable, bool texture_enable, bool raw_texture_enable, bool transparency_enable,
            bool dithering_enable>
-  void DrawSpan(const GPUBackendDrawPolygonCommand* cmd, s32 y, s32 x_start, s32 x_bound, i_group ig,
+  void DrawSpan(const GPUBackendDrawCommand* cmd, s32 y, s32 x_start, s32 x_bound, i_group ig,
                 const i_deltas& idl);
 
   template<bool shading_enable, bool texture_enable, bool raw_texture_enable, bool transparency_enable,
            bool dithering_enable>
-  void DrawTriangle(const GPUBackendDrawPolygonCommand* cmd, const GPUBackendDrawPolygonCommand::Vertex* v0,
+  void DrawTriangle(const GPUBackendDrawCommand* cmd, const GPUBackendDrawPolygonCommand::Vertex* v0,
                     const GPUBackendDrawPolygonCommand::Vertex* v1, const GPUBackendDrawPolygonCommand::Vertex* v2);
 
-  using DrawTriangleFunction = void (GPU_SW_Backend::*)(const GPUBackendDrawPolygonCommand* cmd,
-                                                        const GPUBackendDrawPolygonCommand::Vertex* v0,
-                                                        const GPUBackendDrawPolygonCommand::Vertex* v1,
-                                                        const GPUBackendDrawPolygonCommand::Vertex* v2);
+  using DrawTriangleFunction = void (GPUSWBackend::*)(const GPUBackendDrawCommand* cmd,
+                                                      const GPUBackendDrawPolygonCommand::Vertex* v0,
+                                                      const GPUBackendDrawPolygonCommand::Vertex* v1,
+                                                      const GPUBackendDrawPolygonCommand::Vertex* v2);
   DrawTriangleFunction GetDrawTriangleFunction(bool shading_enable, bool texture_enable, bool raw_texture_enable,
                                                bool transparency_enable, bool dithering_enable);
 
@@ -161,10 +168,27 @@ protected:
   void DrawLine(const GPUBackendDrawLineCommand* cmd, const GPUBackendDrawLineCommand::Vertex* p0,
                 const GPUBackendDrawLineCommand::Vertex* p1);
 
-  using DrawLineFunction = void (GPU_SW_Backend::*)(const GPUBackendDrawLineCommand* cmd,
-                                                    const GPUBackendDrawLineCommand::Vertex* p0,
-                                                    const GPUBackendDrawLineCommand::Vertex* p1);
+  using DrawLineFunction = void (GPUSWBackend::*)(const GPUBackendDrawLineCommand* cmd,
+                                                  const GPUBackendDrawLineCommand::Vertex* p0,
+                                                  const GPUBackendDrawLineCommand::Vertex* p1);
   DrawLineFunction GetDrawLineFunction(bool shading_enable, bool transparency_enable, bool dithering_enable);
 
-  std::array<u16, VRAM_WIDTH * VRAM_HEIGHT> m_vram;
+  template<GPUTexture::Format display_format>
+  void CopyOut15Bit(u32 src_x, u32 src_y, u32 width, u32 height, u32 field, bool interlaced, bool interleaved);
+  void CopyOut15Bit(GPUTexture::Format display_format, u32 src_x, u32 src_y, u32 width, u32 height, u32 field,
+                    bool interlaced, bool interleaved);
+
+  template<GPUTexture::Format display_format>
+  void CopyOut24Bit(u32 src_x, u32 src_y, u32 skip_x, u32 width, u32 height, u32 field, bool interlaced,
+                    bool interleaved);
+  void CopyOut24Bit(GPUTexture::Format display_format, u32 src_x, u32 src_y, u32 skip_x, u32 width, u32 height,
+                    u32 field, bool interlaced, bool interleaved);
+
+  void SetDisplayTextureFormat();
+  GPUTexture* GetDisplayTexture(u32 width, u32 height, GPUTexture::Format format);
+
+  FixedHeapArray<u8, GPU_MAX_DISPLAY_WIDTH * GPU_MAX_DISPLAY_HEIGHT * sizeof(u32)> m_display_texture_buffer;
+  GPUTexture::Format m_16bit_display_format = GPUTexture::Format::RGB565;
+  GPUTexture::Format m_24bit_display_format = GPUTexture::Format::RGBA8;
+  std::unique_ptr<GPUTexture> m_private_display_texture; // TODO: Move to base.
 };

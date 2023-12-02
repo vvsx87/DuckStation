@@ -92,18 +92,6 @@ void RunOnCPUThread(std::function<void()> function, bool block = false);
 /// if the user cancels the shutdown confirmation.
 void RequestExit(bool allow_confirm);
 
-/// Attempts to create the rendering device backend.
-bool CreateGPUDevice(RenderAPI api);
-
-/// Handles fullscreen transitions and such.
-void UpdateDisplayWindow();
-
-/// Called when the window is resized.
-void ResizeDisplayWindow(s32 width, s32 height, float scale);
-
-/// Destroys any active rendering device.
-void ReleaseGPUDevice();
-
 /// Called before drawing the OSD and other display elements.
 void BeginPresentFrame();
 

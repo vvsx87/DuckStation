@@ -17,6 +17,8 @@
 #include "core/game_database.h"
 #include "core/game_list.h"
 #include "core/gpu.h"
+#include "core/gpu_backend.h"
+#include "core/gpu_thread.h"
 #include "core/host.h"
 #include "core/imgui_overlays.h"
 #include "core/memory_card.h"
@@ -472,10 +474,8 @@ void EmuThread::startFullscreenUI()
   setInitialState(s_start_fullscreen_ui_fullscreen ? std::optional<bool>(true) : std::optional<bool>());
   m_run_fullscreen_ui = true;
 
-  if (!Host::CreateGPUDevice(Settings::GetRenderAPIForRenderer(g_settings.gpu_renderer)) || !FullscreenUI::Initialize())
+  if (!GPUThread::StartFullscreenUI())
   {
-    Host::ReleaseGPUDevice();
-    Host::ReleaseRenderWindow();
     m_run_fullscreen_ui = false;
     return;
   }
@@ -512,8 +512,7 @@ void EmuThread::stopFullscreenUI()
   if (!g_gpu_device)
     return;
 
-  Host::ReleaseGPUDevice();
-  Host::ReleaseRenderWindow();
+  GPUThread::Shutdown();
 }
 
 void EmuThread::bootSystem(std::shared_ptr<SystemBootParameters> params)
@@ -606,7 +605,10 @@ void EmuThread::onDisplayWindowMouseWheelEvent(const QPoint& delta_angle)
 
 void EmuThread::onDisplayWindowResized(int width, int height, float scale)
 {
-  Host::ResizeDisplayWindow(width, height, scale);
+  if (!GPUThread::IsStarted())
+    return;
+
+  GPUThread::ResizeDisplayWindow(width, height, scale);
 }
 
 void EmuThread::redrawDisplayWindow()
@@ -620,7 +622,7 @@ void EmuThread::redrawDisplayWindow()
   if (!g_gpu_device || System::IsShutdown())
     return;
 
-  System::InvalidateDisplay();
+  GPUThread::PresentCurrentFrame();
 }
 
 void EmuThread::toggleFullscreen()
@@ -648,7 +650,7 @@ void EmuThread::setFullscreen(bool fullscreen, bool allow_render_to_main)
 
   m_is_fullscreen = fullscreen;
   m_is_rendering_to_main = allow_render_to_main && shouldRenderToMain();
-  Host::UpdateDisplayWindow();
+  GPUThread::UpdateDisplayWindow();
 }
 
 bool Host::IsFullscreen()
@@ -673,7 +675,7 @@ void EmuThread::setSurfaceless(bool surfaceless)
     return;
 
   m_is_surfaceless = surfaceless;
-  Host::UpdateDisplayWindow();
+  GPUThread::UpdateDisplayWindow();
 }
 
 void EmuThread::requestDisplaySize(float scale)
@@ -1332,33 +1334,16 @@ void EmuThread::run()
   // main loop
   while (!m_shutdown_flag)
   {
+    // TODO: Maybe make this better?
     if (System::IsRunning())
-    {
       System::Execute();
-    }
     else
-    {
-      // we want to keep rendering the UI when paused and fullscreen UI is enabled
-      if (!FullscreenUI::HasActiveWindow() && !System::IsRunning())
-      {
-        // wait until we have a system before running
-        m_event_loop->exec();
-        continue;
-      }
-
-      m_event_loop->processEvents(QEventLoop::AllEvents);
-      System::Internal::IdlePollUpdate();
-      if (g_gpu_device)
-      {
-        System::PresentDisplay(false);
-        if (!g_gpu_device->IsVsyncEnabled())
-          g_gpu_device->ThrottlePresentation();
-      }
-    }
+      m_event_loop->exec();
   }
 
   if (System::IsValid())
     System::ShutdownSystem(false);
+  GPUThread::Shutdown();
 
   destroyBackgroundControllerPollTimer();
   System::Internal::ProcessShutdown();
@@ -1499,13 +1484,13 @@ void Host::ReleaseRenderWindow()
 
 void EmuThread::updatePerformanceCounters()
 {
-  const RenderAPI render_api = g_gpu_device ? g_gpu_device->GetRenderAPI() : RenderAPI::None;
-  const bool hardware_renderer = g_gpu && g_gpu->IsHardwareRenderer();
+  const RenderAPI render_api = GPUThread::GetRenderAPI();
+  const bool hardware_renderer = GPUBackend::IsUsingHardwareBackend();
   u32 render_width = 0;
   u32 render_height = 0;
 
-  if (g_gpu)
-    std::tie(render_width, render_height) = g_gpu->GetEffectiveDisplayResolution();
+  if (System::IsValid())
+    std::tie(render_width, render_height) = GPUBackend::GetLastDisplaySourceSize();
 
   if (render_api != m_last_render_api || hardware_renderer != m_last_hardware_renderer)
   {

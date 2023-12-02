@@ -6,30 +6,67 @@
 
 #include "util/gpu_device.h"
 
+#include "common/align.h"
+#include "common/assert.h"
+#include "common/intrin.h"
+#include "common/log.h"
+
 #include <algorithm>
 
-GPU_SW_Backend::GPU_SW_Backend() : GPUBackend()
+Log_SetChannel(GPUSWBackend);
+
+static constexpr u16*& m_vram = GPU::m_vram_ptr;
+
+ALWAYS_INLINE_RELEASE static u16 GetPixel(const u32 x, const u32 y)
 {
-  m_vram.fill(0);
-  m_vram_ptr = m_vram.data();
+  return m_vram[VRAM_WIDTH * y + x];
+}
+ALWAYS_INLINE_RELEASE static void SetPixel(const u32 x, const u32 y, const u16 value)
+{
+  m_vram[VRAM_WIDTH * y + x] = value;
 }
 
-GPU_SW_Backend::~GPU_SW_Backend() = default;
-
-bool GPU_SW_Backend::Initialize(bool force_thread)
+GPUSWBackend::GPUSWBackend() : GPUBackend()
 {
-  return GPUBackend::Initialize(force_thread);
 }
 
-void GPU_SW_Backend::Reset(bool clear_vram)
+GPUSWBackend::~GPUSWBackend() = default;
+
+bool GPUSWBackend::Initialize()
 {
-  GPUBackend::Reset(clear_vram);
+  if (!GPUBackend::Initialize())
+    return false;
+
+  std::memset(m_vram, 0, VRAM_SIZE);
+  SetDisplayTextureFormat();
+  return true;
+}
+
+void GPUSWBackend::Shutdown()
+{
+  GPUBackend::Shutdown();
+}
+
+bool GPUSWBackend::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_display)
+{
+  // TODO: FIXME
+  // ignore the host texture for software mode, since we want to save vram here
+  return GPUBackend::DoState(sw, nullptr, update_display);
+}
+
+void GPUSWBackend::Reset(bool clear_vram)
+{
+  m_drawing_area = {};
 
   if (clear_vram)
-    m_vram.fill(0);
+    std::memset(m_vram, 0, VRAM_SIZE);
 }
 
-void GPU_SW_Backend::DrawPolygon(const GPUBackendDrawPolygonCommand* cmd)
+void GPUSWBackend::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
+{
+}
+
+void GPUSWBackend::DrawPolygon(const GPUBackendDrawPolygonCommand* cmd)
 {
   const GPURenderCommand rc{cmd->rc.bits};
   const bool dithering_enable = rc.IsDitheringEnabled() && cmd->draw_mode.dither_enable;
@@ -42,17 +79,44 @@ void GPU_SW_Backend::DrawPolygon(const GPUBackendDrawPolygonCommand* cmd)
     (this->*DrawFunction)(cmd, &cmd->vertices[2], &cmd->vertices[1], &cmd->vertices[3]);
 }
 
-void GPU_SW_Backend::DrawRectangle(const GPUBackendDrawRectangleCommand* cmd)
+void GPUSWBackend::DrawPrecisePolygon(const GPUBackendDrawPrecisePolygonCommand* cmd)
+{
+  const GPURenderCommand rc{cmd->rc.bits};
+  const bool dithering_enable = rc.IsDitheringEnabled() && cmd->draw_mode.dither_enable;
+
+  const DrawTriangleFunction DrawFunction = GetDrawTriangleFunction(
+    rc.shading_enable, rc.texture_enable, rc.raw_texture_enable, rc.transparency_enable, dithering_enable);
+
+  // Need to cut out the irrelevant bits.
+  // TODO: In _theory_ we could use the fixed-point parts here.
+  GPUBackendDrawPolygonCommand::Vertex vertices[4];
+  for (u32 i = 0; i < cmd->num_vertices; i++)
+  {
+    const GPUBackendDrawPrecisePolygonCommand::Vertex& src = cmd->vertices[i];
+    GPUBackendDrawPolygonCommand::Vertex& dst = vertices[i];
+
+    dst.x = src.native_x;
+    dst.y = src.native_y;
+    dst.color = src.color;
+    dst.texcoord = src.texcoord;
+  }
+
+  (this->*DrawFunction)(cmd, &vertices[0], &vertices[1], &vertices[2]);
+  if (rc.quad_polygon)
+    (this->*DrawFunction)(cmd, &vertices[2], &vertices[1], &vertices[3]);
+}
+
+void GPUSWBackend::DrawSprite(const GPUBackendDrawSpriteCommand* cmd)
 {
   const GPURenderCommand rc{cmd->rc.bits};
 
-  const DrawRectangleFunction DrawFunction =
-    GetDrawRectangleFunction(rc.texture_enable, rc.raw_texture_enable, rc.transparency_enable);
+  const DrawSpriteFunction DrawFunction =
+    GetDrawSpriteFunction(rc.texture_enable, rc.raw_texture_enable, rc.transparency_enable);
 
   (this->*DrawFunction)(cmd);
 }
 
-void GPU_SW_Backend::DrawLine(const GPUBackendDrawLineCommand* cmd)
+void GPUSWBackend::DrawLine(const GPUBackendDrawLineCommand* cmd)
 {
   const DrawLineFunction DrawFunction =
     GetDrawLineFunction(cmd->rc.shading_enable, cmd->rc.transparency_enable, cmd->IsDitheringEnabled());
@@ -61,7 +125,7 @@ void GPU_SW_Backend::DrawLine(const GPUBackendDrawLineCommand* cmd)
     (this->*DrawFunction)(cmd, &cmd->vertices[i - 1], &cmd->vertices[i]);
 }
 
-constexpr GPU_SW_Backend::DitherLUT GPU_SW_Backend::ComputeDitherLUT()
+constexpr GPUSWBackend::DitherLUT GPUSWBackend::ComputeDitherLUT()
 {
   DitherLUT lut = {};
   for (u32 i = 0; i < DITHER_MATRIX_SIZE; i++)
@@ -78,11 +142,11 @@ constexpr GPU_SW_Backend::DitherLUT GPU_SW_Backend::ComputeDitherLUT()
   return lut;
 }
 
-static constexpr GPU_SW_Backend::DitherLUT s_dither_lut = GPU_SW_Backend::ComputeDitherLUT();
+static constexpr GPUSWBackend::DitherLUT s_dither_lut = GPUSWBackend::ComputeDitherLUT();
 
 template<bool texture_enable, bool raw_texture_enable, bool transparency_enable, bool dithering_enable>
-void ALWAYS_INLINE_RELEASE GPU_SW_Backend::ShadePixel(const GPUBackendDrawCommand* cmd, u32 x, u32 y, u8 color_r,
-                                                      u8 color_g, u8 color_b, u8 texcoord_x, u8 texcoord_y)
+void ALWAYS_INLINE_RELEASE GPUSWBackend::ShadePixel(const GPUBackendDrawCommand* cmd, u32 x, u32 y, u8 color_r,
+                                                    u8 color_g, u8 color_b, u8 texcoord_x, u8 texcoord_y)
 {
   VRAMPixel color;
   if constexpr (texture_enable)
@@ -224,7 +288,7 @@ void ALWAYS_INLINE_RELEASE GPU_SW_Backend::ShadePixel(const GPUBackendDrawComman
 }
 
 template<bool texture_enable, bool raw_texture_enable, bool transparency_enable>
-void GPU_SW_Backend::DrawRectangle(const GPUBackendDrawRectangleCommand* cmd)
+void GPUSWBackend::DrawSprite(const GPUBackendDrawSpriteCommand* cmd)
 {
   const s32 origin_x = cmd->x;
   const s32 origin_y = cmd->y;
@@ -291,9 +355,9 @@ static ALWAYS_INLINE_RELEASE s32 GetPolyXFP_Int(s64 xfp)
 }
 
 template<bool shading_enable, bool texture_enable>
-bool ALWAYS_INLINE_RELEASE GPU_SW_Backend::CalcIDeltas(i_deltas& idl, const GPUBackendDrawPolygonCommand::Vertex* A,
-                                                       const GPUBackendDrawPolygonCommand::Vertex* B,
-                                                       const GPUBackendDrawPolygonCommand::Vertex* C)
+bool ALWAYS_INLINE_RELEASE GPUSWBackend::CalcIDeltas(i_deltas& idl, const GPUBackendDrawPolygonCommand::Vertex* A,
+                                                     const GPUBackendDrawPolygonCommand::Vertex* B,
+                                                     const GPUBackendDrawPolygonCommand::Vertex* C)
 {
 #define CALCIS(x, y) (((B->x - A->x) * (C->y - B->y)) - ((C->x - B->x) * (B->y - A->y)))
 
@@ -329,7 +393,7 @@ bool ALWAYS_INLINE_RELEASE GPU_SW_Backend::CalcIDeltas(i_deltas& idl, const GPUB
 }
 
 template<bool shading_enable, bool texture_enable>
-void ALWAYS_INLINE_RELEASE GPU_SW_Backend::AddIDeltas_DX(i_group& ig, const i_deltas& idl, u32 count /*= 1*/)
+void ALWAYS_INLINE_RELEASE GPUSWBackend::AddIDeltas_DX(i_group& ig, const i_deltas& idl, u32 count /*= 1*/)
 {
   if constexpr (shading_enable)
   {
@@ -346,7 +410,7 @@ void ALWAYS_INLINE_RELEASE GPU_SW_Backend::AddIDeltas_DX(i_group& ig, const i_de
 }
 
 template<bool shading_enable, bool texture_enable>
-void ALWAYS_INLINE_RELEASE GPU_SW_Backend::AddIDeltas_DY(i_group& ig, const i_deltas& idl, u32 count /*= 1*/)
+void ALWAYS_INLINE_RELEASE GPUSWBackend::AddIDeltas_DY(i_group& ig, const i_deltas& idl, u32 count /*= 1*/)
 {
   if constexpr (shading_enable)
   {
@@ -364,8 +428,8 @@ void ALWAYS_INLINE_RELEASE GPU_SW_Backend::AddIDeltas_DY(i_group& ig, const i_de
 
 template<bool shading_enable, bool texture_enable, bool raw_texture_enable, bool transparency_enable,
          bool dithering_enable>
-void GPU_SW_Backend::DrawSpan(const GPUBackendDrawPolygonCommand* cmd, s32 y, s32 x_start, s32 x_bound, i_group ig,
-                              const i_deltas& idl)
+void GPUSWBackend::DrawSpan(const GPUBackendDrawCommand* cmd, s32 y, s32 x_start, s32 x_bound, i_group ig,
+                            const i_deltas& idl)
 {
   if (cmd->params.interlaced_rendering && cmd->params.active_line_lsb == (Truncate8(static_cast<u32>(y)) & 1u))
     return;
@@ -410,10 +474,9 @@ void GPU_SW_Backend::DrawSpan(const GPUBackendDrawPolygonCommand* cmd, s32 y, s3
 
 template<bool shading_enable, bool texture_enable, bool raw_texture_enable, bool transparency_enable,
          bool dithering_enable>
-void GPU_SW_Backend::DrawTriangle(const GPUBackendDrawPolygonCommand* cmd,
-                                  const GPUBackendDrawPolygonCommand::Vertex* v0,
-                                  const GPUBackendDrawPolygonCommand::Vertex* v1,
-                                  const GPUBackendDrawPolygonCommand::Vertex* v2)
+void GPUSWBackend::DrawTriangle(const GPUBackendDrawCommand* cmd, const GPUBackendDrawPolygonCommand::Vertex* v0,
+                                const GPUBackendDrawPolygonCommand::Vertex* v1,
+                                const GPUBackendDrawPolygonCommand::Vertex* v2)
 {
   u32 core_vertex;
   {
@@ -455,6 +518,7 @@ void GPU_SW_Backend::DrawTriangle(const GPUBackendDrawPolygonCommand* cmd,
   if (v0->y == v2->y)
     return;
 
+  // TODO: This could possibly be removed now.
   if (static_cast<u32>(std::abs(v2->x - v0->x)) >= MAX_PRIMITIVE_WIDTH ||
       static_cast<u32>(std::abs(v2->x - v1->x)) >= MAX_PRIMITIVE_WIDTH ||
       static_cast<u32>(std::abs(v1->x - v0->x)) >= MAX_PRIMITIVE_WIDTH ||
@@ -636,8 +700,8 @@ static ALWAYS_INLINE_RELEASE s64 LineDivide(s64 delta, s32 dk)
 }
 
 template<bool shading_enable, bool transparency_enable, bool dithering_enable>
-void GPU_SW_Backend::DrawLine(const GPUBackendDrawLineCommand* cmd, const GPUBackendDrawLineCommand::Vertex* p0,
-                              const GPUBackendDrawLineCommand::Vertex* p1)
+void GPUSWBackend::DrawLine(const GPUBackendDrawLineCommand* cmd, const GPUBackendDrawLineCommand::Vertex* p0,
+                            const GPUBackendDrawLineCommand::Vertex* p1)
 {
   const s32 i_dx = std::abs(p1->x - p0->x);
   const s32 i_dy = std::abs(p1->y - p0->y);
@@ -720,227 +784,552 @@ void GPU_SW_Backend::DrawLine(const GPUBackendDrawLineCommand* cmd, const GPUBac
   }
 }
 
-void GPU_SW_Backend::FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color, GPUBackendCommandParameters params)
+void GPUSWBackend::FlushRender()
 {
-  const u16 color16 = VRAMRGBA8888ToRGBA5551(color);
-  if ((x + width) <= VRAM_WIDTH && !params.interlaced_rendering)
-  {
-    for (u32 yoffs = 0; yoffs < height; yoffs++)
-    {
-      const u32 row = (y + yoffs) % VRAM_HEIGHT;
-      std::fill_n(&m_vram_ptr[row * VRAM_WIDTH + x], width, color16);
-    }
-  }
-  else if (params.interlaced_rendering)
-  {
-    // Hardware tests show that fills seem to break on the first two lines when the offset matches the displayed field.
-    const u32 active_field = params.active_line_lsb;
-    for (u32 yoffs = 0; yoffs < height; yoffs++)
-    {
-      const u32 row = (y + yoffs) % VRAM_HEIGHT;
-      if ((row & u32(1)) == active_field)
-        continue;
-
-      u16* row_ptr = &m_vram_ptr[row * VRAM_WIDTH];
-      for (u32 xoffs = 0; xoffs < width; xoffs++)
-      {
-        const u32 col = (x + xoffs) % VRAM_WIDTH;
-        row_ptr[col] = color16;
-      }
-    }
-  }
-  else
-  {
-    for (u32 yoffs = 0; yoffs < height; yoffs++)
-    {
-      const u32 row = (y + yoffs) % VRAM_HEIGHT;
-      u16* row_ptr = &m_vram_ptr[row * VRAM_WIDTH];
-      for (u32 xoffs = 0; xoffs < width; xoffs++)
-      {
-        const u32 col = (x + xoffs) % VRAM_WIDTH;
-        row_ptr[col] = color16;
-      }
-    }
-  }
 }
 
-void GPU_SW_Backend::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data,
-                                GPUBackendCommandParameters params)
+void GPUSWBackend::DrawingAreaChanged()
 {
-  // Fast path when the copy is not oversized.
-  if ((x + width) <= VRAM_WIDTH && (y + height) <= VRAM_HEIGHT && !params.IsMaskingEnabled())
-  {
-    const u16* src_ptr = static_cast<const u16*>(data);
-    u16* dst_ptr = &m_vram_ptr[y * VRAM_WIDTH + x];
-    for (u32 yoffs = 0; yoffs < height; yoffs++)
-    {
-      std::copy_n(src_ptr, width, dst_ptr);
-      src_ptr += width;
-      dst_ptr += VRAM_WIDTH;
-    }
-  }
-  else
-  {
-    // Slow path when we need to handle wrap-around.
-    const u16* src_ptr = static_cast<const u16*>(data);
-    const u16 mask_and = params.GetMaskAND();
-    const u16 mask_or = params.GetMaskOR();
-
-    for (u32 row = 0; row < height;)
-    {
-      u16* dst_row_ptr = &m_vram_ptr[((y + row++) % VRAM_HEIGHT) * VRAM_WIDTH];
-      for (u32 col = 0; col < width;)
-      {
-        // TODO: Handle unaligned reads...
-        u16* pixel_ptr = &dst_row_ptr[(x + col++) % VRAM_WIDTH];
-        if (((*pixel_ptr) & mask_and) == 0)
-          *pixel_ptr = *(src_ptr++) | mask_or;
-      }
-    }
-  }
 }
 
-void GPU_SW_Backend::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height,
-                              GPUBackendCommandParameters params)
-{
-  // Break up oversized copies. This behavior has not been verified on console.
-  if ((src_x + width) > VRAM_WIDTH || (dst_x + width) > VRAM_WIDTH)
-  {
-    u32 remaining_rows = height;
-    u32 current_src_y = src_y;
-    u32 current_dst_y = dst_y;
-    while (remaining_rows > 0)
-    {
-      const u32 rows_to_copy =
-        std::min<u32>(remaining_rows, std::min<u32>(VRAM_HEIGHT - current_src_y, VRAM_HEIGHT - current_dst_y));
-
-      u32 remaining_columns = width;
-      u32 current_src_x = src_x;
-      u32 current_dst_x = dst_x;
-      while (remaining_columns > 0)
-      {
-        const u32 columns_to_copy =
-          std::min<u32>(remaining_columns, std::min<u32>(VRAM_WIDTH - current_src_x, VRAM_WIDTH - current_dst_x));
-        CopyVRAM(current_src_x, current_src_y, current_dst_x, current_dst_y, columns_to_copy, rows_to_copy, params);
-        current_src_x = (current_src_x + columns_to_copy) % VRAM_WIDTH;
-        current_dst_x = (current_dst_x + columns_to_copy) % VRAM_WIDTH;
-        remaining_columns -= columns_to_copy;
-      }
-
-      current_src_y = (current_src_y + rows_to_copy) % VRAM_HEIGHT;
-      current_dst_y = (current_dst_y + rows_to_copy) % VRAM_HEIGHT;
-      remaining_rows -= rows_to_copy;
-    }
-
-    return;
-  }
-
-  // This doesn't have a fast path, but do we really need one? It's not common.
-  const u16 mask_and = params.GetMaskAND();
-  const u16 mask_or = params.GetMaskOR();
-
-  // Copy in reverse when src_x < dst_x, this is verified on console.
-  if (src_x < dst_x || ((src_x + width - 1) % VRAM_WIDTH) < ((dst_x + width - 1) % VRAM_WIDTH))
-  {
-    for (u32 row = 0; row < height; row++)
-    {
-      const u16* src_row_ptr = &m_vram_ptr[((src_y + row) % VRAM_HEIGHT) * VRAM_WIDTH];
-      u16* dst_row_ptr = &m_vram_ptr[((dst_y + row) % VRAM_HEIGHT) * VRAM_WIDTH];
-
-      for (s32 col = static_cast<s32>(width - 1); col >= 0; col--)
-      {
-        const u16 src_pixel = src_row_ptr[(src_x + static_cast<u32>(col)) % VRAM_WIDTH];
-        u16* dst_pixel_ptr = &dst_row_ptr[(dst_x + static_cast<u32>(col)) % VRAM_WIDTH];
-        if ((*dst_pixel_ptr & mask_and) == 0)
-          *dst_pixel_ptr = src_pixel | mask_or;
-      }
-    }
-  }
-  else
-  {
-    for (u32 row = 0; row < height; row++)
-    {
-      const u16* src_row_ptr = &m_vram_ptr[((src_y + row) % VRAM_HEIGHT) * VRAM_WIDTH];
-      u16* dst_row_ptr = &m_vram_ptr[((dst_y + row) % VRAM_HEIGHT) * VRAM_WIDTH];
-
-      for (u32 col = 0; col < width; col++)
-      {
-        const u16 src_pixel = src_row_ptr[(src_x + col) % VRAM_WIDTH];
-        u16* dst_pixel_ptr = &dst_row_ptr[(dst_x + col) % VRAM_WIDTH];
-        if ((*dst_pixel_ptr & mask_and) == 0)
-          *dst_pixel_ptr = src_pixel | mask_or;
-      }
-    }
-  }
-}
-
-void GPU_SW_Backend::FlushRender() {}
-
-void GPU_SW_Backend::DrawingAreaChanged() {}
-
-GPU_SW_Backend::DrawLineFunction GPU_SW_Backend::GetDrawLineFunction(bool shading_enable, bool transparency_enable,
-                                                                     bool dithering_enable)
+GPUSWBackend::DrawLineFunction GPUSWBackend::GetDrawLineFunction(bool shading_enable, bool transparency_enable,
+                                                                 bool dithering_enable)
 {
   static constexpr DrawLineFunction funcs[2][2][2] = {
-    {{&GPU_SW_Backend::DrawLine<false, false, false>, &GPU_SW_Backend::DrawLine<false, false, true>},
-     {&GPU_SW_Backend::DrawLine<false, true, false>, &GPU_SW_Backend::DrawLine<false, true, true>}},
-    {{&GPU_SW_Backend::DrawLine<true, false, false>, &GPU_SW_Backend::DrawLine<true, false, true>},
-     {&GPU_SW_Backend::DrawLine<true, true, false>, &GPU_SW_Backend::DrawLine<true, true, true>}}};
+    {{&GPUSWBackend::DrawLine<false, false, false>, &GPUSWBackend::DrawLine<false, false, true>},
+     {&GPUSWBackend::DrawLine<false, true, false>, &GPUSWBackend::DrawLine<false, true, true>}},
+    {{&GPUSWBackend::DrawLine<true, false, false>, &GPUSWBackend::DrawLine<true, false, true>},
+     {&GPUSWBackend::DrawLine<true, true, false>, &GPUSWBackend::DrawLine<true, true, true>}}};
 
   return funcs[u8(shading_enable)][u8(transparency_enable)][u8(dithering_enable)];
 }
 
-GPU_SW_Backend::DrawRectangleFunction
-GPU_SW_Backend::GetDrawRectangleFunction(bool texture_enable, bool raw_texture_enable, bool transparency_enable)
+GPUSWBackend::DrawSpriteFunction GPUSWBackend::GetDrawSpriteFunction(bool texture_enable, bool raw_texture_enable,
+                                                                     bool transparency_enable)
 {
-  static constexpr DrawRectangleFunction funcs[2][2][2] = {
-    {{&GPU_SW_Backend::DrawRectangle<false, false, false>, &GPU_SW_Backend::DrawRectangle<false, false, true>},
-     {&GPU_SW_Backend::DrawRectangle<false, false, false>, &GPU_SW_Backend::DrawRectangle<false, false, true>}},
-    {{&GPU_SW_Backend::DrawRectangle<true, false, false>, &GPU_SW_Backend::DrawRectangle<true, false, true>},
-     {&GPU_SW_Backend::DrawRectangle<true, true, false>, &GPU_SW_Backend::DrawRectangle<true, true, true>}}};
+  static constexpr DrawSpriteFunction funcs[2][2][2] = {
+    {{&GPUSWBackend::DrawSprite<false, false, false>, &GPUSWBackend::DrawSprite<false, false, true>},
+     {&GPUSWBackend::DrawSprite<false, false, false>, &GPUSWBackend::DrawSprite<false, false, true>}},
+    {{&GPUSWBackend::DrawSprite<true, false, false>, &GPUSWBackend::DrawSprite<true, false, true>},
+     {&GPUSWBackend::DrawSprite<true, true, false>, &GPUSWBackend::DrawSprite<true, true, true>}}};
 
   return funcs[u8(texture_enable)][u8(raw_texture_enable)][u8(transparency_enable)];
 }
 
-GPU_SW_Backend::DrawTriangleFunction GPU_SW_Backend::GetDrawTriangleFunction(bool shading_enable, bool texture_enable,
-                                                                             bool raw_texture_enable,
-                                                                             bool transparency_enable,
-                                                                             bool dithering_enable)
+GPUSWBackend::DrawTriangleFunction GPUSWBackend::GetDrawTriangleFunction(bool shading_enable, bool texture_enable,
+                                                                         bool raw_texture_enable,
+                                                                         bool transparency_enable,
+                                                                         bool dithering_enable)
 {
   static constexpr DrawTriangleFunction funcs[2][2][2][2][2] = {
-    {{{{&GPU_SW_Backend::DrawTriangle<false, false, false, false, false>,
-        &GPU_SW_Backend::DrawTriangle<false, false, false, false, true>},
-       {&GPU_SW_Backend::DrawTriangle<false, false, false, true, false>,
-        &GPU_SW_Backend::DrawTriangle<false, false, false, true, true>}},
-      {{&GPU_SW_Backend::DrawTriangle<false, false, false, false, false>,
-        &GPU_SW_Backend::DrawTriangle<false, false, false, false, false>},
-       {&GPU_SW_Backend::DrawTriangle<false, false, false, true, false>,
-        &GPU_SW_Backend::DrawTriangle<false, false, false, true, false>}}},
-     {{{&GPU_SW_Backend::DrawTriangle<false, true, false, false, false>,
-        &GPU_SW_Backend::DrawTriangle<false, true, false, false, true>},
-       {&GPU_SW_Backend::DrawTriangle<false, true, false, true, false>,
-        &GPU_SW_Backend::DrawTriangle<false, true, false, true, true>}},
-      {{&GPU_SW_Backend::DrawTriangle<false, true, true, false, false>,
-        &GPU_SW_Backend::DrawTriangle<false, true, true, false, false>},
-       {&GPU_SW_Backend::DrawTriangle<false, true, true, true, false>,
-        &GPU_SW_Backend::DrawTriangle<false, true, true, true, false>}}}},
-    {{{{&GPU_SW_Backend::DrawTriangle<true, false, false, false, false>,
-        &GPU_SW_Backend::DrawTriangle<true, false, false, false, true>},
-       {&GPU_SW_Backend::DrawTriangle<true, false, false, true, false>,
-        &GPU_SW_Backend::DrawTriangle<true, false, false, true, true>}},
-      {{&GPU_SW_Backend::DrawTriangle<true, false, false, false, false>,
-        &GPU_SW_Backend::DrawTriangle<true, false, false, false, false>},
-       {&GPU_SW_Backend::DrawTriangle<true, false, false, true, false>,
-        &GPU_SW_Backend::DrawTriangle<true, false, false, true, false>}}},
-     {{{&GPU_SW_Backend::DrawTriangle<true, true, false, false, false>,
-        &GPU_SW_Backend::DrawTriangle<true, true, false, false, true>},
-       {&GPU_SW_Backend::DrawTriangle<true, true, false, true, false>,
-        &GPU_SW_Backend::DrawTriangle<true, true, false, true, true>}},
-      {{&GPU_SW_Backend::DrawTriangle<true, true, true, false, false>,
-        &GPU_SW_Backend::DrawTriangle<true, true, true, false, false>},
-       {&GPU_SW_Backend::DrawTriangle<true, true, true, true, false>,
-        &GPU_SW_Backend::DrawTriangle<true, true, true, true, false>}}}}};
+    {{{{&GPUSWBackend::DrawTriangle<false, false, false, false, false>,
+        &GPUSWBackend::DrawTriangle<false, false, false, false, true>},
+       {&GPUSWBackend::DrawTriangle<false, false, false, true, false>,
+        &GPUSWBackend::DrawTriangle<false, false, false, true, true>}},
+      {{&GPUSWBackend::DrawTriangle<false, false, false, false, false>,
+        &GPUSWBackend::DrawTriangle<false, false, false, false, false>},
+       {&GPUSWBackend::DrawTriangle<false, false, false, true, false>,
+        &GPUSWBackend::DrawTriangle<false, false, false, true, false>}}},
+     {{{&GPUSWBackend::DrawTriangle<false, true, false, false, false>,
+        &GPUSWBackend::DrawTriangle<false, true, false, false, true>},
+       {&GPUSWBackend::DrawTriangle<false, true, false, true, false>,
+        &GPUSWBackend::DrawTriangle<false, true, false, true, true>}},
+      {{&GPUSWBackend::DrawTriangle<false, true, true, false, false>,
+        &GPUSWBackend::DrawTriangle<false, true, true, false, false>},
+       {&GPUSWBackend::DrawTriangle<false, true, true, true, false>,
+        &GPUSWBackend::DrawTriangle<false, true, true, true, false>}}}},
+    {{{{&GPUSWBackend::DrawTriangle<true, false, false, false, false>,
+        &GPUSWBackend::DrawTriangle<true, false, false, false, true>},
+       {&GPUSWBackend::DrawTriangle<true, false, false, true, false>,
+        &GPUSWBackend::DrawTriangle<true, false, false, true, true>}},
+      {{&GPUSWBackend::DrawTriangle<true, false, false, false, false>,
+        &GPUSWBackend::DrawTriangle<true, false, false, false, false>},
+       {&GPUSWBackend::DrawTriangle<true, false, false, true, false>,
+        &GPUSWBackend::DrawTriangle<true, false, false, true, false>}}},
+     {{{&GPUSWBackend::DrawTriangle<true, true, false, false, false>,
+        &GPUSWBackend::DrawTriangle<true, true, false, false, true>},
+       {&GPUSWBackend::DrawTriangle<true, true, false, true, false>,
+        &GPUSWBackend::DrawTriangle<true, true, false, true, true>}},
+      {{&GPUSWBackend::DrawTriangle<true, true, true, false, false>,
+        &GPUSWBackend::DrawTriangle<true, true, true, false, false>},
+       {&GPUSWBackend::DrawTriangle<true, true, true, true, false>,
+        &GPUSWBackend::DrawTriangle<true, true, true, true, false>}}}}};
 
   return funcs[u8(shading_enable)][u8(texture_enable)][u8(raw_texture_enable)][u8(transparency_enable)]
               [u8(dithering_enable)];
+}
+
+void GPUSWBackend::SetDisplayTextureFormat()
+{
+  static constexpr const std::array formats_for_16bit = {GPUTexture::Format::RGB565, GPUTexture::Format::RGBA5551,
+                                                         GPUTexture::Format::RGBA8, GPUTexture::Format::BGRA8};
+  static constexpr const std::array formats_for_24bit = {GPUTexture::Format::RGBA8, GPUTexture::Format::BGRA8,
+                                                         GPUTexture::Format::RGB565, GPUTexture::Format::RGBA5551};
+  for (const GPUTexture::Format format : formats_for_16bit)
+  {
+    if (g_gpu_device->SupportsTextureFormat(format))
+    {
+      m_16bit_display_format = format;
+      break;
+    }
+  }
+  for (const GPUTexture::Format format : formats_for_24bit)
+  {
+    if (g_gpu_device->SupportsTextureFormat(format))
+    {
+      m_24bit_display_format = format;
+      break;
+    }
+  }
+}
+
+GPUTexture* GPUSWBackend::GetDisplayTexture(u32 width, u32 height, GPUTexture::Format format)
+{
+  if (!m_private_display_texture || m_private_display_texture->GetWidth() != width ||
+      m_private_display_texture->GetHeight() != height || m_private_display_texture->GetFormat() != format)
+  {
+    ClearDisplayTexture();
+    m_private_display_texture.reset();
+    m_private_display_texture =
+      g_gpu_device->FetchTexture(width, height, 1, 1, 1, GPUTexture::Type::Texture, format, nullptr, 0);
+    if (!m_private_display_texture)
+      Log_ErrorPrintf("Failed to create %ux%u %u texture", width, height, static_cast<u32>(format));
+  }
+
+  return m_private_display_texture.get();
+}
+
+template<GPUTexture::Format out_format, typename out_type>
+static void CopyOutRow16(const u16* src_ptr, out_type* dst_ptr, u32 width);
+
+template<GPUTexture::Format out_format, typename out_type>
+static out_type VRAM16ToOutput(u16 value);
+
+template<>
+ALWAYS_INLINE u16 VRAM16ToOutput<GPUTexture::Format::RGBA5551, u16>(u16 value)
+{
+  return (value & 0x3E0) | ((value >> 10) & 0x1F) | ((value & 0x1F) << 10);
+}
+
+template<>
+ALWAYS_INLINE u16 VRAM16ToOutput<GPUTexture::Format::RGB565, u16>(u16 value)
+{
+  return ((value & 0x3E0) << 1) | ((value & 0x20) << 1) | ((value >> 10) & 0x1F) | ((value & 0x1F) << 11);
+}
+
+template<>
+ALWAYS_INLINE u32 VRAM16ToOutput<GPUTexture::Format::RGBA8, u32>(u16 value)
+{
+  const u32 value32 = ZeroExtend32(value);
+  const u32 r = (value32 & 31u) << 3;
+  const u32 g = ((value32 >> 5) & 31u) << 3;
+  const u32 b = ((value32 >> 10) & 31u) << 3;
+  const u32 a = ((value >> 15) != 0) ? 255 : 0;
+  return ZeroExtend32(r) | (ZeroExtend32(g) << 8) | (ZeroExtend32(b) << 16) | (ZeroExtend32(a) << 24);
+}
+
+template<>
+ALWAYS_INLINE u32 VRAM16ToOutput<GPUTexture::Format::BGRA8, u32>(u16 value)
+{
+  const u32 value32 = ZeroExtend32(value);
+  const u32 r = (value32 & 31u) << 3;
+  const u32 g = ((value32 >> 5) & 31u) << 3;
+  const u32 b = ((value32 >> 10) & 31u) << 3;
+  return ZeroExtend32(b) | (ZeroExtend32(g) << 8) | (ZeroExtend32(r) << 16) | (0xFF000000u);
+}
+
+template<>
+ALWAYS_INLINE void CopyOutRow16<GPUTexture::Format::RGBA5551, u16>(const u16* src_ptr, u16* dst_ptr, u32 width)
+{
+  u32 col = 0;
+
+#if defined(CPU_ARCH_SSE)
+  const u32 aligned_width = Common::AlignDownPow2(width, 8);
+  for (; col < aligned_width; col += 8)
+  {
+    const __m128i single_mask = _mm_set1_epi16(0x1F);
+    __m128i value = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_ptr));
+    src_ptr += 8;
+    __m128i a = _mm_and_si128(value, _mm_set1_epi16(static_cast<s16>(static_cast<u16>(0x3E0))));
+    __m128i b = _mm_and_si128(_mm_srli_epi16(value, 10), single_mask);
+    __m128i c = _mm_slli_epi16(_mm_and_si128(value, single_mask), 10);
+    value = _mm_or_si128(_mm_or_si128(a, b), c);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(dst_ptr), value);
+    dst_ptr += 8;
+  }
+#elif defined(CPU_ARCH_NEON)
+  const u32 aligned_width = Common::AlignDownPow2(width, 8);
+  for (; col < aligned_width; col += 8)
+  {
+    const uint16x8_t single_mask = vdupq_n_u16(0x1F);
+    uint16x8_t value = vld1q_u16(src_ptr);
+    src_ptr += 8;
+    uint16x8_t a = vandq_u16(value, vdupq_n_u16(0x3E0));
+    uint16x8_t b = vandq_u16(vshrq_n_u16(value, 10), single_mask);
+    uint16x8_t c = vshlq_n_u16(vandq_u16(value, single_mask), 10);
+    value = vorrq_u16(vorrq_u16(a, b), c);
+    vst1q_u16(dst_ptr, value);
+    dst_ptr += 8;
+  }
+#endif
+
+  for (; col < width; col++)
+    *(dst_ptr++) = VRAM16ToOutput<GPUTexture::Format::RGBA5551, u16>(*(src_ptr++));
+}
+
+template<>
+ALWAYS_INLINE void CopyOutRow16<GPUTexture::Format::RGB565, u16>(const u16* src_ptr, u16* dst_ptr, u32 width)
+{
+  u32 col = 0;
+
+#if defined(CPU_ARCH_SSE)
+  const u32 aligned_width = Common::AlignDownPow2(width, 8);
+  for (; col < aligned_width; col += 8)
+  {
+    const __m128i single_mask = _mm_set1_epi16(0x1F);
+    __m128i value = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_ptr));
+    src_ptr += 8;
+    __m128i a = _mm_slli_epi16(_mm_and_si128(value, _mm_set1_epi16(static_cast<s16>(static_cast<u16>(0x3E0)))), 1);
+    __m128i b = _mm_slli_epi16(_mm_and_si128(value, _mm_set1_epi16(static_cast<s16>(static_cast<u16>(0x20)))), 1);
+    __m128i c = _mm_and_si128(_mm_srli_epi16(value, 10), single_mask);
+    __m128i d = _mm_slli_epi16(_mm_and_si128(value, single_mask), 11);
+    value = _mm_or_si128(_mm_or_si128(_mm_or_si128(a, b), c), d);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(dst_ptr), value);
+    dst_ptr += 8;
+  }
+#elif defined(CPU_ARCH_NEON)
+  const u32 aligned_width = Common::AlignDownPow2(width, 8);
+  const uint16x8_t single_mask = vdupq_n_u16(0x1F);
+  for (; col < aligned_width; col += 8)
+  {
+    uint16x8_t value = vld1q_u16(src_ptr);
+    src_ptr += 8;
+    uint16x8_t a = vshlq_n_u16(vandq_u16(value, vdupq_n_u16(0x3E0)), 1); // (value & 0x3E0) << 1
+    uint16x8_t b = vshlq_n_u16(vandq_u16(value, vdupq_n_u16(0x20)), 1);  // (value & 0x20) << 1
+    uint16x8_t c = vandq_u16(vshrq_n_u16(value, 10), single_mask);       // ((value >> 10) & 0x1F)
+    uint16x8_t d = vshlq_n_u16(vandq_u16(value, single_mask), 11);       // ((value & 0x1F) << 11)
+    value = vorrq_u16(vorrq_u16(vorrq_u16(a, b), c), d);
+    vst1q_u16(dst_ptr, value);
+    dst_ptr += 8;
+  }
+#endif
+
+  for (; col < width; col++)
+    *(dst_ptr++) = VRAM16ToOutput<GPUTexture::Format::RGB565, u16>(*(src_ptr++));
+}
+
+template<>
+ALWAYS_INLINE void CopyOutRow16<GPUTexture::Format::RGBA8, u32>(const u16* src_ptr, u32* dst_ptr, u32 width)
+{
+  for (u32 col = 0; col < width; col++)
+    *(dst_ptr++) = VRAM16ToOutput<GPUTexture::Format::RGBA8, u32>(*(src_ptr++));
+}
+
+template<>
+ALWAYS_INLINE void CopyOutRow16<GPUTexture::Format::BGRA8, u32>(const u16* src_ptr, u32* dst_ptr, u32 width)
+{
+  for (u32 col = 0; col < width; col++)
+    *(dst_ptr++) = VRAM16ToOutput<GPUTexture::Format::BGRA8, u32>(*(src_ptr++));
+}
+
+template<GPUTexture::Format display_format>
+void GPUSWBackend::CopyOut15Bit(u32 src_x, u32 src_y, u32 width, u32 height, u32 field, bool interlaced,
+                                bool interleaved)
+{
+  using OutputPixelType =
+    std::conditional_t<display_format == GPUTexture::Format::RGBA8 || display_format == GPUTexture::Format::BGRA8, u32,
+                       u16>;
+
+  GPUTexture* texture = GetDisplayTexture(width, height, display_format);
+  if (!texture)
+    return;
+
+  u32 dst_stride = GPU_MAX_DISPLAY_WIDTH * sizeof(OutputPixelType);
+  u8* dst_ptr = m_display_texture_buffer.data() + (interlaced ? (field != 0 ? dst_stride : 0) : 0);
+
+  const bool mapped =
+    (!interlaced && texture->Map(reinterpret_cast<void**>(&dst_ptr), &dst_stride, 0, 0, width, height));
+
+  const u32 output_stride = dst_stride;
+  const u8 interlaced_shift = BoolToUInt8(interlaced);
+  const u8 interleaved_shift = BoolToUInt8(interleaved);
+
+  // Fast path when not wrapping around.
+  if ((src_x + width) <= VRAM_WIDTH && (src_y + height) <= VRAM_HEIGHT)
+  {
+    const u32 rows = height >> interlaced_shift;
+    dst_stride <<= interlaced_shift;
+
+    const u16* src_ptr = &m_vram[src_y * VRAM_WIDTH + src_x];
+    const u32 src_step = VRAM_WIDTH << interleaved_shift;
+    for (u32 row = 0; row < rows; row++)
+    {
+      CopyOutRow16<display_format>(src_ptr, reinterpret_cast<OutputPixelType*>(dst_ptr), width);
+      src_ptr += src_step;
+      dst_ptr += dst_stride;
+    }
+  }
+  else
+  {
+    const u32 rows = height >> interlaced_shift;
+    dst_stride <<= interlaced_shift;
+
+    const u32 end_x = src_x + width;
+    for (u32 row = 0; row < rows; row++)
+    {
+      const u16* src_row_ptr = &m_vram[(src_y % VRAM_HEIGHT) * VRAM_WIDTH];
+      OutputPixelType* dst_row_ptr = reinterpret_cast<OutputPixelType*>(dst_ptr);
+
+      for (u32 col = src_x; col < end_x; col++)
+        *(dst_row_ptr++) = VRAM16ToOutput<display_format, OutputPixelType>(src_row_ptr[col % VRAM_WIDTH]);
+
+      src_y += (1 << interleaved_shift);
+      dst_ptr += dst_stride;
+    }
+  }
+
+  if (mapped)
+    texture->Unmap();
+  else
+    texture->Update(0, 0, width, height, m_display_texture_buffer.data(), output_stride);
+
+  SetDisplayTexture(texture, 0, 0, width, height);
+}
+
+void GPUSWBackend::CopyOut15Bit(GPUTexture::Format display_format, u32 src_x, u32 src_y, u32 width, u32 height,
+                                u32 field, bool interlaced, bool interleaved)
+{
+  switch (display_format)
+  {
+    case GPUTexture::Format::RGBA5551:
+      CopyOut15Bit<GPUTexture::Format::RGBA5551>(src_x, src_y, width, height, field, interlaced, interleaved);
+      break;
+    case GPUTexture::Format::RGB565:
+      CopyOut15Bit<GPUTexture::Format::RGB565>(src_x, src_y, width, height, field, interlaced, interleaved);
+      break;
+    case GPUTexture::Format::RGBA8:
+      CopyOut15Bit<GPUTexture::Format::RGBA8>(src_x, src_y, width, height, field, interlaced, interleaved);
+      break;
+    case GPUTexture::Format::BGRA8:
+      CopyOut15Bit<GPUTexture::Format::BGRA8>(src_x, src_y, width, height, field, interlaced, interleaved);
+      break;
+    default:
+      break;
+  }
+}
+
+template<GPUTexture::Format display_format>
+void GPUSWBackend::CopyOut24Bit(u32 src_x, u32 src_y, u32 skip_x, u32 width, u32 height, u32 field, bool interlaced,
+                                bool interleaved)
+{
+  using OutputPixelType =
+    std::conditional_t<display_format == GPUTexture::Format::RGBA8 || display_format == GPUTexture::Format::BGRA8, u32,
+                       u16>;
+
+  GPUTexture* texture = GetDisplayTexture(width, height, display_format);
+  if (!texture)
+    return;
+
+  u32 dst_stride = Common::AlignUpPow2<u32>(width * sizeof(OutputPixelType), 4);
+  u8* dst_ptr = m_display_texture_buffer.data() + (interlaced ? (field != 0 ? dst_stride : 0) : 0);
+  const bool mapped =
+    (!interlaced && texture->Map(reinterpret_cast<void**>(&dst_ptr), &dst_stride, 0, 0, width, height));
+
+  const u32 output_stride = dst_stride;
+  const u8 interlaced_shift = BoolToUInt8(interlaced);
+  const u8 interleaved_shift = BoolToUInt8(interleaved);
+  const u32 rows = height >> interlaced_shift;
+  dst_stride <<= interlaced_shift;
+
+  if ((src_x + width) <= VRAM_WIDTH && (src_y + (rows << interleaved_shift)) <= VRAM_HEIGHT)
+  {
+    const u8* src_ptr = reinterpret_cast<const u8*>(&m_vram[src_y * VRAM_WIDTH + src_x]) + (skip_x * 3);
+    const u32 src_stride = (VRAM_WIDTH << interleaved_shift) * sizeof(u16);
+    for (u32 row = 0; row < rows; row++)
+    {
+      if constexpr (display_format == GPUTexture::Format::RGBA8)
+      {
+        const u8* src_row_ptr = src_ptr;
+        u8* dst_row_ptr = reinterpret_cast<u8*>(dst_ptr);
+        for (u32 col = 0; col < width; col++)
+        {
+          *(dst_row_ptr++) = *(src_row_ptr++);
+          *(dst_row_ptr++) = *(src_row_ptr++);
+          *(dst_row_ptr++) = *(src_row_ptr++);
+          *(dst_row_ptr++) = 0xFF;
+        }
+      }
+      else if constexpr (display_format == GPUTexture::Format::BGRA8)
+      {
+        const u8* src_row_ptr = src_ptr;
+        u8* dst_row_ptr = reinterpret_cast<u8*>(dst_ptr);
+        for (u32 col = 0; col < width; col++)
+        {
+          *(dst_row_ptr++) = src_row_ptr[2];
+          *(dst_row_ptr++) = src_row_ptr[1];
+          *(dst_row_ptr++) = src_row_ptr[0];
+          *(dst_row_ptr++) = 0xFF;
+          src_row_ptr += 3;
+        }
+      }
+      else if constexpr (display_format == GPUTexture::Format::RGB565)
+      {
+        const u8* src_row_ptr = src_ptr;
+        u16* dst_row_ptr = reinterpret_cast<u16*>(dst_ptr);
+        for (u32 col = 0; col < width; col++)
+        {
+          *(dst_row_ptr++) = ((static_cast<u16>(src_row_ptr[0]) >> 3) << 11) |
+                             ((static_cast<u16>(src_row_ptr[1]) >> 2) << 5) | (static_cast<u16>(src_row_ptr[2]) >> 3);
+          src_row_ptr += 3;
+        }
+      }
+      else if constexpr (display_format == GPUTexture::Format::RGBA5551)
+      {
+        const u8* src_row_ptr = src_ptr;
+        u16* dst_row_ptr = reinterpret_cast<u16*>(dst_ptr);
+        for (u32 col = 0; col < width; col++)
+        {
+          *(dst_row_ptr++) = ((static_cast<u16>(src_row_ptr[0]) >> 3) << 10) |
+                             ((static_cast<u16>(src_row_ptr[1]) >> 3) << 5) | (static_cast<u16>(src_row_ptr[2]) >> 3);
+          src_row_ptr += 3;
+        }
+      }
+
+      src_ptr += src_stride;
+      dst_ptr += dst_stride;
+    }
+  }
+  else
+  {
+    for (u32 row = 0; row < rows; row++)
+    {
+      const u16* src_row_ptr = &m_vram[(src_y % VRAM_HEIGHT) * VRAM_WIDTH];
+      OutputPixelType* dst_row_ptr = reinterpret_cast<OutputPixelType*>(dst_ptr);
+
+      for (u32 col = 0; col < width; col++)
+      {
+        const u32 offset = (src_x + (((skip_x + col) * 3) / 2));
+        const u16 s0 = src_row_ptr[offset % VRAM_WIDTH];
+        const u16 s1 = src_row_ptr[(offset + 1) % VRAM_WIDTH];
+        const u8 shift = static_cast<u8>(col & 1u) * 8;
+        const u32 rgb = (((ZeroExtend32(s1) << 16) | ZeroExtend32(s0)) >> shift);
+
+        if constexpr (display_format == GPUTexture::Format::RGBA8)
+        {
+          *(dst_row_ptr++) = rgb | 0xFF000000u;
+        }
+        else if constexpr (display_format == GPUTexture::Format::BGRA8)
+        {
+          *(dst_row_ptr++) = (rgb & 0x00FF00) | ((rgb & 0xFF) << 16) | ((rgb >> 16) & 0xFF) | 0xFF000000u;
+        }
+        else if constexpr (display_format == GPUTexture::Format::RGB565)
+        {
+          *(dst_row_ptr++) = ((rgb >> 3) & 0x1F) | (((rgb >> 10) << 5) & 0x7E0) | (((rgb >> 19) << 11) & 0x3E0000);
+        }
+        else if constexpr (display_format == GPUTexture::Format::RGBA5551)
+        {
+          *(dst_row_ptr++) = ((rgb >> 3) & 0x1F) | (((rgb >> 11) << 5) & 0x3E0) | (((rgb >> 19) << 10) & 0x1F0000);
+        }
+      }
+
+      src_y += (1 << interleaved_shift);
+      dst_ptr += dst_stride;
+    }
+  }
+
+  if (mapped)
+    texture->Unmap();
+  else
+    texture->Update(0, 0, width, height, m_display_texture_buffer.data(), output_stride);
+
+  SetDisplayTexture(texture, 0, 0, width, height);
+}
+
+void GPUSWBackend::CopyOut24Bit(GPUTexture::Format display_format, u32 src_x, u32 src_y, u32 skip_x, u32 width,
+                                u32 height, u32 field, bool interlaced, bool interleaved)
+{
+  switch (display_format)
+  {
+    case GPUTexture::Format::RGBA5551:
+      CopyOut24Bit<GPUTexture::Format::RGBA5551>(src_x, src_y, skip_x, width, height, field, interlaced, interleaved);
+      break;
+    case GPUTexture::Format::RGB565:
+      CopyOut24Bit<GPUTexture::Format::RGB565>(src_x, src_y, skip_x, width, height, field, interlaced, interleaved);
+      break;
+    case GPUTexture::Format::RGBA8:
+      CopyOut24Bit<GPUTexture::Format::RGBA8>(src_x, src_y, skip_x, width, height, field, interlaced, interleaved);
+      break;
+    case GPUTexture::Format::BGRA8:
+      CopyOut24Bit<GPUTexture::Format::BGRA8>(src_x, src_y, skip_x, width, height, field, interlaced, interleaved);
+      break;
+    default:
+      break;
+  }
+}
+
+void GPUSWBackend::ClearDisplay()
+{
+  std::memset(m_display_texture_buffer.data(), 0, m_display_texture_buffer.size());
+}
+
+void GPUSWBackend::UpdateDisplay(const GPUBackendUpdateDisplayCommand* cmd)
+{
+  if (!g_settings.debugging.show_vram)
+  {
+    SetDisplayParameters(cmd->display_width, cmd->display_height, cmd->display_origin_left, cmd->display_origin_top,
+                         cmd->display_vram_width, cmd->display_vram_height, cmd->display_aspect_ratio);
+
+    if (cmd->display_disabled)
+    {
+      ClearDisplayTexture();
+      return;
+    }
+
+    const u32 vram_offset_y = cmd->display_vram_top;
+    const u32 display_width = cmd->display_vram_width;
+    const u32 display_height = cmd->display_vram_height;
+
+    if (cmd->interlaced_display_enabled)
+    {
+      const u32 field = cmd->interlaced_display_field;
+      if (cmd->display_24bit)
+      {
+        CopyOut24Bit(m_24bit_display_format, cmd->X, vram_offset_y + field, cmd->display_vram_left - cmd->X,
+                     display_width, display_height, field, true, cmd->interlaced_display_interleaved);
+      }
+      else
+      {
+        CopyOut15Bit(m_16bit_display_format, cmd->display_vram_left, vram_offset_y + field, display_width,
+                     display_height, field, true, cmd->interlaced_display_interleaved);
+      }
+    }
+    else
+    {
+      if (cmd->display_24bit)
+      {
+        CopyOut24Bit(m_24bit_display_format, cmd->X, vram_offset_y, cmd->display_vram_left - cmd->X, display_width,
+                     display_height, 0, false, false);
+      }
+      else
+      {
+        CopyOut15Bit(m_16bit_display_format, cmd->display_vram_left, vram_offset_y, display_width, display_height, 0,
+                     false, false);
+      }
+    }
+  }
+  else
+  {
+    CopyOut15Bit(m_16bit_display_format, 0, 0, VRAM_WIDTH, VRAM_HEIGHT, 0, false, false);
+    SetDisplayParameters(VRAM_WIDTH, VRAM_HEIGHT, 0, 0, VRAM_WIDTH, VRAM_HEIGHT,
+                         static_cast<float>(VRAM_WIDTH) / static_cast<float>(VRAM_HEIGHT));
+  }
+}
+
+std::unique_ptr<GPUBackend> GPUBackend::CreateSoftwareBackend()
+{
+  std::unique_ptr<GPUSWBackend> gpu(std::make_unique<GPUSWBackend>());
+  if (!gpu->Initialize())
+    return nullptr;
+
+  return gpu;
 }

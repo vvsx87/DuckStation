@@ -2,11 +2,19 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
+
+#include "types.h"
+
+#include "util/gpu_texture.h"
+
 #include "common/bitfield.h"
 #include "common/bitutils.h"
 #include "common/rectangle.h"
-#include "types.h"
+#include "common/timer.h"
+
 #include <array>
+#include <functional>
+#include <vector>
 
 enum : u32
 {
@@ -121,7 +129,7 @@ union GPURenderCommand
 ALWAYS_INLINE static constexpr u32 VRAMRGBA5551ToRGBA8888(u32 color)
 {
   // Helper/format conversion functions - constants from https://stackoverflow.com/a/9069480
-#define E5TO8(color) ((((color) * 527u) + 23u) >> 6)
+#define E5TO8(color) ((((color)*527u) + 23u) >> 6)
 
   const u32 r = E5TO8(color & 31u);
   const u32 g = E5TO8((color >> 5) & 31u);
@@ -217,12 +225,17 @@ union GPUTexturePaletteReg
   }
 };
 
-struct GPUTextureWindow
+union GPUTextureWindow
 {
-  u8 and_x;
-  u8 and_y;
-  u8 or_x;
-  u8 or_y;
+  struct
+  {
+    u8 and_x;
+    u8 and_y;
+    u8 or_x;
+    u8 or_y;
+  };
+
+  u32 bits;
 };
 
 // 4x4 dither matrix.
@@ -239,14 +252,89 @@ static constexpr s32 DITHER_MATRIX[DITHER_MATRIX_SIZE][DITHER_MATRIX_SIZE] = {{-
 enum class GPUBackendCommandType : u8
 {
   Wraparound,
-  Sync,
+  AsyncCall,
+  ChangeBackend,
+  UpdateVSync,
+  Reset,
+  ClearDisplay,
+  UpdateDisplay,
+  RenderScreenshotToBuffer,
+  ReadVRAM,
   FillVRAM,
   UpdateVRAM,
   CopyVRAM,
   SetDrawingArea,
   DrawPolygon,
+  DrawPrecisePolygon,
   DrawRectangle,
   DrawLine
+};
+
+struct GPUThreadCommand
+{
+  u32 size;
+  GPUBackendCommandType type;
+};
+
+struct GPUThreadAsyncCallCommand : public GPUThreadCommand
+{
+  std::function<void()> func;
+};
+
+struct GPUThreadRenderScreenshotToBufferCommand : public GPUThreadCommand
+{
+  u32 width;
+  u32 height;
+  Common::Rectangle<s32> draw_rect;
+  std::vector<u32>* out_pixels;
+  u32* out_stride;
+  GPUTexture::Format* out_format;
+  bool* out_result;
+  bool postfx;
+};
+
+struct GPUBackendResetCommand : public GPUThreadCommand
+{
+  bool clear_vram;
+};
+
+struct GPUBackendUpdateDisplayCommand : public GPUThreadCommand
+{
+  u16 display_width;
+  u16 display_height;
+  u16 display_origin_left;
+  u16 display_origin_top;
+  u16 display_vram_left;
+  u16 display_vram_top;
+  u16 display_vram_width;
+  u16 display_vram_height;
+
+  u16 X; // TODO: Can we get rid of this?
+
+  union
+  {
+    u8 bits;
+
+    BitField<u8, bool, 0, 1> interlaced_display_enabled;
+    BitField<u8, u8, 1, 1> interlaced_display_field;
+    BitField<u8, bool, 2, 1> interlaced_display_interleaved;
+    BitField<u8, bool, 3, 1> display_24bit;
+    BitField<u8, bool, 4, 1> display_disabled;
+
+    BitField<u8, bool, 7, 1> present_frame;
+  };
+
+  float display_aspect_ratio;
+
+  Common::Timer::Value present_time;
+};
+
+struct GPUBackendReadVRAMCommand : public GPUThreadCommand
+{
+  u16 x;
+  u16 y;
+  u16 width;
+  u16 height;
 };
 
 union GPUBackendCommandParameters
@@ -276,16 +364,10 @@ union GPUBackendCommandParameters
   }
 };
 
-struct GPUBackendCommand
+// TODO: Merge this into the other structs, saves padding bytes
+struct GPUBackendCommand : public GPUThreadCommand
 {
-  u32 size;
-  GPUBackendCommandType type;
   GPUBackendCommandParameters params;
-};
-
-struct GPUBackendSyncCommand : public GPUBackendCommand
-{
-  bool allow_sleep;
 };
 
 struct GPUBackendFillVRAMCommand : public GPUBackendCommand
@@ -321,8 +403,10 @@ struct GPUBackendSetDrawingAreaCommand : public GPUBackendCommand
   Common::Rectangle<u32> new_area;
 };
 
+// TODO: Pack texpage
 struct GPUBackendDrawCommand : public GPUBackendCommand
 {
+  // TODO: Cut this down
   GPUDrawModeReg draw_mode;
   GPURenderCommand rc;
   GPUTexturePaletteReg palette;
@@ -333,7 +417,7 @@ struct GPUBackendDrawCommand : public GPUBackendCommand
 
 struct GPUBackendDrawPolygonCommand : public GPUBackendDrawCommand
 {
-  u16 num_vertices;
+  u8 num_vertices;
 
   struct Vertex
   {
@@ -354,24 +438,32 @@ struct GPUBackendDrawPolygonCommand : public GPUBackendDrawCommand
       };
       u16 texcoord;
     };
-
-    ALWAYS_INLINE void Set(s32 x_, s32 y_, u32 color_, u16 texcoord_)
-    {
-      x = x_;
-      y = y_;
-      color = color_;
-      texcoord = texcoord_;
-    }
   };
 
   Vertex vertices[0];
 };
 
-struct GPUBackendDrawRectangleCommand : public GPUBackendDrawCommand
+struct GPUBackendDrawPrecisePolygonCommand : public GPUBackendDrawCommand
 {
-  s32 x, y;
+  u8 num_vertices;
+  bool valid_w;
+
+  struct Vertex
+  {
+    float x, y, w;
+    s32 native_x, native_y;
+    u32 color;
+    u16 texcoord;
+  };
+
+  Vertex vertices[0];
+};
+
+struct GPUBackendDrawSpriteCommand : public GPUBackendDrawCommand
+{
   u16 width, height;
   u16 texcoord;
+  s32 x, y;
   u32 color;
 };
 

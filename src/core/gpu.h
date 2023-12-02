@@ -26,14 +26,11 @@ class GPUDevice;
 class GPUTexture;
 class GPUPipeline;
 
+class GPUBackend;
 struct Settings;
 class TimingEvent;
 
-namespace Threading {
-class Thread;
-}
-
-class GPU
+class GPU final
 {
 public:
   enum class BlitterState : u8
@@ -84,18 +81,11 @@ public:
 
   // Base class constructor.
   GPU();
-  virtual ~GPU();
+  ~GPU();
 
-  virtual const Threading::Thread* GetSWThread() const = 0;
-  virtual bool IsHardwareRenderer() const = 0;
-
-  virtual bool Initialize();
-  virtual void Reset(bool clear_vram);
-  virtual bool DoState(StateWrapper& sw, GPUTexture** save_to_texture, bool update_display);
-
-  // Graphics API state reset/restore - call when drawing the UI etc.
-  // TODO: replace with "invalidate cached state"
-  virtual void RestoreDeviceContext();
+  void Initialize();
+  void Reset(bool clear_vram);
+  bool DoState(StateWrapper& sw, GPUTexture** save_to_texture, bool update_display);
 
   // Render statistics debug window.
   void DrawDebugStateWindow();
@@ -137,6 +127,9 @@ public:
   /// Returns true if we're in PAL mode, otherwise false if NTSC.
   ALWAYS_INLINE bool IsInPALMode() const { return m_GPUSTAT.pal_mode; }
 
+  ALWAYS_INLINE s32 GetDisplayWidth() const { return m_crtc_state.display_width; }
+  ALWAYS_INLINE s32 GetDisplayHeight() const { return m_crtc_state.display_height; }
+
   /// Returns the number of pending GPU ticks.
   TickCount GetPendingCRTCTicks() const;
   TickCount GetPendingCommandTicks() const;
@@ -151,23 +144,14 @@ public:
   void SynchronizeCRTC();
 
   /// Recompile shaders/recreate framebuffers when needed.
-  virtual void UpdateSettings(const Settings& old_settings);
+  void UpdateSettings(const Settings& old_settings);
 
   /// Updates the resolution scale when it's set to automatic.
-  virtual void UpdateResolutionScale();
-
-  /// Returns the effective display resolution of the GPU.
-  virtual std::tuple<u32, u32> GetEffectiveDisplayResolution(bool scaled = true);
-
-  /// Returns the full display resolution of the GPU, including padding.
-  virtual std::tuple<u32, u32> GetFullDisplayResolution(bool scaled = true);
+  void UpdateResolutionScale();
 
   float ComputeHorizontalFrequency() const;
   float ComputeVerticalFrequency() const;
   float ComputeDisplayAspectRatio() const;
-
-  static std::unique_ptr<GPU> CreateHardwareRenderer();
-  static std::unique_ptr<GPU> CreateSoftwareRenderer();
 
   // Converts window coordinates into horizontal ticks and scanlines. Returns false if out of range. Used for lightguns.
   void ConvertScreenCoordinatesToDisplayCoordinates(float window_x, float window_y, float* display_x,
@@ -181,33 +165,11 @@ public:
   // Dumps raw VRAM to a file.
   bool DumpVRAMToFile(const char* filename);
 
-  // Ensures all buffered vertices are drawn.
-  virtual void FlushRender();
+  // Pointer to VRAM, used for reads/writes. In the hardware backends, this is the shadow buffer.
+  // TODO: Maybe make this a global buffer instead, rather than mmapped?
+  static u16* m_vram_ptr;
 
-  ALWAYS_INLINE const void* GetDisplayTextureHandle() const { return m_display_texture; }
-  ALWAYS_INLINE s32 GetDisplayWidth() const { return m_display_width; }
-  ALWAYS_INLINE s32 GetDisplayHeight() const { return m_display_height; }
-  ALWAYS_INLINE float GetDisplayAspectRatio() const { return m_display_aspect_ratio; }
-  ALWAYS_INLINE bool HasDisplayTexture() const { return static_cast<bool>(m_display_texture); }
-
-  /// Helper function for computing the draw rectangle in a larger window.
-  Common::Rectangle<s32> CalculateDrawRect(s32 window_width, s32 window_height, bool apply_aspect_ratio = true) const;
-
-  /// Helper function to save current display texture to PNG.
-  bool WriteDisplayTextureToFile(std::string filename, bool full_resolution = true, bool apply_aspect_ratio = true,
-                                 bool compress_on_thread = false);
-
-  /// Renders the display, optionally with postprocessing to the specified image.
-  bool RenderScreenshotToBuffer(u32 width, u32 height, const Common::Rectangle<s32>& draw_rect, bool postfx,
-                                std::vector<u32>* out_pixels, u32* out_stride, GPUTexture::Format* out_format);
-
-  /// Helper function to save screenshot to PNG.
-  bool RenderScreenshotToFile(std::string filename, bool internal_resolution = false, bool compress_on_thread = false);
-
-  /// Draws the current display texture, with any post-processing.
-  bool PresentDisplay();
-
-protected:
+private:
   TickCount CRTCTicksToSystemTicks(TickCount crtc_ticks, TickCount fractional_ticks) const;
   TickCount SystemTicksToCRTCTicks(TickCount sysclk_ticks, TickCount* fractional_ticks) const;
 
@@ -217,16 +179,6 @@ protected:
     return std::max<TickCount>((gpu_ticks + 1) >> 1, 1);
   }
   ALWAYS_INLINE static constexpr TickCount SystemTicksToGPUTicks(TickCount sysclk_ticks) { return sysclk_ticks << 1; }
-
-  static constexpr std::tuple<u8, u8> UnpackTexcoord(u16 texcoord)
-  {
-    return std::make_tuple(static_cast<u8>(texcoord), static_cast<u8>(texcoord >> 8));
-  }
-
-  static constexpr std::tuple<u8, u8, u8> UnpackColorRGB24(u32 rgb24)
-  {
-    return std::make_tuple(static_cast<u8>(rgb24), static_cast<u8>(rgb24 >> 8), static_cast<u8>(rgb24 >> 16));
-  }
 
   static bool DumpVRAMToFile(const char* filename, u32 width, u32 height, u32 stride, const void* buffer,
                              bool remove_alpha);
@@ -250,10 +202,10 @@ protected:
   void CommandTickEvent(TickCount ticks);
 
   /// Returns 0 if the currently-displayed field is on odd lines (1,3,5,...) or 1 if even (2,4,6,...).
-  ALWAYS_INLINE u32 GetInterlacedDisplayField() const { return ZeroExtend32(m_crtc_state.interlaced_field); }
+  ALWAYS_INLINE u8 GetInterlacedDisplayField() const { return m_crtc_state.interlaced_field; }
 
   /// Returns 0 if the currently-displayed field is on an even line in VRAM, otherwise 1.
-  ALWAYS_INLINE u32 GetActiveLineLSB() const { return ZeroExtend32(m_crtc_state.active_line_lsb); }
+  ALWAYS_INLINE u8 GetActiveLineLSB() const { return m_crtc_state.active_line_lsb; }
 
   /// Sets/decodes GP0(E1h) (set draw mode).
   void SetDrawMode(u16 bits);
@@ -275,7 +227,7 @@ protected:
   }
 
   /// Returns true if the drawing area is valid (i.e. left <= right, top <= bottom).
-  ALWAYS_INLINE bool IsDrawingAreaIsValid() const { return m_drawing_area.Valid(); }
+  ALWAYS_INLINE bool IsDrawingAreaValid() const { return m_drawing_area.Valid(); }
 
   /// Clamps the specified coordinates to the drawing area.
   ALWAYS_INLINE void ClampCoordinatesToDrawingArea(s32* x, s32* y)
@@ -300,15 +252,16 @@ protected:
   void ExecuteCommands();
   void HandleGetGPUInfoCommand(u32 value);
 
-  // Rendering in the backend
-  virtual void ReadVRAM(u32 x, u32 y, u32 width, u32 height);
-  virtual void FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color);
-  virtual void UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, bool set_mask, bool check_mask);
-  virtual void CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32 height);
-  virtual void DispatchRenderCommand();
-  virtual void ClearDisplay();
-  virtual void UpdateDisplay();
-  virtual void DrawRendererStats(bool is_idle_frame);
+  void ReadVRAM(u16 x, u16 y, u16 width, u16 height);
+  void UpdateVRAM(u16 x, u16 y, u16 width, u16 height, const void* data, bool set_mask, bool check_mask);
+
+  void ClearDisplay();
+  void UpdateDisplay(bool present_frame);
+
+  bool PrepareForDraw();
+  void FinishPolyline();
+  void FillBackendCommandParameters(GPUBackendCommand* cmd) const;
+  void FillDrawCommand(GPUBackendDrawCommand* cmd, GPURenderCommand rc) const;
 
   ALWAYS_INLINE void AddDrawTriangleTicks(s32 x1, s32 y1, s32 x2, s32 y2, s32 x3, s32 y3, bool shaded, bool textured,
                                           bool semitransparent)
@@ -352,9 +305,6 @@ protected:
 
   std::unique_ptr<TimingEvent> m_crtc_tick_event;
   std::unique_ptr<TimingEvent> m_command_tick_event;
-
-  // Pointer to VRAM, used for reads/writes. In the hardware backends, this is the shadow buffer.
-  u16* m_vram_ptr = nullptr;
 
   union GPUSTAT
   {
@@ -426,19 +376,10 @@ protected:
     u32 texture_window_value;
 
     // decoded values
+    // TODO: Make this a command
     GPUTextureWindow texture_window;
     bool texture_x_flip;
     bool texture_y_flip;
-    bool texture_page_changed;
-    bool texture_window_changed;
-
-    ALWAYS_INLINE bool IsTexturePageChanged() const { return texture_page_changed; }
-    ALWAYS_INLINE void SetTexturePageChanged() { texture_page_changed = true; }
-    ALWAYS_INLINE void ClearTexturePageChangedFlag() { texture_page_changed = false; }
-
-    ALWAYS_INLINE bool IsTextureWindowChanged() const { return texture_window_changed; }
-    ALWAYS_INLINE void SetTextureWindowChanged() { texture_window_changed = true; }
-    ALWAYS_INLINE void ClearTextureWindowChangedFlag() { texture_window_changed = false; }
   } m_draw_mode = {};
 
   Common::Rectangle<u32> m_drawing_area{0, 0, VRAM_WIDTH, VRAM_HEIGHT};
@@ -562,33 +503,6 @@ protected:
   TickCount m_max_run_ahead = 128;
   u32 m_fifo_size = 128;
 
-  void ClearDisplayTexture();
-  void SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 view_width, s32 view_height);
-  void SetDisplayTextureRect(s32 view_x, s32 view_y, s32 view_width, s32 view_height);
-  void SetDisplayParameters(s32 display_width, s32 display_height, s32 active_left, s32 active_top, s32 active_width,
-                            s32 active_height, float display_aspect_ratio);
-
-  Common::Rectangle<float> CalculateDrawRect(s32 window_width, s32 window_height, float* out_left_padding,
-                                             float* out_top_padding, float* out_scale, float* out_x_scale,
-                                             bool apply_aspect_ratio = true) const;
-
-  bool RenderDisplay(GPUTexture* target, const Common::Rectangle<s32>& draw_rect, bool postfx);
-
-  s32 m_display_width = 0;
-  s32 m_display_height = 0;
-  s32 m_display_active_left = 0;
-  s32 m_display_active_top = 0;
-  s32 m_display_active_width = 0;
-  s32 m_display_active_height = 0;
-  float m_display_aspect_ratio = 1.0f;
-
-  std::unique_ptr<GPUPipeline> m_display_pipeline;
-  GPUTexture* m_display_texture = nullptr;
-  s32 m_display_texture_view_x = 0;
-  s32 m_display_texture_view_y = 0;
-  s32 m_display_texture_view_width = 0;
-  s32 m_display_texture_view_height = 0;
-
   struct Stats
   {
     u32 num_vram_reads;
@@ -602,8 +516,6 @@ protected:
   Stats m_last_stats = {};
 
 private:
-  bool CompileDisplayPipeline();
-
   using GP0CommandHandler = bool (GPU::*)();
   using GP0CommandHandlerTable = std::array<GP0CommandHandler, 256>;
   static GP0CommandHandlerTable GenerateGP0CommandHandlerTable();

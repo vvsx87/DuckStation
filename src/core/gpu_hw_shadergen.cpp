@@ -1,8 +1,10 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "gpu_hw_shadergen.h"
+
 #include "common/assert.h"
+
 #include <cstdio>
 
 GPU_HW_ShaderGen::GPU_HW_ShaderGen(RenderAPI render_api, u32 resolution_scale, u32 multisamples,
@@ -630,7 +632,7 @@ void FilteredSampleFromVRAM(uint4 texpage, float2 coords, float4 uv_limits,
   }
 }
 
-std::string GPU_HW_ShaderGen::GenerateBatchFragmentShader(GPU_HW::BatchRenderMode render_mode,
+std::string GPU_HW_ShaderGen::GenerateBatchFragmentShader(GPUHWBackend::BatchRenderMode render_mode,
                                                           GPUTransparencyMode transparency, GPUTextureMode texture_mode,
                                                           bool dithering, bool interlacing)
 {
@@ -642,15 +644,15 @@ std::string GPU_HW_ShaderGen::GenerateBatchFragmentShader(GPU_HW::BatchRenderMod
   const bool textured = (texture_mode != GPUTextureMode::Disabled);
   const bool use_framebuffer_fetch = (m_supports_framebuffer_fetch && transparency != GPUTransparencyMode::Disabled);
   const bool use_dual_source = !use_framebuffer_fetch && m_supports_dual_source_blend &&
-                               ((render_mode != GPU_HW::BatchRenderMode::TransparencyDisabled &&
-                                 render_mode != GPU_HW::BatchRenderMode::OnlyOpaque) ||
+                               ((render_mode != GPUHWBackend::BatchRenderMode::TransparencyDisabled &&
+                                 render_mode != GPUHWBackend::BatchRenderMode::OnlyOpaque) ||
                                 m_texture_filter != GPUTextureFilter::Nearest);
 
   std::stringstream ss;
   WriteHeader(ss);
-  DefineMacro(ss, "TRANSPARENCY", render_mode != GPU_HW::BatchRenderMode::TransparencyDisabled);
-  DefineMacro(ss, "TRANSPARENCY_ONLY_OPAQUE", render_mode == GPU_HW::BatchRenderMode::OnlyOpaque);
-  DefineMacro(ss, "TRANSPARENCY_ONLY_TRANSPARENT", render_mode == GPU_HW::BatchRenderMode::OnlyTransparent);
+  DefineMacro(ss, "TRANSPARENCY", render_mode != GPUHWBackend::BatchRenderMode::TransparencyDisabled);
+  DefineMacro(ss, "TRANSPARENCY_ONLY_OPAQUE", render_mode == GPUHWBackend::BatchRenderMode::OnlyOpaque);
+  DefineMacro(ss, "TRANSPARENCY_ONLY_TRANSPARENT", render_mode == GPUHWBackend::BatchRenderMode::OnlyTransparent);
   DefineMacro(ss, "TRANSPARENCY_MODE", static_cast<s32>(transparency));
   DefineMacro(ss, "SHADER_BLENDING", use_framebuffer_fetch);
   DefineMacro(ss, "TEXTURED", textured);
@@ -999,14 +1001,14 @@ float4 SampleFromVRAM(uint4 texpage, float2 coords)
 }
 
 std::string GPU_HW_ShaderGen::GenerateDisplayFragmentShader(bool depth_24bit,
-                                                            GPU_HW::InterlacedRenderMode interlace_mode,
+                                                            GPUHWBackend::InterlacedRenderMode interlace_mode,
                                                             bool smooth_chroma)
 {
   std::stringstream ss;
   WriteHeader(ss);
   DefineMacro(ss, "DEPTH_24BIT", depth_24bit);
-  DefineMacro(ss, "INTERLACED", interlace_mode != GPU_HW::InterlacedRenderMode::None);
-  DefineMacro(ss, "INTERLEAVED", interlace_mode == GPU_HW::InterlacedRenderMode::InterleavedFields);
+  DefineMacro(ss, "INTERLACED", interlace_mode != GPUHWBackend::InterlacedRenderMode::None);
+  DefineMacro(ss, "INTERLEAVED", interlace_mode == GPUHWBackend::InterlacedRenderMode::InterleavedFields);
   DefineMacro(ss, "SMOOTH_CHROMA", smooth_chroma);
 
   WriteCommonFunctions(ss);
