@@ -12,6 +12,20 @@
 #if defined(CPU_ARCH_X86) || defined(CPU_ARCH_X64)
 #define CPU_ARCH_SSE 1
 #include <emmintrin.h>
+#include <tmmintrin.h>
+
+#if defined(__AVX2__)
+#define CPU_ARCH_AVX 1
+#define CPU_ARCH_AVX2 1
+#define CPU_ARCH_SSE41 1
+#include <immintrin.h>
+#elif defined(__AVX__)
+#define CPU_ARCH_AVX 1
+#define CPU_ARCH_SSE41 1
+#include <immintrin.h>
+#elif defined(__SSE4_1__) || _M_SSE >= 0x401
+#define CPU_ARCH_SSE41 1
+#endif
 #elif defined(CPU_ARCH_ARM64) // TODO: ARM32 can do NEON too...
 #define CPU_ARCH_NEON 1
 #if defined(_MSC_VER) && !defined(__clang__)

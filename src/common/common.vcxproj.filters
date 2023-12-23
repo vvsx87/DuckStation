@@ -45,6 +45,9 @@
     <ClInclude Include="thirdparty\SmallVector.h">
       <Filter>thirdparty</Filter>
     </ClInclude>
+    <ClInclude Include="gsvector_sse.h" />
+    <ClInclude Include="gsvector_neon.h" />
+    <ClInclude Include="gsvector.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="small_string.cpp" />
