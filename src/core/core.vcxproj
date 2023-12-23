@@ -49,6 +49,7 @@
     <ClCompile Include="gpu_shadergen.cpp" />
     <ClCompile Include="gpu_sw.cpp" />
     <ClCompile Include="gpu_sw_backend.cpp" />
+    <ClCompile Include="gpu_sw_rasterizer.cpp" />
     <ClCompile Include="gte.cpp" />
     <ClCompile Include="dma.cpp" />
     <ClCompile Include="gdb_protocol.cpp" />
@@ -124,6 +125,7 @@
     <ClInclude Include="gpu_shadergen.h" />
     <ClInclude Include="gpu_sw.h" />
     <ClInclude Include="gpu_sw_backend.h" />
+    <ClInclude Include="gpu_sw_rasterizer.h" />
     <ClInclude Include="gpu_types.h" />
     <ClInclude Include="gte.h" />
     <ClInclude Include="cpu_types.h" />
@@ -163,6 +165,9 @@
     <ClInclude Include="types.h" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\dep\cpuinfo\cpuinfo.vcxproj">
+      <Project>{ee55aa65-ea6b-4861-810b-78354b53a807}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\..\dep\discord-rpc\discord-rpc.vcxproj">
       <Project>{4266505b-dbaf-484b-ab31-b53b9c8235b3}</Project>
     </ProjectReference>
@@ -199,6 +204,9 @@
     <ProjectReference Include="..\util\util.vcxproj">
       <Project>{57f6206d-f264-4b07-baf8-11b9bbe1f455}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="gpu_sw_rasterizer.inl" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{868B98C8-65A1-494B-8346-250A73A48C0A}</ProjectGuid>
