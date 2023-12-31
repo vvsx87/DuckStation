@@ -174,11 +174,11 @@ struct Rectangle
   }
 
   /// Expands the bounds of the rectangle to contain another rectangle.
-  constexpr void Include(T other_left, T other_right, T other_top, T other_bottom)
+  constexpr void Include(T other_left, T other_top, T other_right, T other_bottom)
   {
     left = std::min(left, other_left);
-    right = std::max(right, other_right);
     top = std::min(top, other_top);
+    right = std::max(right, other_right);
     bottom = std::max(bottom, other_bottom);
   }
 
@@ -209,6 +209,18 @@ struct Rectangle
   constexpr Rectangle ClampedSize(T width, T height) const
   {
     return Rectangle(left, top, std::min(right, left + width), std::min(bottom, top + height));
+  }
+
+  /// Returns a new rectangle intersected with another.
+  constexpr Rectangle Intersect(const Rectangle& rhs) const
+  {
+#if 0
+    return Rectangle(std::clamp(left, rhs.right, rhs.left), std::clamp(top, rhs.bottom, rhs.top),
+                     std::clamp(right, rhs.right, rhs.left), std::clamp(bottom, rhs.bottom, rhs.top));
+#else
+    return Rectangle(std::min(std::max(left, rhs.left), rhs.right), std::min(std::max(top, rhs.top), rhs.bottom),
+                     std::min(std::max(right, rhs.left), rhs.right), std::min(std::max(bottom, rhs.top), rhs.bottom));
+#endif
   }
 
   T left;

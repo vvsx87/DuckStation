@@ -10,17 +10,22 @@
 #include "settings.h"
 #include "system.h"
 
+#include "util/image.h"
 #include "util/imgui_manager.h"
 #include "util/state_wrapper.h"
 
 #include "common/align.h"
 #include "common/assert.h"
+#include "common/hash_combine.h"
 #include "common/log.h"
 #include "common/scoped_guard.h"
 #include "common/string_util.h"
 
 #include "IconsFontAwesome5.h"
 #include "imgui.h"
+
+#define XXH_STATIC_LINKING_ONLY
+#include "xxhash.h"
 
 #include <cmath>
 #include <sstream>
@@ -32,6 +37,8 @@ Log_SetChannel(GPU_HW);
 
 static constexpr GPUTexture::Format VRAM_RT_FORMAT = GPUTexture::Format::RGBA8;
 static constexpr GPUTexture::Format VRAM_DS_FORMAT = GPUTexture::Format::D16;
+
+static bool TEXTURE_DUMPING = true;
 
 #ifdef _DEBUG
 static u32 s_draw_number = 0;
@@ -93,6 +100,21 @@ static Common::Rectangle<u32> GetVRAMTransferBounds(u32 x, u32 y, u32 width, u32
   return out_rc;
 }
 
+[[maybe_unused]] ALWAYS_INLINE static TinyString RectToString(const GPU_HW::Rect& rc)
+{
+  return TinyString::from_format("{},{} => {},{} ({}x{})", rc.left, rc.top, rc.right, rc.bottom, rc.GetWidth(),
+                                 rc.GetHeight());
+}
+
+template<>
+struct fmt::formatter<GPU_HW::Rect> : formatter<std::string_view>
+{
+  auto format(const GPU_HW::Rect& rc, format_context& ctx) const
+  {
+    return fmt::formatter<std::string_view>::format(RectToString(rc).view(), ctx);
+  }
+};
+
 namespace {
 class ShaderCompileProgressTracker
 {
@@ -137,6 +159,8 @@ GPU_HW::GPU_HW() : GPU()
 
 GPU_HW::~GPU_HW()
 {
+  InvalidateTextureCache();
+
   if (m_sw_renderer)
   {
     m_sw_renderer->Shutdown();
@@ -294,7 +318,9 @@ bool GPU_HW::DoState(StateWrapper& sw, GPUTexture** host_texture, bool update_di
   if (sw.IsReading())
   {
     DebugAssert(!m_batch_vertex_ptr && !m_batch_index_ptr);
+    InvalidateTextureCache();
     SetFullVRAMDirtyRectangle();
+    UpdateVRAMReadTexture();
     ResetBatchVertexDepth();
   }
 
@@ -580,18 +606,6 @@ bool GPU_HW::IsUsingDownsampling() const
   return (m_downsample_mode != GPUDownsampleMode::Disabled && !m_GPUSTAT.display_area_color_depth_24);
 }
 
-void GPU_HW::SetFullVRAMDirtyRectangle()
-{
-  m_vram_dirty_draw_rect.Set(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
-  m_draw_mode.SetTexturePageChanged();
-}
-
-void GPU_HW::ClearVRAMDirtyRectangle()
-{
-  m_vram_dirty_draw_rect.SetInvalid();
-  m_vram_dirty_write_rect.SetInvalid();
-}
-
 std::tuple<u32, u32> GPU_HW::GetEffectiveDisplayResolution(bool scaled /* = true */)
 {
   const u32 scale = scaled ? m_resolution_scale : 1u;
@@ -710,7 +724,7 @@ void GPU_HW::ClearFramebuffer()
   g_gpu_device->ClearRenderTarget(m_vram_texture.get(), 0);
   if (m_vram_depth_texture)
     g_gpu_device->ClearDepth(m_vram_depth_texture.get(), m_pgxp_depth_buffer ? 1.0f : 0.0f);
-  ClearVRAMDirtyRectangle();
+  SetFullVRAMDirtyRectangle();
   m_last_depth_z = 1.0f;
 }
 
@@ -1326,73 +1340,35 @@ GPU_HW::BatchRenderMode GPU_HW::BatchConfig::GetRenderMode() const
                                                               BatchRenderMode::TransparentAndOpaque;
 }
 
-void GPU_HW::UpdateVRAMReadTexture(bool drawn, bool written)
+void GPU_HW::UpdateVRAMReadTexture()
 {
   GL_SCOPE("UpdateVRAMReadTexture()");
 
-  const auto update = [this](Common::Rectangle<u32>& rect, u8 dbit) {
-    if (m_texpage_dirty & dbit)
-    {
-      m_texpage_dirty &= ~dbit;
-      if (!m_texpage_dirty)
-        GL_INS_FMT("{} texpage is no longer dirty", (dbit & TEXPAGE_DIRTY_DRAWN_RECT) ? "DRAW" : "WRITE");
-    }
+  GL_INS_FMT("Updating VRAM read rect {}", RectToString(m_vram_dirty_rect));
 
-    const auto scaled_rect = rect * m_resolution_scale;
-    if (m_vram_texture->IsMultisampled())
+  const auto scaled_rect = m_vram_dirty_rect * m_resolution_scale;
+  if (m_vram_texture->IsMultisampled())
+  {
+    if (g_gpu_device->GetFeatures().partial_msaa_resolve)
     {
-      if (g_gpu_device->GetFeatures().partial_msaa_resolve)
-      {
-        g_gpu_device->ResolveTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
-                                           m_vram_texture.get(), scaled_rect.left, scaled_rect.top,
-                                           scaled_rect.GetWidth(), scaled_rect.GetHeight());
-      }
-      else
-      {
-        g_gpu_device->ResolveTextureRegion(m_vram_read_texture.get(), 0, 0, 0, 0, m_vram_texture.get(), 0, 0,
-                                           m_vram_texture->GetWidth(), m_vram_texture->GetHeight());
-      }
+      g_gpu_device->ResolveTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+                                         m_vram_texture.get(), scaled_rect.left, scaled_rect.top,
+                                         scaled_rect.GetWidth(), scaled_rect.GetHeight());
     }
     else
     {
-      g_gpu_device->CopyTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
-                                      m_vram_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
-                                      scaled_rect.GetWidth(), scaled_rect.GetHeight());
+      g_gpu_device->ResolveTextureRegion(m_vram_read_texture.get(), 0, 0, 0, 0, m_vram_texture.get(), 0, 0,
+                                         m_vram_texture->GetWidth(), m_vram_texture->GetHeight());
     }
-
-    // m_counters.num_read_texture_updates++;
-    rect.SetInvalid();
-  };
-
-  if (drawn)
-  {
-    DebugAssert(m_vram_dirty_draw_rect.Valid());
-    GL_INS_FMT("Updating draw rect {},{} => {},{} ({}x{})", m_vram_dirty_draw_rect.left, m_vram_dirty_draw_rect.right,
-               m_vram_dirty_draw_rect.top, m_vram_dirty_draw_rect.bottom, m_vram_dirty_draw_rect.GetWidth(),
-               m_vram_dirty_draw_rect.GetHeight());
-
-    u8 dbits = TEXPAGE_DIRTY_DRAWN_RECT;
-    if (written && m_vram_dirty_draw_rect.Intersects(m_vram_dirty_write_rect))
-    {
-      DebugAssert(m_vram_dirty_write_rect.Valid());
-      GL_INS_FMT("Including write rect {},{} => {},{} ({}x{})", m_vram_dirty_write_rect.left,
-                 m_vram_dirty_write_rect.right, m_vram_dirty_write_rect.top, m_vram_dirty_write_rect.bottom,
-                 m_vram_dirty_write_rect.GetWidth(), m_vram_dirty_write_rect.GetHeight());
-      m_vram_dirty_draw_rect.Include(m_vram_dirty_write_rect);
-      m_vram_dirty_write_rect.SetInvalid();
-      dbits = TEXPAGE_DIRTY_DRAWN_RECT | TEXPAGE_DIRTY_WRITTEN_RECT;
-      written = false;
-    }
-
-    update(m_vram_dirty_draw_rect, dbits);
   }
-  if (written)
+  else
   {
-    GL_INS_FMT("Updating write rect {},{} => {},{} ({}x{})", m_vram_dirty_write_rect.left,
-               m_vram_dirty_write_rect.right, m_vram_dirty_write_rect.top, m_vram_dirty_write_rect.bottom,
-               m_vram_dirty_write_rect.GetWidth(), m_vram_dirty_write_rect.GetHeight());
-    update(m_vram_dirty_write_rect, TEXPAGE_DIRTY_WRITTEN_RECT);
+    g_gpu_device->CopyTextureRegion(m_vram_read_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+                                    m_vram_texture.get(), scaled_rect.left, scaled_rect.top, 0, 0,
+                                    scaled_rect.GetWidth(), scaled_rect.GetHeight());
   }
+
+  m_vram_dirty_rect.SetInvalid();
 }
 
 void GPU_HW::UpdateDepthBufferFromMaskBit()
@@ -1461,15 +1437,24 @@ void GPU_HW::UnmapGPUBuffer(u32 used_vertices, u32 used_indices)
 }
 
 ALWAYS_INLINE_RELEASE void GPU_HW::DrawBatchVertices(BatchRenderMode render_mode, u32 num_indices, u32 base_index,
-                                                     u32 base_vertex)
+                                                     u32 base_vertex, const Source* texture)
 {
   // [depth_test][transparency_mode][render_mode][texture_mode][dithering][interlacing][check_mask]
   const u8 depth_test = BoolToUInt8(m_batch.use_depth_buffer);
   const u8 check_mask = BoolToUInt8(m_batch.check_mask_before_draw);
+  const GPUTextureMode real_texture_mode =
+    texture ? ((m_batch.texture_mode & GPUTextureMode::RawTextureBit) | GPUTextureMode::Reserved_Direct16Bit) :
+              m_batch.texture_mode;
   g_gpu_device->SetPipeline(m_batch_pipelines[depth_test][static_cast<u8>(m_batch.transparency_mode)][static_cast<u8>(
-    render_mode)][static_cast<u8>(m_batch.texture_mode)][BoolToUInt8(m_batch.dithering)]
-                                             [BoolToUInt8(m_batch.interlacing)][check_mask]
+    render_mode)][static_cast<u8>(real_texture_mode)][BoolToUInt8(m_batch.dithering)][BoolToUInt8(m_batch.interlacing)]
+                                             [check_mask]
                                                .get());
+
+  // TOOD: Totally not optimized.
+  if (texture)
+    g_gpu_device->SetTextureSampler(0, texture->texture, g_gpu_device->GetNearestSampler());
+  else if (real_texture_mode != GPUTextureMode::Disabled)
+    g_gpu_device->SetTextureSampler(0, m_vram_read_texture.get(), g_gpu_device->GetNearestSampler());
 
   if (render_mode != BatchRenderMode::ShaderBlend || m_supports_framebuffer_fetch)
     g_gpu_device->DrawIndexed(num_indices, base_index, base_vertex);
@@ -2009,11 +1994,11 @@ void GPU_HW::LoadVertices()
         const u32 clip_bottom =
           static_cast<u32>(std::clamp<s32>(max_y, m_drawing_area.top, m_drawing_area.bottom)) + 1u;
 
-        m_vram_dirty_draw_rect.Include(clip_left, clip_right, clip_top, clip_bottom);
         AddDrawTriangleTicks(native_vertex_positions[0][0], native_vertex_positions[0][1],
                              native_vertex_positions[1][0], native_vertex_positions[1][1],
                              native_vertex_positions[2][0], native_vertex_positions[2][1], rc.shading_enable,
                              rc.texture_enable, rc.transparency_enable);
+        AddDrawnRectangle(clip_left, clip_top, clip_right, clip_bottom);
 
         DebugAssert(m_batch_index_space >= 3);
         *(m_batch_index_ptr++) = Truncate16(start_index);
@@ -2047,11 +2032,11 @@ void GPU_HW::LoadVertices()
           const u32 clip_bottom =
             static_cast<u32>(std::clamp<s32>(max_y_123, m_drawing_area.top, m_drawing_area.bottom)) + 1u;
 
-          m_vram_dirty_draw_rect.Include(clip_left, clip_right, clip_top, clip_bottom);
           AddDrawTriangleTicks(native_vertex_positions[2][0], native_vertex_positions[2][1],
                                native_vertex_positions[1][0], native_vertex_positions[1][1],
                                native_vertex_positions[3][0], native_vertex_positions[3][1], rc.shading_enable,
                                rc.texture_enable, rc.transparency_enable);
+          AddDrawnRectangle(clip_left, clip_top, clip_right, clip_bottom);
 
           DebugAssert(m_batch_index_space >= 3);
           *(m_batch_index_ptr++) = Truncate16(start_index + 2);
@@ -2193,8 +2178,8 @@ void GPU_HW::LoadVertices()
       const u32 clip_bottom =
         static_cast<u32>(std::clamp<s32>(pos_y + rectangle_height, m_drawing_area.top, m_drawing_area.bottom)) + 1u;
 
-      m_vram_dirty_draw_rect.Include(clip_left, clip_right, clip_top, clip_bottom);
       AddDrawRectangleTicks(clip_right - clip_left, clip_bottom - clip_top, rc.texture_enable, rc.transparency_enable);
+      AddDrawnRectangle(clip_left, clip_top, clip_right, clip_bottom);
 
       if (m_sw_renderer)
       {
@@ -2256,8 +2241,8 @@ void GPU_HW::LoadVertices()
         const u32 clip_bottom =
           static_cast<u32>(std::clamp<s32>(max_y, m_drawing_area.top, m_drawing_area.bottom)) + 1u;
 
-        m_vram_dirty_draw_rect.Include(clip_left, clip_right, clip_top, clip_bottom);
         AddDrawLineTicks(clip_right - clip_left, clip_bottom - clip_top, rc.shading_enable);
+        AddDrawnRectangle(clip_left, clip_top, clip_right, clip_bottom);
 
         // TODO: Should we do a PGXP lookup here? Most lines are 2D.
         DrawLine(static_cast<float>(start_x), static_cast<float>(start_y), start_color, static_cast<float>(end_x),
@@ -2323,8 +2308,8 @@ void GPU_HW::LoadVertices()
             const u32 clip_bottom =
               static_cast<u32>(std::clamp<s32>(max_y, m_drawing_area.top, m_drawing_area.bottom)) + 1u;
 
-            m_vram_dirty_draw_rect.Include(clip_left, clip_right, clip_top, clip_bottom);
             AddDrawLineTicks(clip_right - clip_left, clip_bottom - clip_top, rc.shading_enable);
+            AddDrawnRectangle(clip_left, clip_top, clip_right, clip_bottom);
 
             // TODO: Should we do a PGXP lookup here? Most lines are 2D.
             DrawLine(static_cast<float>(start_x), static_cast<float>(start_y), start_color, static_cast<float>(end_x),
@@ -2392,10 +2377,32 @@ bool GPU_HW::BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u3
   return true;
 }
 
-void GPU_HW::IncludeVRAMDirtyRectangle(Common::Rectangle<u32>& rect, const Common::Rectangle<u32>& new_rect)
+void GPU_HW::SetFullVRAMDirtyRectangle()
 {
-  rect.Include(new_rect);
+  m_vram_dirty_rect.Set(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
+  m_draw_mode.SetTexturePageChanged();
+}
 
+void GPU_HW::AddVRAMDirtyRectangle(u32 left, u32 top, u32 right, u32 bottom)
+{
+  m_vram_dirty_rect.Include(left, top, right, bottom);
+}
+
+void GPU_HW::AddDrawnRectangle(u32 left, u32 top, u32 right, u32 bottom)
+{
+  // TODO: Vector :(
+  if (left >= m_current_draw_rect.left || top >= m_current_draw_rect.top || right <= m_current_draw_rect.right ||
+      bottom <= m_current_draw_rect.bottom)
+  {
+    return;
+  }
+
+  m_current_draw_rect.Include(left, top, right, bottom);
+  AddVRAMDirtyRectangle(m_current_draw_rect.left, m_current_draw_rect.top, m_current_draw_rect.right,
+                        m_current_draw_rect.bottom);
+
+#if 0
+  // TODO: FIXME
   // the vram area can include the texture page, but the game can leave it as-is. in this case, set it as dirty so the
   // shadow texture is updated
   if (!m_draw_mode.IsTexturePageChanged() &&
@@ -2405,11 +2412,76 @@ void GPU_HW::IncludeVRAMDirtyRectangle(Common::Rectangle<u32>& rect, const Commo
   {
     m_draw_mode.SetTexturePageChanged();
   }
+#endif
+
+  // TODO: This might be a bit slow...
+  LoopRectPages(m_current_draw_rect.left, m_current_draw_rect.top, m_current_draw_rect.right,
+                m_current_draw_rect.bottom, [this](u32 pn) {
+                  PageEntry& page = m_pages[pn];
+                  const Rect rc = m_current_draw_rect.Intersect(PageRect(pn));
+                  if (page.is_drawn)
+                  {
+                    if (!page.draw_rect.Contains(rc))
+                    {
+                      page.draw_rect.Include(rc);
+                      GL_INS_FMT("Page {} drawn rect is now {}", pn, RectToString(page.draw_rect));
+                      InvalidatePageSources(pn, page.draw_rect);
+                    }
+                  }
+                  else
+                  {
+                    GL_INS_FMT("Page {} drawn rect is now {}", pn, RectToString(rc));
+                    page.draw_rect = rc;
+                    page.is_drawn = true;
+
+                    // remove all sources, let them re-lookup if needed
+                    InvalidatePageSources(pn, rc);
+                  }
+
+                  for (TListNode<VRAMWrite>* n = page.writes.head; n;)
+                  {
+                    VRAMWrite* it = n->ref;
+                    n = n->next;
+                    if (it->rect.Intersects(m_current_draw_rect))
+                      RemoveVRAMWrite(it);
+                  }
+
+                  return true;
+                });
+}
+
+void GPU_HW::AddWrittenRectangle(const Rect& rect)
+{
+  AddVRAMDirtyRectangle(rect.left, rect.top, rect.right, rect.bottom);
+
+  LoopRectPages(rect.left, rect.top, rect.right, rect.bottom, [this, &rect](u32 pn) {
+    PageEntry& page = m_pages[pn];
+    InvalidatePageSources(pn, rect);
+    if (page.is_drawn)
+    {
+      if (page.draw_rect.Intersects(rect))
+      {
+        GL_INS_FMT("Clearing page {} draw rect due to write overlap", pn);
+        page.is_drawn = false;
+        page.draw_rect.SetInvalid();
+      }
+    }
+
+    for (TListNode<VRAMWrite>* n = page.writes.head; n;)
+    {
+      VRAMWrite* it = n->ref;
+      n = n->next;
+      if (it->rect.Intersects(rect))
+        RemoveVRAMWrite(it);
+    }
+
+    return true;
+  });
 }
 
 ALWAYS_INLINE_RELEASE void GPU_HW::CheckForTexPageOverlap(u32 texpage, u32 min_u, u32 min_v, u32 max_u, u32 max_v)
 {
-  if (!m_texpage_dirty)
+  if (m_texpage_drawn_page < 0 && !TEXTURE_DUMPING)
     return;
 
   static constexpr std::array<std::array<u8, 2>, 4> uv_shifts_adds = {{{2, 3}, {1, 1}, {0, 0}, {0, 0}}};
@@ -2428,46 +2500,47 @@ ALWAYS_INLINE_RELEASE void GPU_HW::CheckForTexPageOverlap(u32 texpage, u32 min_u
 
   // Log_InfoFmt("{}: {},{} => {},{}", s_draw_number, vram_min_u, vram_min_v, vram_max_u, vram_max_v);
 
-  if (vram_min_u < m_current_uv_range.left || vram_min_v < m_current_uv_range.top ||
-      vram_max_u >= m_current_uv_range.right || vram_max_v >= m_current_uv_range.bottom)
+  if (vram_min_u < m_current_uv_rect.left || vram_min_v < m_current_uv_rect.top ||
+      vram_max_u >= m_current_uv_rect.right || vram_max_v >= m_current_uv_rect.bottom)
   {
-    m_current_uv_range.Include(vram_min_u, vram_max_u + 1, vram_min_v, vram_max_v + 1);
+    m_current_uv_rect.Include(vram_min_u, vram_min_v, vram_max_u + 1, vram_max_v + 1);
 
-    bool update_drawn = false, update_written = false;
-    if (m_texpage_dirty & TEXPAGE_DIRTY_DRAWN_RECT)
-    {
-      DebugAssert(m_vram_dirty_draw_rect.Valid());
-      update_drawn = m_current_uv_range.Intersects(m_vram_dirty_draw_rect);
-      if (update_drawn)
-      {
-        GL_INS_FMT("Updating VRAM cache due to UV {{{},{} => {},{}}} intersection with dirty DRAW {{{},{} => {},{}}}",
-                   m_current_uv_range.left, m_current_uv_range.top, m_current_uv_range.right, m_current_uv_range.bottom,
-                   m_vram_dirty_draw_rect.left, m_vram_dirty_draw_rect.top, m_vram_dirty_draw_rect.right,
-                   m_vram_dirty_draw_rect.bottom);
-      }
-    }
-    if (m_texpage_dirty & TEXPAGE_DIRTY_WRITTEN_RECT)
-    {
-      DebugAssert(m_vram_dirty_write_rect.Valid());
-      update_written = m_current_uv_range.Intersects(m_vram_dirty_write_rect);
-      if (update_written)
-      {
-        GL_INS_FMT("Updating VRAM cache due to UV {{{},{} => {},{}}} intersection with dirty WRITE {{{},{} => {},{}}}",
-                   m_current_uv_range.left, m_current_uv_range.top, m_current_uv_range.right, m_current_uv_range.bottom,
-                   m_vram_dirty_write_rect.left, m_vram_dirty_write_rect.top, m_vram_dirty_write_rect.right,
-                   m_vram_dirty_write_rect.bottom);
-      }
-    }
+    // TODO: palette dirty?
 
-    if (update_drawn || update_written)
+    if (m_texpage_drawn_page >= 0)
     {
-      if (m_batch_index_count > 0)
+      if (m_batch.use_texture_cache)
       {
-        FlushRender();
-        EnsureVertexBufferSpaceForCurrentCommand();
+        const PageEntry& page = m_pages[static_cast<u8>(m_texpage_drawn_page)];
+        DebugAssert(page.is_drawn);
+
+        if (!page.draw_rect.Intersects(m_current_uv_rect))
+          return;
+
+        // UVs intersect with drawn area, can't use TC
+        GL_INS_FMT("UV rect {} intersects page dirty rect {}, disabling TC", RectToString(m_current_uv_rect),
+                   RectToString(page.draw_rect));
+        if (m_batch_index_count > 0)
+        {
+          FlushRender();
+          EnsureVertexBufferSpaceForCurrentCommand();
+        }
+
+        m_batch.use_texture_cache = false;
       }
 
-      UpdateVRAMReadTexture(update_drawn, update_written);
+      if (m_vram_dirty_rect.Valid() && m_vram_dirty_rect.Intersects(m_current_uv_rect))
+      {
+        GL_INS_FMT("UV rect intersects dirty rect {}, updating cache", RectToString(m_current_uv_rect),
+                   RectToString(m_vram_dirty_rect));
+        if (m_batch_index_count > 0)
+        {
+          FlushRender();
+          EnsureVertexBufferSpaceForCurrentCommand();
+        }
+
+        UpdateVRAMReadTexture();
+      }
     }
   }
 }
@@ -2620,6 +2693,7 @@ void GPU_HW::FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color)
 {
   GL_SCOPE_FMT("FillVRAM({},{} => {},{} ({}x{}) with 0x{:08X}", x, y, x + width, y + height, width, height, color);
 
+  // TODO: FIXME
   if (m_sw_renderer)
   {
     GPUBackendFillVRAMCommand* cmd = m_sw_renderer->NewFillVRAMCommand();
@@ -2632,17 +2706,14 @@ void GPU_HW::FillVRAM(u32 x, u32 y, u32 width, u32 height, u32 color)
     m_sw_renderer->PushCommand(cmd);
   }
 
-  GL_INS_FMT("Dirty draw area before: {},{} => {},{} ({}x{})", m_vram_dirty_draw_rect.left, m_vram_dirty_draw_rect.top,
-             m_vram_dirty_draw_rect.right, m_vram_dirty_draw_rect.bottom, m_vram_dirty_draw_rect.GetWidth(),
-             m_vram_dirty_draw_rect.GetHeight());
+  GPU::FillVRAM(x, y, width, height, color);
 
-  IncludeVRAMDirtyRectangle(
-    m_vram_dirty_draw_rect,
-    Common::Rectangle<u32>::FromExtents(x, y, width, height).Clamped(0, 0, VRAM_WIDTH, VRAM_HEIGHT));
+  GL_INS_FMT("Dirty area before: {}", RectToString(m_vram_dirty_rect));
 
-  GL_INS_FMT("Dirty draw area after: {},{} => {},{} ({}x{})", m_vram_dirty_draw_rect.left, m_vram_dirty_draw_rect.top,
-             m_vram_dirty_draw_rect.right, m_vram_dirty_draw_rect.bottom, m_vram_dirty_draw_rect.GetWidth(),
-             m_vram_dirty_draw_rect.GetHeight());
+  const Rect write_rect = Rect::FromExtents(x, y, width, height).Clamped(0, 0, VRAM_WIDTH, VRAM_HEIGHT);
+  AddWrittenRectangle(write_rect);
+
+  GL_INS_FMT("Dirty area after: {}", RectToString(m_vram_dirty_rect));
 
   const bool is_oversized = (((x + width) > VRAM_WIDTH || (y + height) > VRAM_HEIGHT));
   g_gpu_device->SetPipeline(
@@ -2686,6 +2757,8 @@ void GPU_HW::ReadVRAM(u32 x, u32 y, u32 width, u32 height)
     GL_POP();
     return;
   }
+
+  // TODO: Only read if it's in the drawn area
 
   // Get bounds with wrap-around handled.
   Common::Rectangle<u32> copy_rect = GetVRAMTransferBounds(x, y, width, height);
@@ -2738,6 +2811,7 @@ void GPU_HW::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, b
 {
   GL_SCOPE_FMT("UpdateVRAM({},{} => {},{} ({}x{})", x, y, x + width, y + height, width, height);
 
+  // TODO: FIXME
   if (m_sw_renderer)
   {
     const u32 num_words = width * height;
@@ -2753,9 +2827,13 @@ void GPU_HW::UpdateVRAM(u32 x, u32 y, u32 width, u32 height, const void* data, b
     m_sw_renderer->PushCommand(cmd);
   }
 
+  // TODO: Handle wrapped transfers... break them up or something
   const Common::Rectangle<u32> bounds = GetVRAMTransferBounds(x, y, width, height);
   DebugAssert(bounds.right <= VRAM_WIDTH && bounds.bottom <= VRAM_HEIGHT);
-  IncludeVRAMDirtyRectangle(m_vram_dirty_write_rect, bounds);
+
+  GPU::UpdateVRAM(x, y, width, height, data, set_mask, check_mask);
+  AddWrittenRectangle(bounds);
+  TrackVRAMWrite(bounds);
 
   if (check_mask)
   {
@@ -2856,14 +2934,16 @@ void GPU_HW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32
      ((dst_y % VRAM_HEIGHT) + height) > VRAM_HEIGHT);
   const Common::Rectangle<u32> src_bounds = GetVRAMTransferBounds(src_x, src_y, width, height);
   const Common::Rectangle<u32> dst_bounds = GetVRAMTransferBounds(dst_x, dst_y, width, height);
-  const bool intersect_with_draw = m_vram_dirty_draw_rect.Intersects(src_bounds);
-  const bool intersect_with_write = m_vram_dirty_write_rect.Intersects(src_bounds);
+  const bool is_reading_dirty = m_vram_dirty_rect.Valid() && m_vram_dirty_rect.Intersects(src_bounds);
+
+  // TODO: Invalidate TC
+  // TODO: Drawn vs written...
 
   if (use_shader || IsUsingMultisampling())
   {
-    if (intersect_with_draw || intersect_with_write)
-      UpdateVRAMReadTexture(intersect_with_draw, intersect_with_write);
-    IncludeVRAMDirtyRectangle(m_vram_dirty_draw_rect, dst_bounds);
+    if (is_reading_dirty)
+      UpdateVRAMReadTexture();
+    AddDrawnRectangle(dst_bounds.left, dst_bounds.top, dst_bounds.right, dst_bounds.bottom);
 
     struct VRAMCopyUBOData
     {
@@ -2911,23 +2991,11 @@ void GPU_HW::CopyVRAM(u32 src_x, u32 src_y, u32 dst_x, u32 dst_y, u32 width, u32
   if (!g_gpu_device->GetFeatures().texture_copy_to_self || overlaps_with_self)
   {
     src_tex = m_vram_read_texture.get();
-    if (intersect_with_draw || intersect_with_write)
-      UpdateVRAMReadTexture(intersect_with_draw, intersect_with_write);
+    if (is_reading_dirty)
+      UpdateVRAMReadTexture();
   }
 
-  Common::Rectangle<u32>* update_rect;
-  if (intersect_with_draw || intersect_with_write)
-  {
-    update_rect = intersect_with_draw ? &m_vram_dirty_draw_rect : &m_vram_dirty_write_rect;
-  }
-  else
-  {
-    const bool use_write =
-      (m_vram_dirty_write_rect.Valid() && m_vram_dirty_draw_rect.Valid() &&
-       m_vram_dirty_write_rect.GetDistance(dst_bounds) < m_vram_dirty_draw_rect.GetDistance(dst_bounds));
-    update_rect = use_write ? &m_vram_dirty_write_rect : &m_vram_dirty_draw_rect;
-  }
-  IncludeVRAMDirtyRectangle(*update_rect, dst_bounds);
+  AddDrawnRectangle(dst_bounds.left, dst_bounds.top, dst_bounds.right, dst_bounds.bottom);
 
   if (m_GPUSTAT.check_mask_before_draw)
   {
@@ -2946,67 +3014,69 @@ void GPU_HW::DispatchRenderCommand()
 {
   const GPURenderCommand rc{m_render_command.bits};
 
+  // TODO: avoid all this for vertex loading, only do when the type of draw changes
   GPUTextureMode texture_mode;
+  SourceKey texture_cache_key;
+  bool use_texture_cache;
   if (rc.IsTexturingEnabled())
   {
+    texture_mode = m_draw_mode.mode_reg.texture_mode;
+    texture_mode = (texture_mode == GPUTextureMode::Reserved_Direct16Bit) ? GPUTextureMode::Direct16Bit : texture_mode;
+    texture_cache_key = SourceKey(m_draw_mode.mode_reg.texture_page, m_draw_mode.palette_reg, texture_mode);
+    use_texture_cache = m_batch.use_texture_cache;
+
     // texture page changed - check that the new page doesn't intersect the drawing area
-    if (m_draw_mode.IsTexturePageChanged())
+    // TODO: Remove later part of condition, CPU heavy
+    // TODO: Make packing hash key faster...
+    // TODO: handle flush cache
+
+    if (texture_cache_key != m_batch.texture_cache_key || m_draw_mode.IsTexturePageChanged())
     {
       m_draw_mode.ClearTexturePageChangedFlag();
 
-#if 0
-      if (m_vram_dirty_rect.Valid())
+      // start by assuming we can use the TC
+      use_texture_cache = true;
+
+      // check that the palette isn't in a drawn area
+      if (DrawModeHasPalette(texture_cache_key.mode))
       {
-        GL_INS_FMT("VRAM DIRTY: {},{} => {},{}", m_vram_dirty_rect.left, m_vram_dirty_rect.top, m_vram_dirty_rect.right,
-                   m_vram_dirty_rect.bottom);
-
-        auto tpr = m_draw_mode.mode_reg.GetTexturePageRectangle();
-        GL_INS_FMT("PAGE RECT: {},{} => {},{}", tpr.left, tpr.top, tpr.right, tpr.bottom);
-        if (m_draw_mode.mode_reg.IsUsingPalette())
+        const Rect palette_rect = GetPaletteRect(texture_cache_key.palette, texture_cache_key.mode);
+        if (IsRectDrawn(palette_rect))
         {
-          tpr = m_draw_mode.GetTexturePaletteRectangle();
-          GL_INS_FMT("PALETTE RECT: {},{} => {},{}", tpr.left, tpr.top, tpr.right, tpr.bottom);
-        }
-      }
-#endif
+          GL_INS_FMT("Palette at {} is in drawn area, can't use TC", RectToString(palette_rect));
+          use_texture_cache = false;
 
-      if (m_draw_mode.mode_reg.IsUsingPalette())
-      {
-        const Common::Rectangle<u32> palette_rect =
-          m_draw_mode.palette_reg.GetRectangle(m_draw_mode.mode_reg.texture_mode);
-        const bool update_drawn = palette_rect.Intersects(m_vram_dirty_draw_rect);
-        const bool update_written = palette_rect.Intersects(m_vram_dirty_write_rect);
-        if (update_drawn || update_written)
-        {
-          GL_INS("Palette in VRAM dirty area, flushing cache");
-          if (!IsFlushed())
-            FlushRender();
+          if (m_vram_dirty_rect.Intersects(palette_rect))
+          {
+            GL_INS("Palette in VRAM dirty area, flushing cache");
+            if (!IsFlushed())
+              FlushRender();
 
-          UpdateVRAMReadTexture(update_drawn, update_written);
+            UpdateVRAMReadTexture();
+          }
         }
       }
 
-      const Common::Rectangle<u32> page_rect = m_draw_mode.mode_reg.GetTexturePageRectangle();
-      u8 new_texpage_dirty = m_vram_dirty_draw_rect.Intersects(page_rect) ? TEXPAGE_DIRTY_DRAWN_RECT : 0;
-      new_texpage_dirty |= m_vram_dirty_write_rect.Intersects(page_rect) ? TEXPAGE_DIRTY_WRITTEN_RECT : 0;
-
-      if (new_texpage_dirty != 0)
+      // TODO: Wrong, because of page crossing
+      const bool texpage_drawn =
+        use_texture_cache ?
+          IsPageDrawn(texture_cache_key.page) :
+          (m_vram_dirty_rect.Valid() &&
+           m_vram_dirty_rect.Intersects(GetTextureRect(texture_cache_key.page, texture_cache_key.mode)));
+      if (texpage_drawn)
       {
-        GL_INS("Texpage is in dirty area, checking UV ranges");
-        m_texpage_dirty = new_texpage_dirty;
+        GL_INS_FMT("Texpage {} is drawn, checking UV ranges", texture_cache_key.page);
+        m_texpage_drawn_page = static_cast<s8>(texture_cache_key.page);
         m_compute_uv_range = true;
-        m_current_uv_range.SetInvalid();
       }
       else
       {
-        m_compute_uv_range = m_clamp_uvs;
-        if (m_texpage_dirty)
-          GL_INS("Texpage is no longer dirty");
-        m_texpage_dirty = 0;
+        GL_INS_FMT("Texpage {} is NOT drawn", texture_cache_key.page);
+        m_compute_uv_range = m_clamp_uvs || TEXTURE_DUMPING;
+        m_texpage_drawn_page = -1;
       }
     }
 
-    texture_mode = m_draw_mode.mode_reg.texture_mode;
     if (rc.raw_texture_enable)
     {
       texture_mode =
@@ -3016,7 +3086,11 @@ void GPU_HW::DispatchRenderCommand()
   else
   {
     texture_mode = GPUTextureMode::Disabled;
+    texture_cache_key = {static_cast<u8>(NUM_PAGES), {}, {}};
+    use_texture_cache = false;
   }
+
+  // TODO: Don't need to flush draws if we use texture arrays.
 
   // has any state changed which requires a new batch?
   // Reverse blending breaks with mixed transparent and opaque pixels, so we have to do one draw per polygon.
@@ -3024,11 +3098,15 @@ void GPU_HW::DispatchRenderCommand()
   const GPUTransparencyMode transparency_mode =
     rc.transparency_enable ? m_draw_mode.mode_reg.transparency_mode : GPUTransparencyMode::Disabled;
   const bool dithering_enable = (!m_true_color && rc.IsDitheringEnabled()) ? m_GPUSTAT.dither_enable : false;
-  if (texture_mode != m_batch.texture_mode || transparency_mode != m_batch.transparency_mode ||
-      (transparency_mode == GPUTransparencyMode::BackgroundMinusForeground && !m_allow_shader_blend) ||
-      dithering_enable != m_batch.dithering)
+  if (!IsFlushed())
   {
-    FlushRender();
+    if (texture_mode != m_batch.texture_mode || transparency_mode != m_batch.transparency_mode ||
+        (transparency_mode == GPUTransparencyMode::BackgroundMinusForeground && !m_allow_shader_blend) ||
+        dithering_enable != m_batch.dithering || use_texture_cache != m_batch.use_texture_cache ||
+        (use_texture_cache && m_batch.texture_cache_key != texture_cache_key))
+    {
+      FlushRender();
+    }
   }
 
   EnsureVertexBufferSpaceForCurrentCommand();
@@ -3072,6 +3150,8 @@ void GPU_HW::DispatchRenderCommand()
     m_batch.texture_mode = texture_mode;
     m_batch.transparency_mode = transparency_mode;
     m_batch.dithering = dithering_enable;
+    m_batch.texture_cache_key = texture_cache_key;
+    m_batch.use_texture_cache = use_texture_cache;
 
     if (m_draw_mode.IsTextureWindowChanged())
     {
@@ -3116,12 +3196,10 @@ void GPU_HW::FlushRender()
     return;
 
 #ifdef _DEBUG
-  GL_SCOPE_FMT("Hardware Draw {}", ++s_draw_number);
+  GL_SCOPE_FMT("Hardware Draw {}: {}", ++s_draw_number, RectToString(m_current_draw_rect));
 #endif
 
-  GL_INS_FMT("Dirty draw area: {},{} => {},{} ({}x{})", m_vram_dirty_draw_rect.left, m_vram_dirty_draw_rect.top,
-             m_vram_dirty_draw_rect.right, m_vram_dirty_draw_rect.bottom, m_vram_dirty_draw_rect.GetWidth(),
-             m_vram_dirty_draw_rect.GetHeight());
+  GL_INS_FMT("Dirty area: {}", RectToString(m_vram_dirty_rect));
 
   if (m_batch_ubo_dirty)
   {
@@ -3130,20 +3208,24 @@ void GPU_HW::FlushRender()
     m_batch_ubo_dirty = false;
   }
 
+  const Source* texture = m_batch.use_texture_cache ? LookupSource(m_batch.texture_cache_key) : nullptr;
+  if (TEXTURE_DUMPING && texture)
+    DumpSourceVRAMWrites(texture, m_current_uv_rect);
+
   if (m_wireframe_mode != GPUWireframeMode::OnlyWireframe)
   {
     if (NeedsShaderBlending(m_batch.transparency_mode, m_batch.check_mask_before_draw))
     {
-      DrawBatchVertices(BatchRenderMode::ShaderBlend, index_count, base_index, base_vertex);
+      DrawBatchVertices(BatchRenderMode::ShaderBlend, index_count, base_index, base_vertex, texture);
     }
     else if (NeedsTwoPassRendering())
     {
-      DrawBatchVertices(BatchRenderMode::OnlyOpaque, index_count, base_index, base_vertex);
-      DrawBatchVertices(BatchRenderMode::OnlyTransparent, index_count, base_index, base_vertex);
+      DrawBatchVertices(BatchRenderMode::OnlyOpaque, index_count, base_index, base_vertex, texture);
+      DrawBatchVertices(BatchRenderMode::OnlyTransparent, index_count, base_index, base_vertex, texture);
     }
     else
     {
-      DrawBatchVertices(m_batch.GetRenderMode(), index_count, base_index, base_vertex);
+      DrawBatchVertices(m_batch.GetRenderMode(), index_count, base_index, base_vertex, texture);
     }
   }
 
@@ -3152,6 +3234,9 @@ void GPU_HW::FlushRender()
     g_gpu_device->SetPipeline(m_wireframe_pipeline.get());
     g_gpu_device->DrawIndexed(index_count, base_index, base_vertex);
   }
+
+  m_current_draw_rect.SetInvalid();
+  m_current_uv_rect.SetInvalid();
 }
 
 void GPU_HW::UpdateDisplay()
@@ -3160,11 +3245,14 @@ void GPU_HW::UpdateDisplay()
 
   GL_SCOPE("UpdateDisplay()");
 
+  AgeHashCache();
+  AgeSources();
+
   if (g_settings.debugging.show_vram)
   {
     if (IsUsingMultisampling())
     {
-      UpdateVRAMReadTexture(true, true);
+      UpdateVRAMReadTexture();
       SetDisplayTexture(m_vram_read_texture.get(), 0, 0, m_vram_read_texture->GetWidth(),
                         m_vram_read_texture->GetHeight());
     }
@@ -3441,6 +3529,819 @@ void GPU_HW::DownsampleFramebufferBoxFilter(GPUTexture* source, u32 left, u32 to
   RestoreDeviceContext();
 
   SetDisplayTexture(m_downsample_texture.get(), 0, 0, ds_width, ds_height);
+}
+
+// MARK: Texture Cache
+
+template<typename T>
+ALWAYS_INLINE_RELEASE static void ListPrepend(GPU_HW::TList<T>* list, T* item, GPU_HW::TListNode<T>* item_node)
+{
+  item_node->ref = item;
+  item_node->list = list;
+  item_node->prev = nullptr;
+  if (list->tail)
+  {
+    item_node->next = list->head;
+    list->head->prev = item_node;
+    list->head = item_node;
+  }
+  else
+  {
+    item_node->next = nullptr;
+    list->head = item_node;
+    list->tail = item_node;
+  }
+}
+
+template<typename T>
+ALWAYS_INLINE_RELEASE static void ListAppend(GPU_HW::TList<T>* list, T* item, GPU_HW::TListNode<T>* item_node)
+{
+  item_node->ref = item;
+  item_node->list = list;
+  item_node->next = nullptr;
+  if (list->tail)
+  {
+    item_node->prev = list->tail;
+    list->tail->next = item_node;
+    list->tail = item_node;
+  }
+  else
+  {
+    item_node->prev = nullptr;
+    list->head = item_node;
+    list->tail = item_node;
+  }
+}
+
+template<typename T>
+ALWAYS_INLINE_RELEASE static void ListMoveToFront(GPU_HW::TList<T>* list, GPU_HW::TListNode<T>* item_node)
+{
+  DebugAssert(list->head);
+  if (!item_node->prev)
+    return;
+
+  item_node->prev->next = item_node->next;
+  if (item_node->next)
+    item_node->next->prev = item_node->prev;
+  else
+    list->tail = item_node->prev;
+
+  item_node->prev = nullptr;
+  list->head->prev = item_node;
+  item_node->next = list->head;
+  list->head = item_node;
+}
+
+template<typename T>
+ALWAYS_INLINE_RELEASE static void ListUnlink(const GPU_HW::TListNode<T>& node)
+{
+  if (node.prev)
+    node.prev->next = node.next;
+  else
+    node.list->head = node.next;
+  if (node.next)
+    node.next->prev = node.prev;
+  else
+    node.list->tail = node.prev;
+}
+
+template<typename T, typename F>
+ALWAYS_INLINE_RELEASE static void ListIterate(const GPU_HW::TList<T>& list, const F& f)
+{
+  for (const GPU_HW::Source::ListNode* n = list.head; n; n = n->next)
+    f(n->ref);
+}
+
+[[maybe_unused]] ALWAYS_INLINE static TinyString SourceKeyToString(const GPU_HW::SourceKey& key)
+{
+  static constexpr const std::array<const char*, 4> texture_modes = {
+    {"Palette4Bit", "Palette8Bit", "Direct16Bit", "Reserved_Direct16Bit"}};
+
+  TinyString ret;
+  if (key.mode < GPUTextureMode::Direct16Bit)
+  {
+    ret.format("{} Page[{}] CLUT@[{},{}]", texture_modes[static_cast<u8>(key.mode)], key.page, key.palette.GetXBase(),
+               key.palette.GetYBase());
+  }
+  else
+  {
+    ret.format("{} Page[{}]", texture_modes[static_cast<u8>(key.mode)], key.page);
+  }
+  return ret;
+}
+
+[[maybe_unused]] ALWAYS_INLINE static TinyString SourceToString(const GPU_HW::Source* src)
+{
+  return SourceKeyToString(src->key);
+}
+
+ALWAYS_INLINE_RELEASE static const u16* VRAMPagePointer(u32 pn)
+{
+  const u32 start_y = GPU_HW::PageStartY(pn);
+  const u32 start_x = GPU_HW::PageStartX(pn);
+  return &g_vram[start_y * VRAM_WIDTH + start_x];
+}
+
+// TODO: Vectorize these.
+ALWAYS_INLINE_RELEASE static void DecodeTexture4(const u16* page, const u16* palette, u32 width, u32 height, u32* dest,
+                                                 u32 dest_stride)
+{
+  if ((width % 4u) == 0)
+  {
+    const u32 vram_width = width / 4;
+    for (u32 y = 0; y < height; y++)
+    {
+      const u16* page_ptr = page;
+      u32* dest_ptr = dest;
+
+      for (u32 x = 0; x < vram_width; x++)
+      {
+        const u32 pp = *(page_ptr++);
+        *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(palette[pp & 0x0F]);
+        *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(palette[(pp >> 4) & 0x0F]);
+        *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(palette[(pp >> 8) & 0x0F]);
+        *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(palette[pp >> 12]);
+      }
+
+      page += VRAM_WIDTH;
+      dest = reinterpret_cast<u32*>(reinterpret_cast<u8*>(dest) + dest_stride);
+    }
+  }
+  else
+  {
+    for (u32 y = 0; y < height; y++)
+    {
+      const u16* page_ptr = page;
+      u32* dest_ptr = dest;
+
+      u32 offs = 0;
+      u16 texel = 0;
+      for (u32 x = 0; x < width; x++)
+      {
+        if (offs == 0)
+          texel = *(page_ptr++);
+
+        *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(palette[texel & 0x0F]);
+        texel >>= 4;
+
+        offs = (offs + 1) % 4;
+      }
+
+      page += VRAM_WIDTH;
+      dest = reinterpret_cast<u32*>(reinterpret_cast<u8*>(dest) + dest_stride);
+    }
+  }
+}
+ALWAYS_INLINE_RELEASE static void DecodeTexture8(const u16* page, const u16* palette, u32 width, u32 height, u32* dest,
+                                                 u32 dest_stride)
+{
+  if ((width % 2u) == 0)
+  {
+    const u32 vram_width = width / 2;
+    for (u32 y = 0; y < height; y++)
+    {
+      const u16* page_ptr = page;
+      u32* dest_ptr = dest;
+
+      for (u32 x = 0; x < vram_width; x++)
+      {
+        const u32 pp = *(page_ptr++);
+        *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(palette[pp & 0xFF]);
+        *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(palette[pp >> 8]);
+      }
+
+      page += VRAM_WIDTH;
+      dest = reinterpret_cast<u32*>(reinterpret_cast<u8*>(dest) + dest_stride);
+    }
+  }
+  else
+  {
+    for (u32 y = 0; y < height; y++)
+    {
+      const u16* page_ptr = page;
+      u32* dest_ptr = dest;
+
+      u32 offs = 0;
+      u16 texel = 0;
+      for (u32 x = 0; x < width; x++)
+      {
+        if (offs == 0)
+          texel = *(page_ptr++);
+
+        *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(palette[texel & 0xFF]);
+        texel >>= 8;
+
+        offs ^= 1;
+      }
+
+      page += VRAM_WIDTH;
+      dest = reinterpret_cast<u32*>(reinterpret_cast<u8*>(dest) + dest_stride);
+    }
+  }
+}
+
+ALWAYS_INLINE_RELEASE static void DecodeTexture16(const u16* page, u32 width, u32 height, u32* dest, u32 dest_stride)
+{
+  for (u32 y = 0; y < height; y++)
+  {
+    const u16* page_ptr = page;
+    u32* dest_ptr = dest;
+
+    for (u32 x = 0; x < width; x++)
+      *(dest_ptr++) = VRAMRGBA5551ToRGBA8888(*(page_ptr++));
+
+    page += VRAM_WIDTH;
+    dest = reinterpret_cast<u32*>(reinterpret_cast<u8*>(dest) + dest_stride);
+  }
+}
+
+ALWAYS_INLINE_RELEASE static void DecodeTexture(const u16* page_ptr, GPUTexturePaletteReg palette, GPUTextureMode mode,
+                                                u32* dest, u32 dest_stride, u32 width, u32 height)
+{
+  switch (mode)
+  {
+    case GPUTextureMode::Palette4Bit:
+      DecodeTexture4(page_ptr, &g_vram[palette.GetYBase() * VRAM_WIDTH + palette.GetXBase()], width, height, dest,
+                     dest_stride);
+      break;
+    case GPUTextureMode::Palette8Bit:
+      DecodeTexture8(page_ptr, &g_vram[palette.GetYBase() * VRAM_WIDTH + palette.GetXBase()], width, height, dest,
+                     dest_stride);
+      break;
+    case GPUTextureMode::Direct16Bit:
+    case GPUTextureMode::Reserved_Direct16Bit:
+      DecodeTexture16(page_ptr, width, height, dest, dest_stride);
+      break;
+
+      DefaultCaseIsUnreachable()
+  }
+}
+
+static void DecodeTexture(u8 page, GPUTexturePaletteReg palette, GPUTextureMode mode, GPUTexture* texture)
+{
+  alignas(16) static u32 s_temp_buffer[TEXTURE_PAGE_WIDTH * TEXTURE_PAGE_HEIGHT];
+
+  static constexpr bool DUMP = false;
+
+  u32* tex_map;
+  u32 tex_stride;
+  const bool mapped = !DUMP && texture->Map(reinterpret_cast<void**>(&tex_map), &tex_stride, 0, 0, TEXTURE_PAGE_WIDTH,
+                                            TEXTURE_PAGE_HEIGHT);
+  if (!mapped)
+  {
+    tex_map = s_temp_buffer;
+    tex_stride = sizeof(u32) * TEXTURE_PAGE_WIDTH;
+  }
+
+  const u16* page_ptr = VRAMPagePointer(page);
+  DecodeTexture(page_ptr, palette, mode, tex_map, tex_stride, TEXTURE_PAGE_WIDTH, TEXTURE_PAGE_HEIGHT);
+
+  if constexpr (DUMP)
+  {
+    static u32 n = 0;
+    RGBA8Image image(TEXTURE_PAGE_WIDTH, TEXTURE_PAGE_HEIGHT, tex_map);
+    image.SaveToFile(TinyString::from_format("D:\\dump\\hc_{}.png", ++n));
+  }
+
+  if (mapped)
+    texture->Unmap();
+  else
+    texture->Update(0, 0, TEXTURE_PAGE_WIDTH, TEXTURE_PAGE_HEIGHT, tex_map, tex_stride);
+}
+
+const GPU_HW::Source* GPU_HW::LookupSource(SourceKey key)
+{
+  GL_SCOPE_FMT("TC: Lookup source {}", SourceKeyToString(key));
+
+  TList<Source>& list = m_pages[key.page].sources;
+  for (TListNode<Source>* n = list.head; n; n = n->next)
+  {
+    if (n->ref->key == key)
+    {
+      GL_INS("TC: Source hit");
+      ListMoveToFront(&list, n);
+      return n->ref;
+    }
+  }
+
+  return CreateSource(key);
+}
+
+bool GPU_HW::IsPageDrawn(u32 page_index) const
+{
+  return m_pages[page_index].is_drawn;
+}
+
+bool GPU_HW::IsPageDrawn(u32 page_index, const Rect& rect) const
+{
+  return m_pages[page_index].is_drawn && m_pages[page_index].draw_rect.Intersects(rect);
+}
+
+bool GPU_HW::IsRectDrawn(const Rect& rect) const
+{
+  bool drawn = false;
+  LoopRectPages(rect.left, rect.top, rect.right, rect.bottom, [this, &rect, &drawn](u32 pn) {
+    if (IsPageDrawn(pn, rect))
+    {
+      drawn = true;
+      return false;
+    }
+    return true;
+  });
+  return drawn;
+}
+
+template<typename F>
+void GPU_HW::LoopRectPages(u32 left, u32 top, u32 right, u32 bottom, const F& f) const
+{
+  DebugAssert(right <= VRAM_WIDTH && bottom <= VRAM_HEIGHT);
+  DebugAssert((right - left) > 0 && (bottom - top) > 0);
+
+  const u32 start_x = left / VRAM_PAGE_WIDTH;
+  const u32 end_x = (right - 1) / VRAM_PAGE_WIDTH;
+  const u32 start_y = top / VRAM_PAGE_HEIGHT;
+  const u32 end_y = (bottom - 1) / VRAM_PAGE_HEIGHT;
+
+  u32 page_number = PageIndex(start_x, start_y);
+  for (u32 page_y = start_y; page_y <= end_y; page_y++)
+  {
+    u32 y_page_number = page_number;
+
+    for (u32 page_x = start_x; page_x <= end_x; page_x++)
+    {
+      if (!f(y_page_number))
+        return;
+
+      y_page_number++;
+    }
+
+    page_number += VRAM_PAGES_WIDE;
+  }
+}
+
+template<typename F>
+void GPU_HW::LoopRectPages(const Rect& rc, const F& f) const
+{
+  LoopRectPages(rc.left, rc.top, rc.right, rc.bottom, f);
+}
+
+template<typename F>
+void GPU_HW::LoopXWrappedPages(u32 page, u32 num_pages, const F& f) const
+{
+  for (u32 i = 0; i < num_pages; i++)
+    f((page & VRAM_PAGE_Y_MASK) | ((page + i) & VRAM_PAGE_X_MASK));
+}
+
+template<typename F>
+void GPU_HW::LoopPages(u32 x, u32 y, u32 width, u32 height, const F& f)
+{
+  DebugAssert(width > 0 && height > 0);
+  DebugAssert((y + height) <= VRAM_HEIGHT);
+
+  // X can wrap.
+  // TODO: Only do the left/right sides, not the whole row.
+  const bool wrap_x = ((x + width) > VRAM_WIDTH);
+  const u32 start_x = wrap_x ? 0 : (x / VRAM_PAGE_WIDTH);
+  const u32 start_y = y / VRAM_PAGE_HEIGHT;
+  const u32 end_x = wrap_x ? (VRAM_PAGES_WIDE - 1) : ((x + (width - 1)) / VRAM_PAGE_WIDTH);
+  const u32 end_y = (y + (height - 1)) / VRAM_PAGE_HEIGHT;
+
+  u32 page_number = PageIndex(start_x, start_y);
+  for (u32 page_y = start_y; page_y <= end_y; page_y++)
+  {
+    u32 y_page_number = page_number;
+
+    for (u32 page_x = start_x; page_x <= end_x; page_x++)
+    {
+      f(y_page_number);
+      y_page_number++;
+    }
+
+    page_number += VRAM_PAGES_WIDE;
+  }
+}
+
+void GPU_HW::InvalidateTextureCache()
+{
+  for (u32 i = 0; i < NUM_PAGES; i++)
+  {
+    InvalidatePageSources(i);
+
+    PageEntry& page = m_pages[i];
+    page.is_drawn = false;
+    page.draw_rect.SetInvalid();
+  }
+
+  // should all be null
+#ifdef _DEBUG
+  for (u32 i = 0; i < NUM_PAGES; i++)
+    DebugAssert(!m_pages[i].sources.head && !m_pages[i].sources.tail);
+#endif
+}
+
+void GPU_HW::InvalidatePageSources(u32 pn)
+{
+  DebugAssert(pn < NUM_PAGES);
+
+  TList<Source>& ps = m_pages[pn].sources;
+  if (ps.head)
+    GL_INS_FMT("Invalidate page {} sources", pn);
+
+  for (TListNode<Source>* n = ps.head; n;)
+  {
+    Source* src = n->ref;
+    n = n->next;
+
+    GL_INS_FMT("Invalidate source {}", SourceToString(src));
+
+    for (u32 i = 0; i < src->num_page_refs; i++)
+      ListUnlink(src->page_refs[i]);
+
+    if (src->from_hash_cache)
+    {
+      DebugAssert(src->from_hash_cache->ref_count > 0);
+      src->from_hash_cache->ref_count--;
+    }
+    else
+    {
+      g_gpu_device->RecycleTexture(std::unique_ptr<GPUTexture>(src->texture));
+    }
+
+    delete src;
+  }
+
+  DebugAssert(!ps.head && !ps.tail);
+}
+
+void GPU_HW::InvalidatePageSources(u32 pn, const Rect& rc)
+{
+  DebugAssert(pn < NUM_PAGES);
+
+  TList<Source>& ps = m_pages[pn].sources;
+  if (ps.head)
+    GL_INS_FMT("Invalidate page {} sources overlapping with {}", pn, RectToString(rc));
+
+  for (TListNode<Source>* n = ps.head; n;)
+  {
+    Source* src = n->ref;
+    n = n->next;
+
+    // TODO: Make faster?
+    if (!src->texture_rect.Intersects(rc) &&
+        (src->key.mode == GPUTextureMode::Direct16Bit || !src->palette_rect.Intersects(rc)))
+    {
+      continue;
+    }
+
+    GL_INS_FMT("Invalidate source {}", SourceToString(src));
+
+    for (u32 i = 0; i < src->num_page_refs; i++)
+      ListUnlink(src->page_refs[i]);
+
+    if (src->from_hash_cache)
+    {
+      DebugAssert(src->from_hash_cache->ref_count > 0);
+      src->from_hash_cache->ref_count--;
+    }
+    else
+    {
+      g_gpu_device->RecycleTexture(std::unique_ptr<GPUTexture>(src->texture));
+    }
+
+    delete src;
+  }
+}
+
+const GPU_HW::Source* GPU_HW::CreateSource(SourceKey key)
+{
+  GL_INS_FMT("TC: Create source {}", SourceKeyToString(key));
+
+  const HashType tex_hash = HashPage(key.page, key.mode);
+  const HashType pal_hash = (key.mode < GPUTextureMode::Direct16Bit) ? HashPalette(key.palette, key.mode) : 0;
+  HashCacheEntry* hcentry = LookupHashCache(key, tex_hash, pal_hash);
+  if (!hcentry)
+  {
+    GL_INS("TC: Hash cache lookup fail?!");
+    return nullptr;
+  }
+
+  hcentry->ref_count++;
+  hcentry->age = 0;
+
+  Source* src = new Source();
+  src->key = key;
+  src->num_page_refs = 0;
+  src->texture = hcentry->texture.get();
+  src->from_hash_cache = hcentry;
+
+  // Textures at front, CLUTs at back.
+  std::array<u32, MAX_PAGE_REFS_PER_SOURCE> page_refns;
+  const auto add_page_ref = [this, src, &page_refns](u32 pn) {
+    // Don't double up references
+    for (u32 i = 0; i < src->num_page_refs; i++)
+    {
+      if (page_refns[i] == pn)
+        return;
+    }
+
+    const u32 ri = src->num_page_refs++;
+    page_refns[ri] = pn;
+
+    ListPrepend(&m_pages[pn].sources, src, &src->page_refs[ri]);
+  };
+  const auto add_page_ref_back = [this, src, &page_refns](u32 pn) {
+    // Don't double up references
+    for (u32 i = 0; i < src->num_page_refs; i++)
+    {
+      if (page_refns[i] == pn)
+        return;
+    }
+
+    const u32 ri = src->num_page_refs++;
+    page_refns[ri] = pn;
+
+    ListAppend(&m_pages[pn].sources, src, &src->page_refs[ri]);
+  };
+
+  src->texture_rect = GetTextureRect(key.page, key.mode);
+  LoopXWrappedPages(key.page, TexturePageCountForMode(key.mode), add_page_ref);
+
+  if (key.mode < GPUTextureMode::Direct16Bit)
+  {
+    src->palette_rect = GetPaletteRect(key.palette, key.mode);
+    LoopXWrappedPages(PalettePageNumber(key.palette), PalettePageCountForMode(key.mode), add_page_ref_back);
+  }
+
+  GL_INS_FMT("Appended new source {} to {} pages", SourceToString(src), src->num_page_refs);
+
+  if (TEXTURE_DUMPING)
+  {
+    const u32 pn = VRAMCoordinateToPage(src->texture_rect.left, src->texture_rect.top);
+    for (TListNode<VRAMWrite>* n = m_pages[pn].writes.head; n; n = n->next)
+      DumpVRAMWrite(*n->ref, pal_hash, key.mode, key.palette);
+  }
+
+  return src;
+}
+
+void GPU_HW::TrackVRAMWrite(const Rect& rect)
+{
+  if (!TEXTURE_DUMPING)
+    return;
+
+  VRAMWrite* it = new VRAMWrite();
+  it->rect = rect;
+  it->hash = HashRect(rect);
+  it->num_page_refs = 0;
+  LoopRectPages(rect, [this, it](u32 pn) {
+    DebugAssert(it->num_page_refs < MAX_PAGE_REFS_PER_WRITE);
+    ListAppend(&m_pages[pn].writes, it, &it->page_refs[it->num_page_refs++]);
+    return true;
+  });
+
+  Log_DevFmt("New VRAM write {:016X} at {} touching {} pages", it->hash, it->rect, it->num_page_refs);
+}
+
+void GPU_HW::RemoveVRAMWrite(VRAMWrite* entry)
+{
+  Log_DevFmt("Remove VRAM write {:016X} at {}", entry->hash, entry->rect);
+
+  for (u32 i = 0; i < entry->num_page_refs; i++)
+    ListUnlink(entry->page_refs[i]);
+
+  delete entry;
+}
+
+size_t GPU_HW::DumpedTextureKeyHash::operator()(const DumpedTextureKey& k) const
+{
+  // TODO: This is slow
+  std::size_t hash = 0;
+  hash_combine(hash, k.tex_hash, k.pal_hash, k.width, k.height, static_cast<u8>(k.mode));
+  return hash;
+}
+
+void GPU_HW::DumpVRAMWrite(const VRAMWrite& it, HashType pal_hash, GPUTextureMode mode, GPUTexturePaletteReg palette)
+{
+  const u32 width = TextureWidthForMode(mode, it.rect.GetWidth());
+  const u32 height = it.rect.GetHeight();
+  const DumpedTextureKey key = {it.hash, pal_hash, width, height, mode};
+  if (s_dumped_textures.find(key) != s_dumped_textures.end())
+    return;
+
+  s_dumped_textures.insert(key);
+
+  // probably a clut
+  if (height == 1)
+    return;
+
+  Log_DevFmt("Dumping VRAM write {:016X} [{}x{}] at {}", it.hash, width, height, it.rect);
+
+  RGBA8Image image(width, height);
+  DecodeTexture(&g_vram[it.rect.top * VRAM_HEIGHT + it.rect.left], palette, mode, image.GetPixels(), image.GetPitch(),
+                width, height);
+
+  for (u32 y = 0; y < image.GetHeight(); y++)
+  {
+    for (u32 x = 0; x < image.GetWidth(); x++)
+      image.SetPixel(x, y, image.GetPixel(x, y) | 0xFF000000u);
+  }
+
+  static u32 n = 0;
+  image.SaveToFile(TinyString::from_format("D:\\dump\\vw_{}.png", ++n));
+}
+
+void GPU_HW::DumpSourceVRAMWrites(const Source* source, const Rect& uv_rect)
+{
+  const HashType pal_hash =
+    (source->key.mode < GPUTextureMode::Direct16Bit) ? HashPalette(source->key.palette, source->key.mode) : 0;
+
+  // TODO: doesn't handle wrapping
+  LoopXWrappedPages(source->key.page, PageWidthForMode(source->key.mode), [this, source, &uv_rect, pal_hash](u32 pn) {
+    for (TListNode<VRAMWrite>* n = m_pages[pn].writes.head; n; n = n->next)
+    {
+      if (!n->ref->rect.Contains(uv_rect))
+        continue;
+
+      DumpVRAMWrite(*n->ref, pal_hash, source->key.mode, source->key.palette);
+    }
+  });
+}
+
+GPU_HW::HashType GPU_HW::HashPage(u8 page, GPUTextureMode mode)
+{
+  XXH3_state_t state;
+  XXH3_64bits_reset(&state);
+
+  // Pages aren't contiguous in memory :(
+  const u16* page_ptr = VRAMPagePointer(page);
+
+  switch (mode)
+  {
+    case GPUTextureMode::Palette4Bit:
+    {
+      for (u32 y = 0; y < VRAM_PAGE_HEIGHT; y++)
+      {
+        XXH3_64bits_update(&state, page_ptr, VRAM_PAGE_WIDTH * sizeof(u16));
+        page_ptr += VRAM_WIDTH;
+      }
+    }
+    break;
+
+    case GPUTextureMode::Palette8Bit:
+    {
+      for (u32 y = 0; y < VRAM_PAGE_HEIGHT; y++)
+      {
+        XXH3_64bits_update(&state, page_ptr, VRAM_PAGE_WIDTH * 2 * sizeof(u16));
+        page_ptr += VRAM_WIDTH;
+      }
+    }
+    break;
+
+    case GPUTextureMode::Direct16Bit:
+    {
+      for (u32 y = 0; y < VRAM_PAGE_HEIGHT; y++)
+      {
+        XXH3_64bits_update(&state, page_ptr, VRAM_PAGE_WIDTH * 4 * sizeof(u16));
+        page_ptr += VRAM_WIDTH;
+      }
+    }
+    break;
+
+      DefaultCaseIsUnreachable()
+  }
+
+  return XXH3_64bits_digest(&state);
+}
+
+GPU_HW::HashType GPU_HW::HashPalette(GPUTexturePaletteReg palette, GPUTextureMode mode)
+{
+  const u16* base = &g_vram[palette.GetYBase() * VRAM_WIDTH + palette.GetXBase()];
+
+  switch (mode)
+  {
+    case GPUTextureMode::Palette4Bit:
+      return XXH3_64bits(base, sizeof(u16) * 16);
+
+    case GPUTextureMode::Palette8Bit:
+      return XXH3_64bits(base, sizeof(u16) * 256);
+
+      DefaultCaseIsUnreachable()
+  }
+}
+
+GPU_HW::HashType GPU_HW::HashRect(const Rect& rc)
+{
+  XXH3_state_t state;
+  XXH3_64bits_reset(&state);
+
+  const u32 width = rc.GetWidth();
+  const u32 height = rc.GetHeight();
+  const u16* ptr = &g_vram[rc.top * VRAM_WIDTH + rc.left];
+  for (u32 y = 0; y < height; y++)
+  {
+    XXH3_64bits_update(&state, ptr, width * VRAM_WIDTH);
+    ptr += VRAM_WIDTH;
+  }
+
+  return XXH3_64bits_digest(&state);
+}
+
+GPU_HW::HashCacheEntry* GPU_HW::LookupHashCache(SourceKey key, HashType tex_hash, HashType pal_hash)
+{
+  const HashCacheKey hkey = {tex_hash, pal_hash, static_cast<HashType>(key.mode)};
+
+  const auto it = m_hash_cache.find(hkey);
+  if (it != m_hash_cache.end())
+  {
+    GL_INS_FMT("TC: Hash cache hit {:X} {:X}", hkey.texture_hash, hkey.palette_hash);
+    return &it->second;
+  }
+
+  GL_INS_FMT("TC: Hash cache miss {:X} {:X}", hkey.texture_hash, hkey.palette_hash);
+
+  HashCacheEntry entry;
+  entry.ref_count = 0;
+  entry.age = 0;
+  entry.texture = g_gpu_device->FetchTexture(TEXTURE_PAGE_WIDTH, TEXTURE_PAGE_HEIGHT, 1, 1, 1,
+                                             GPUTexture::Type::Texture, GPUTexture::Format::RGBA8);
+  if (!entry.texture)
+  {
+    Log_ErrorPrint("Failed to create texture.");
+    return nullptr;
+  }
+
+  DecodeTexture(key.page, key.palette, key.mode, entry.texture.get());
+
+  return &m_hash_cache.emplace(hkey, std::move(entry)).first->second;
+}
+
+void GPU_HW::RemoveFromHashCache(HashCache::iterator it)
+{
+  g_gpu_device->RecycleTexture(std::move(it->second.texture));
+  m_hash_cache.erase(it);
+}
+
+void GPU_HW::AgeSources()
+{
+  // TODO
+}
+
+void GPU_HW::AgeHashCache()
+{
+  // Number of frames before unused hash cache entries are evicted.
+  static constexpr u32 MAX_HASH_CACHE_AGE = 600;
+
+  // Maximum number of textures which are permitted in the hash cache at the end of the frame.
+  static constexpr u32 MAX_HASH_CACHE_SIZE = 500;
+
+  bool might_need_cache_purge = (m_hash_cache.size() > MAX_HASH_CACHE_SIZE);
+  if (might_need_cache_purge)
+    s_hash_cache_purge_list.clear();
+
+  for (auto it = m_hash_cache.begin(); it != m_hash_cache.end();)
+  {
+    HashCacheEntry& e = it->second;
+    if (e.ref_count > 0)
+    {
+      ++it;
+      continue;
+    }
+
+    if (++e.age > MAX_HASH_CACHE_AGE)
+    {
+      RemoveFromHashCache(it++);
+      continue;
+    }
+
+    // We might free up enough just with "normal" removals above.
+    if (might_need_cache_purge)
+    {
+      might_need_cache_purge = (m_hash_cache.size() > MAX_HASH_CACHE_SIZE);
+      if (might_need_cache_purge)
+        s_hash_cache_purge_list.emplace_back(it, static_cast<s32>(e.age));
+    }
+
+    ++it;
+  }
+
+  // Pushing to a list, sorting, and removing ends up faster than re-iterating the map.
+  if (might_need_cache_purge)
+  {
+    std::sort(s_hash_cache_purge_list.begin(), s_hash_cache_purge_list.end(),
+              [](const auto& lhs, const auto& rhs) { return lhs.second > rhs.second; });
+
+    const u32 entries_to_purge = std::min(static_cast<u32>(m_hash_cache.size() - MAX_HASH_CACHE_SIZE),
+                                          static_cast<u32>(s_hash_cache_purge_list.size()));
+    for (u32 i = 0; i < entries_to_purge; i++)
+      RemoveFromHashCache(s_hash_cache_purge_list[i].first);
+  }
+}
+
+size_t GPU_HW::HashCacheKeyHash::operator()(const HashCacheKey& k) const
+{
+  std::size_t h = 0;
+  hash_combine(h, k.texture_hash, k.palette_hash, k.mode);
+  return h;
 }
 
 void GPU_HW::DrawRendererStats()

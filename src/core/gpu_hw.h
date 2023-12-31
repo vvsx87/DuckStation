@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,44 @@ struct GPUBackendDrawCommand;
 class GPU_HW final : public GPU
 {
 public:
+  using Rect = Common::Rectangle<u32>; // TODO: Could be u16.
+
+  // TODO: Shouldn't be public
+  struct Source;
+  template<typename T>
+  struct TList;
+  template<typename T>
+  struct TListNode;
+  struct HashCacheEntry;
+
+  struct SourceKey
+  {
+    u8 page;
+    GPUTextureMode mode;
+    GPUTexturePaletteReg palette;
+
+    SourceKey() = default;
+    ALWAYS_INLINE constexpr SourceKey(u8 page_, GPUTexturePaletteReg palette_, GPUTextureMode mode_)
+      : page(page_), mode(mode_), palette(palette_)
+    {
+    }
+    ALWAYS_INLINE constexpr SourceKey(const SourceKey& k) : page(k.page), mode(k.mode), palette(k.palette) {}
+
+    ALWAYS_INLINE bool HasPalette() const { return (mode < GPUTextureMode::Direct16Bit); }
+
+    ALWAYS_INLINE SourceKey& operator=(const SourceKey& k)
+    {
+      page = k.page;
+      mode = k.mode;
+      palette.bits = k.palette.bits;
+      return *this;
+    }
+
+    ALWAYS_INLINE bool operator==(const SourceKey& k) const { return (std::memcmp(&k, this, sizeof(SourceKey)) == 0); }
+    ALWAYS_INLINE bool operator!=(const SourceKey& k) const { return (std::memcmp(&k, this, sizeof(SourceKey)) != 0); }
+  };
+  static_assert(sizeof(SourceKey) == 4);
+
   enum class BatchRenderMode : u8
   {
     TransparencyDisabled,
@@ -59,11 +98,6 @@ private:
     MAX_VERTICES_FOR_RECTANGLE = 6 * (((MAX_PRIMITIVE_WIDTH + (TEXTURE_PAGE_WIDTH - 1)) / TEXTURE_PAGE_WIDTH) + 1u) *
                                  (((MAX_PRIMITIVE_HEIGHT + (TEXTURE_PAGE_HEIGHT - 1)) / TEXTURE_PAGE_HEIGHT) + 1u)
   };
-  enum : u8
-  {
-    TEXPAGE_DIRTY_DRAWN_RECT = (1 << 0),
-    TEXPAGE_DIRTY_WRITTEN_RECT = (1 << 1),
-  };
 
   static_assert(GPUDevice::MIN_TEXEL_BUFFER_ELEMENTS >= (VRAM_WIDTH * VRAM_HEIGHT));
 
@@ -94,6 +128,9 @@ private:
     bool set_mask_while_drawing = false;
     bool check_mask_before_draw = false;
     bool use_depth_buffer = false;
+
+    bool use_texture_cache = false;
+    SourceKey texture_cache_key = {};
 
     // Returns the render mode for this batch.
     BatchRenderMode GetRenderMode() const;
@@ -131,14 +168,15 @@ private:
   void PrintSettingsToLog();
   void CheckSettings();
 
-  void UpdateVRAMReadTexture(bool drawn, bool written);
+  void UpdateVRAMReadTexture();
   void UpdateDepthBufferFromMaskBit();
   void ClearDepthBuffer();
   void SetScissor();
   void SetVRAMRenderTarget();
   void MapGPUBuffer(u32 required_vertices, u32 required_indices);
   void UnmapGPUBuffer(u32 used_vertices, u32 used_indices);
-  void DrawBatchVertices(BatchRenderMode render_mode, u32 num_indices, u32 base_index, u32 base_vertex);
+  void DrawBatchVertices(BatchRenderMode render_mode, u32 num_indices, u32 base_index, u32 base_vertex,
+                         const Source* texture);
 
   u32 CalculateResolutionScale() const;
   GPUDownsampleMode GetDownsampleMode(u32 resolution_scale) const;
@@ -147,8 +185,10 @@ private:
   bool IsUsingDownsampling() const;
 
   void SetFullVRAMDirtyRectangle();
-  void ClearVRAMDirtyRectangle();
-  void IncludeVRAMDirtyRectangle(Common::Rectangle<u32>& rect, const Common::Rectangle<u32>& new_rect);
+  void AddVRAMDirtyRectangle(u32 left, u32 top, u32 right, u32 bottom);
+
+  void AddWrittenRectangle(const Rect& rect);
+  void AddDrawnRectangle(u32 left, u32 top, u32 right, u32 bottom);
   void CheckForTexPageOverlap(u32 texpage, u32 min_u, u32 min_v, u32 max_u, u32 max_v);
 
   bool IsFlushed() const;
@@ -243,18 +283,18 @@ private:
   bool m_pgxp_depth_buffer : 1 = false;
   bool m_allow_shader_blend : 1 = false;
   bool m_prefer_shader_blend : 1 = false;
-  u8 m_texpage_dirty = 0;
 
   BatchConfig m_batch;
 
   // Changed state
+  s8 m_texpage_drawn_page = -1;
   bool m_batch_ubo_dirty = true;
   BatchUBOData m_batch_ubo_data = {};
 
   // Bounding box of VRAM area that the GPU has drawn into.
-  Common::Rectangle<u32> m_vram_dirty_draw_rect;
-  Common::Rectangle<u32> m_vram_dirty_write_rect;
-  Common::Rectangle<u32> m_current_uv_range;
+  Rect m_vram_dirty_rect;
+  Rect m_current_draw_rect;
+  Rect m_current_uv_rect;
 
   std::unique_ptr<GPUPipeline> m_wireframe_pipeline;
 
@@ -280,6 +320,253 @@ private:
   std::unique_ptr<GPUSampler> m_downsample_lod_sampler;
   std::unique_ptr<GPUSampler> m_downsample_composite_sampler;
   u32 m_downsample_scale_or_levels = 0;
+
+  //////////////////////////////////////////////////////////////////////////
+  // Texture Cache
+  //////////////////////////////////////////////////////////////////////////
+  // TODO: UNDO-PUBLIC
+public:
+  // TODO: Should be u32 on ARM64/ARM32.
+  using HashType = u64;
+
+  static constexpr u32 VRAM_PAGE_WIDTH = 64;
+  static constexpr u32 VRAM_PAGE_HEIGHT = 256;
+  static constexpr u32 VRAM_PAGES_WIDE = VRAM_WIDTH / VRAM_PAGE_WIDTH;
+  static constexpr u32 VRAM_PAGES_HIGH = VRAM_HEIGHT / VRAM_PAGE_HEIGHT;
+  static constexpr u32 VRAM_PAGE_X_MASK = 0xf;  // 16 pages wide
+  static constexpr u32 VRAM_PAGE_Y_MASK = 0x10; // 2 pages high
+  static constexpr u32 NUM_PAGES = VRAM_PAGES_WIDE * VRAM_PAGES_HIGH;
+  static_assert(NUM_PAGES == 32);
+
+  /// 4 pages in C16 mode, 2+4 pages in P8 mode, 1+1 pages in P4 mode.
+  static constexpr u32 MAX_PAGE_REFS_PER_SOURCE = 6;
+
+  static constexpr u32 MAX_PAGE_REFS_PER_WRITE = 32;
+
+  ALWAYS_INLINE static constexpr u32 PageIndex(u32 px, u32 py) { return ((py * VRAM_PAGES_WIDE) + px); }
+  ALWAYS_INLINE static constexpr Rect PageRect(u32 px, u32 py)
+  {
+    return Rect(px * VRAM_PAGE_WIDTH, py * VRAM_PAGE_HEIGHT, (px + 1) * VRAM_PAGE_WIDTH, (py + 1) * VRAM_PAGE_HEIGHT);
+  }
+  ALWAYS_INLINE static constexpr Rect PageRect(u32 pn)
+  {
+    // TODO: Put page rects in a LUT instead?
+    return PageRect(pn % VRAM_PAGES_WIDE, pn / VRAM_PAGES_WIDE);
+  }
+
+  ALWAYS_INLINE static constexpr u32 VRAMCoordinateToPage(u32 x, u32 y)
+  {
+    return PageIndex(x / VRAM_PAGE_WIDTH, y / VRAM_PAGE_HEIGHT);
+  }
+
+  ALWAYS_INLINE static constexpr u32 PageStartX(u32 pn)
+  {
+    return (pn % GPU_HW::VRAM_PAGES_WIDE) * GPU_HW::VRAM_PAGE_WIDTH;
+  }
+
+  ALWAYS_INLINE static constexpr u32 PageStartY(u32 pn)
+  {
+    return (pn / GPU_HW::VRAM_PAGES_WIDE) * GPU_HW::VRAM_PAGE_HEIGHT;
+  }
+
+  ALWAYS_INLINE static constexpr u32 PageWidthForMode(GPUTextureMode mode)
+  {
+    return TEXTURE_PAGE_WIDTH >> ((mode < GPUTextureMode::Direct16Bit) ? (2 - static_cast<u8>(mode)) : 0);
+  }
+
+  ALWAYS_INLINE static constexpr u32 VRAMWidthForMode(GPUTextureMode mode, u32 width)
+  {
+    switch (mode)
+    {
+      case GPUTextureMode::Palette4Bit:
+        return (width + 3) / 4;
+      case GPUTextureMode::Palette8Bit:
+        return (width + 1) / 2;
+      default:
+        return width;
+    }
+  }
+
+  ALWAYS_INLINE static constexpr u32 TextureWidthForMode(GPUTextureMode mode, u32 vram_width)
+  {
+    return vram_width << ((mode < GPUTextureMode::Direct16Bit) ? (2 - static_cast<u8>(mode)) : 0);
+  }
+
+  ALWAYS_INLINE static constexpr u32 TexturePageCountForMode(GPUTextureMode mode)
+  {
+    return ((mode < GPUTextureMode::Direct16Bit) ? (1 + static_cast<u8>(mode)) : 4);
+  }
+
+  ALWAYS_INLINE static constexpr u32 PalettePageCountForMode(GPUTextureMode mode)
+  {
+    return (mode == GPUTextureMode::Palette4Bit) ? 1 : 4;
+  }
+
+  ALWAYS_INLINE static bool DrawModeHasPalette(GPUTextureMode mode) { return (mode < GPUTextureMode::Direct16Bit); }
+
+  ALWAYS_INLINE static u32 PalettePageNumber(GPUTexturePaletteReg reg)
+  {
+    return VRAMCoordinateToPage(reg.GetXBase(), reg.GetYBase());
+  }
+
+  ALWAYS_INLINE static Rect GetTextureRect(u32 pn, GPUTextureMode mode)
+  {
+    // TODO: Wrong doesn't handle wrapping
+    return Rect::FromExtents(PageStartX(pn), PageStartY(pn), PageWidthForMode(mode), VRAM_PAGE_HEIGHT);
+  }
+
+  ALWAYS_INLINE static Rect GetPaletteRect(GPUTexturePaletteReg palette, GPUTextureMode mode)
+  {
+    // TODO: Wrong doesn't handle wrapping
+    return Rect::FromExtents(palette.GetXBase(), palette.GetYBase(), palette.GetWidth(mode), 1);
+  }
+
+  template<typename T>
+  struct TList
+  {
+    TListNode<T>* head;
+    TListNode<T>* tail;
+  };
+
+  template<typename T>
+  struct TListNode
+  {
+    // why inside itself? because we have 3 lists
+    T* ref;
+    TList<T>* list;
+    TListNode<T>* prev;
+    TListNode<T>* next;
+  };
+
+  // TODO: Pool objects
+  struct Source
+  {
+    SourceKey key;
+    u32 num_page_refs;
+    GPUTexture* texture;
+    HashCacheEntry* from_hash_cache;
+    Rect texture_rect;
+    Rect palette_rect;
+
+    std::array<TListNode<Source>, MAX_PAGE_REFS_PER_SOURCE> page_refs;
+  };
+
+  struct VRAMWrite
+  {
+    Rect rect;
+    HashType hash;
+
+    u32 num_page_refs;
+    std::array<TListNode<VRAMWrite>, MAX_PAGE_REFS_PER_WRITE> page_refs;
+  };
+
+  struct PageEntry
+  {
+    TList<Source> sources;
+    TList<VRAMWrite> writes;
+    Rect draw_rect; // NOTE: In global VRAM space.
+    bool is_drawn = false;
+  };
+
+  struct HashCacheKey
+  {
+    HashType texture_hash;
+    HashType palette_hash;
+    HashType mode;
+
+    ALWAYS_INLINE bool operator==(const HashCacheKey& k) const
+    {
+      return (std::memcmp(&k, this, sizeof(HashCacheKey)) == 0);
+    }
+    ALWAYS_INLINE bool operator!=(const HashCacheKey& k) const
+    {
+      return (std::memcmp(&k, this, sizeof(HashCacheKey)) != 0);
+    }
+  };
+  struct HashCacheKeyHash
+  {
+    size_t operator()(const HashCacheKey& k) const;
+  };
+
+  struct HashCacheEntry
+  {
+    std::unique_ptr<GPUTexture> texture;
+    u32 ref_count;
+    u32 age;
+  };
+
+  struct DumpedTextureKey
+  {
+    HashType tex_hash;
+    HashType pal_hash;
+    u32 width, height;
+    GPUTextureMode mode;
+    u8 pad[7];
+
+    ALWAYS_INLINE bool operator==(const DumpedTextureKey& k) const
+    {
+      return (std::memcmp(&k, this, sizeof(DumpedTextureKey)) == 0);
+    }
+    ALWAYS_INLINE bool operator!=(const DumpedTextureKey& k) const
+    {
+      return (std::memcmp(&k, this, sizeof(DumpedTextureKey)) != 0);
+    }
+  };
+  struct DumpedTextureKeyHash
+  {
+    size_t operator()(const DumpedTextureKey& k) const;
+  };
+
+private:
+  const Source* LookupSource(SourceKey key);
+
+  bool IsPageDrawn(u32 page_index) const;
+  bool IsPageDrawn(u32 page_index, const Rect& rect) const;
+  bool IsRectDrawn(const Rect& rect) const;
+
+  void InvalidateTextureCache();
+  void InvalidatePageSources(u32 pn);
+  void InvalidatePageSources(u32 pn, const Rect& rc);
+
+  void AgeSources();
+  void AgeHashCache();
+
+  using HashCache = std::unordered_map<HashCacheKey, HashCacheEntry, HashCacheKeyHash>;
+
+  template<typename F>
+  void LoopRectPages(u32 left, u32 top, u32 right, u32 bottom, const F& f) const;
+  template<typename F>
+  void LoopRectPages(const Rect& rc, const F& f) const;
+  template<typename F>
+  void LoopXWrappedPages(u32 page, u32 num_pages, const F& f) const;
+  template<typename F>
+  void LoopPages(u32 x, u32 y, u32 width, u32 height, const F& f);
+
+  const Source* CreateSource(SourceKey key);
+
+  HashCacheEntry* LookupHashCache(SourceKey key, HashType tex_hash, HashType pal_hash);
+  void RemoveFromHashCache(HashCache::iterator it);
+
+  static HashType HashPage(u8 page, GPUTextureMode mode);
+  static HashType HashPalette(GPUTexturePaletteReg palette, GPUTextureMode mode);
+  static HashType HashRect(const Rect& rc);
+
+  void TrackVRAMWrite(const Rect& rect);
+  void RemoveVRAMWrite(VRAMWrite* entry);
+  void DumpVRAMWrite(const VRAMWrite& it, HashType pal_hash, GPUTextureMode mode, GPUTexturePaletteReg palette);
+  void DumpSourceVRAMWrites(const Source* source, const Rect& uv_rect);
+
+  HashCache m_hash_cache;
+
+  std::array<PageEntry, NUM_PAGES> m_pages = {};
+
+  /// List of candidates for purging when the hash cache gets too large.
+  std::vector<std::pair<HashCache::iterator, s32>> s_hash_cache_purge_list;
+  std::unordered_set<DumpedTextureKey, DumpedTextureKeyHash> s_dumped_textures;
+
+  //////////////////////////////////////////////////////////////////////////
+  // Pipeline Storage
+  //////////////////////////////////////////////////////////////////////////
 
   // [depth_test][transparency_mode][render_mode][texture_mode][dithering][interlacing][check_mask]
   DimensionalArray<std::unique_ptr<GPUPipeline>, 2, 2, 2, 9, 5, 5, 2> m_batch_pipelines{};
