@@ -25,7 +25,6 @@ add_library(rapidyaml
   include/c4/substr_fwd.hpp
   include/c4/szconv.hpp
   include/c4/types.hpp
-  include/c4/utf.cpp
   include/c4/utf.hpp
   include/c4/windows.hpp
   include/c4/windows_pop.hpp
@@ -69,3 +68,8 @@ target_include_directories(rapidyaml PRIVATE
 target_include_directories(rapidyaml INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
+
+target_compile_definitions(rapidyaml PUBLIC
+  "C4_NO_DEBUG_BREAK"
+)
+
