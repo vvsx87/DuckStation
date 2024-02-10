@@ -94,8 +94,7 @@ static constexpr u32 INVALID_BREAKPOINT_PC = UINT32_C(0xFFFFFFFF);
 static std::vector<Breakpoint> s_breakpoints;
 static u32 s_breakpoint_counter = 1;
 static u32 s_last_breakpoint_check_pc = INVALID_BREAKPOINT_PC;
-static bool s_single_step = false;
-static bool s_single_step_done = false;
+static u8 s_single_step = 0; // 0 - off, 1 - executing one, 2 - done
 } // namespace CPU
 
 bool CPU::IsTraceEnabled()
@@ -157,7 +156,7 @@ void CPU::Initialize()
   s_breakpoints.clear();
   s_breakpoint_counter = 1;
   s_last_breakpoint_check_pc = INVALID_BREAKPOINT_PC;
-  s_single_step = false;
+  s_single_step = 0;
 
   UpdateMemoryPointers();
 
@@ -1932,7 +1931,7 @@ void CPU::DispatchInterrupt()
 
 bool CPU::UpdateDebugDispatcherFlag()
 {
-  const bool has_any_breakpoints = !s_breakpoints.empty();
+  const bool has_any_breakpoints = !s_breakpoints.empty() || (s_single_step != 0);
 
   // TODO: cop0 breakpoints
   const auto& dcic = g_state.cop0_regs.dcic;
@@ -2124,24 +2123,13 @@ bool CPU::BreakpointCheck()
 {
   const u32 pc = g_state.pc;
 
-  // single step - we want to break out after this instruction, so set a pending exit
-  // the bp check happens just before execution, so this is fine
-  if (s_single_step)
-  {
-    if (s_single_step_done)
-      ExitExecution();
-    else
-      s_single_step_done = true;
-
-    s_last_breakpoint_check_pc = pc;
-    return false;
-  }
-
   if (pc == s_last_breakpoint_check_pc)
   {
     // we don't want to trigger the same breakpoint which just paused us repeatedly.
     return false;
   }
+
+  s_last_breakpoint_check_pc = pc;
 
   u32 count = static_cast<u32>(s_breakpoints.size());
   for (u32 i = 0; i < count;)
@@ -2186,11 +2174,30 @@ bool CPU::BreakpointCheck()
         i++;
       }
 
+      s_single_step = 0;
       ExitExecution();
     }
   }
 
-  s_last_breakpoint_check_pc = pc;
+  // single step - we want to break out after this instruction, so set a pending exit
+  // the bp check happens just before execution, so this is fine
+  if (s_single_step != 0) [[unlikely]]
+  {
+    if (s_single_step == 2)
+    {
+      s_single_step = 0;
+      System::PauseSystem(true);
+
+      Host::ReportFormattedDebuggerMessage("Stepped to 0x%08X.", g_state.pc);
+      UpdateDebugDispatcherFlag();
+      ExitExecution();
+      return true;
+    }
+
+    // if there's a bp on the instruction we're about to execute, we should've paused already
+    s_single_step = 2;
+  }
+
   return System::IsPaused();
 }
 
@@ -2319,13 +2326,11 @@ void CPU::Execute()
   }
 }
 
-void CPU::SingleStep()
+void CPU::SetSingleStepFlag()
 {
-  s_single_step = true;
-  s_single_step_done = false;
-  if (fastjmp_set(&s_jmp_buf) == 0)
-    ExecuteDebug();
-  Host::ReportFormattedDebuggerMessage("Stepped to 0x%08X.", g_state.pc);
+  s_single_step = 1;
+  if (UpdateDebugDispatcherFlag())
+    System::InterruptExecution();
 }
 
 template<PGXPMode pgxp_mode>
