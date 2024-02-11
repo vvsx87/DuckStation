@@ -1,12 +1,8 @@
-// SPDX-FileCopyrightText: 2019-2022 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "cpu_core.h"
 #include "bus.h"
-#include "common/align.h"
-#include "common/fastjmp.h"
-#include "common/file_system.h"
-#include "common/log.h"
 #include "cpu_code_cache_private.h"
 #include "cpu_core_private.h"
 #include "cpu_disasm.h"
@@ -18,7 +14,14 @@
 #include "settings.h"
 #include "system.h"
 #include "timing_event.h"
+
 #include "util/state_wrapper.h"
+
+#include "common/align.h"
+#include "common/fastjmp.h"
+#include "common/file_system.h"
+#include "common/log.h"
+
 #include <cstdio>
 
 Log_SetChannel(CPU::Core);
@@ -45,7 +48,7 @@ static bool IsCop0ExecutionBreakpointUnmasked();
 static void Cop0ExecutionBreakpointCheck();
 template<MemoryAccessType type>
 static void Cop0DataBreakpointCheck(VirtualMemoryAddress address);
-static bool BreakpointCheck();
+static void BreakpointCheck();
 
 #ifdef _DEBUG
 static void TracePrintInstruction();
@@ -2119,14 +2122,14 @@ bool CPU::AddStepOutBreakpoint(u32 max_instructions_to_search)
   return false;
 }
 
-bool CPU::BreakpointCheck()
+ALWAYS_INLINE_RELEASE void CPU::BreakpointCheck()
 {
   const u32 pc = g_state.pc;
 
   if (pc == s_last_breakpoint_check_pc)
   {
     // we don't want to trigger the same breakpoint which just paused us repeatedly.
-    return false;
+    return;
   }
 
   s_last_breakpoint_check_pc = pc;
@@ -2183,6 +2186,9 @@ bool CPU::BreakpointCheck()
   // the bp check happens just before execution, so this is fine
   if (s_single_step != 0) [[unlikely]]
   {
+    // not resetting this will break double single stepping, because we broke on the next instruction.
+    s_last_breakpoint_check_pc = INVALID_BREAKPOINT_PC;
+
     if (s_single_step == 2)
     {
       s_single_step = 0;
@@ -2191,14 +2197,11 @@ bool CPU::BreakpointCheck()
       Host::ReportFormattedDebuggerMessage("Stepped to 0x%08X.", g_state.pc);
       UpdateDebugDispatcherFlag();
       ExitExecution();
-      return true;
     }
 
     // if there's a bp on the instruction we're about to execute, we should've paused already
     s_single_step = 2;
   }
-
-  return System::IsPaused();
 }
 
 template<PGXPMode pgxp_mode, bool debug>
@@ -2213,12 +2216,7 @@ template<PGXPMode pgxp_mode, bool debug>
       if constexpr (debug)
       {
         Cop0ExecutionBreakpointCheck();
-
-        if (BreakpointCheck())
-        {
-          // continue is measurably faster than break on msvc for some reason
-          continue;
-        }
+        BreakpointCheck();
       }
 
       g_state.pending_ticks++;
@@ -2287,8 +2285,15 @@ void CPU::Execute()
   if (fastjmp_set(&s_jmp_buf) != 0)
   {
     // Before we return, set npc to pc so that we can switch from recs to int.
+    // We'll also need to fetch the next instruction to execute.
+
+    // TODO: this is fucked coming out of the rec->int...
+  
     if (exec_mode != CPUExecutionMode::Interpreter && !use_debug_dispatcher)
+    {
       g_state.npc = g_state.pc;
+      FetchInstruction();
+    }
 
     return;
   }
