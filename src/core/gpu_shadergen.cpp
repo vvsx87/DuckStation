@@ -1,7 +1,8 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: GPL-3.0
 
 #include "gpu_shadergen.h"
+#include "common/bitutils.h"
 
 GPUShaderGen::GPUShaderGen(RenderAPI render_api, bool supports_dual_source_blend, bool supports_framebuffer_fetch)
   : ShaderGen(render_api, supports_dual_source_blend, supports_framebuffer_fetch)
@@ -40,33 +41,45 @@ std::string GPUShaderGen::GenerateDisplayVertexShader()
   return ss.str();
 }
 
-std::string GPUShaderGen::GenerateDisplayFragmentShader(bool clamp_uv)
+std::string GPUShaderGen::GenerateDisplayFragmentShader(bool copy_depth, bool clamp_uv)
 {
   std::stringstream ss;
   WriteHeader(ss);
   WriteDisplayUniformBuffer(ss);
   DeclareTexture(ss, "samp0", 0);
-  DeclareFragmentEntryPoint(ss, 0, 1);
+  if (copy_depth)
+    DeclareTexture(ss, "samp1", 1);
+
+  DeclareFragmentEntryPoint(ss, 0, 1, {}, false, 1 + BoolToUInt32(copy_depth));
+  ss << "{\n";
   if (clamp_uv)
-    ss << "{\n  o_col0 = float4(SAMPLE_TEXTURE(samp0, ClampUV(v_tex0)).rgb, 1.0f);\n }";
+    ss << "  float2 uv = ClampUV(v_tex0);\n";
   else
-    ss << "{\n  o_col0 = float4(SAMPLE_TEXTURE(samp0, v_tex0).rgb, 1.0f);\n }";
+    ss << "  float2 uv = v_tex0;\n";
+
+  ss << "  o_col0 = float4(SAMPLE_TEXTURE(samp0, uv).rgb, 1.0f);\n";
+  if (copy_depth)
+    ss << "  o_col1 = float4(SAMPLE_TEXTURE(samp1, uv).r, 0.0f, 0.0f, 0.0f);\n";
+
+  ss << "}\n";
 
   return ss.str();
 }
 
-std::string GPUShaderGen::GenerateDisplaySharpBilinearFragmentShader()
+std::string GPUShaderGen::GenerateDisplaySharpBilinearFragmentShader(bool copy_depth)
 {
   std::stringstream ss;
   WriteHeader(ss);
   WriteDisplayUniformBuffer(ss);
   DeclareTexture(ss, "samp0", 0, false);
+  if (copy_depth)
+    DeclareTexture(ss, "samp1", 1);
 
   // Based on
   // https://github.com/rsn8887/Sharp-Bilinear-Shaders/blob/master/Copy_To_RetroPie/shaders/sharp-bilinear-simple.glsl
-  DeclareFragmentEntryPoint(ss, 0, 1);
+  DeclareFragmentEntryPoint(ss, 0, 1, {}, false, 1 + BoolToUInt32(copy_depth));
+  ss << "{\n";
   ss << R"(
-{
   float2 scale = u_params.xy;
   float2 region_range = u_params.zw;
 
@@ -78,8 +91,13 @@ std::string GPUShaderGen::GenerateDisplaySharpBilinearFragmentShader()
   float2 f = (center_dist - clamp(center_dist, -region_range, region_range)) * scale + 0.5;
   float2 mod_texel = texel_floored + f;
 
-  o_col0 = float4(SAMPLE_TEXTURE(samp0, ClampUV(mod_texel * u_src_size.zw)).rgb, 1.0f);
-})";
+  float2 uv = ClampUV(mod_texel * u_src_size.zw);
+  o_col0 = float4(SAMPLE_TEXTURE(samp0, uv).rgb, 1.0f);
+)";
+  if (copy_depth)
+    ss << "  o_col1 = float4(SAMPLE_TEXTURE(samp1, uv).r, 0.0f, 0.0f, 0.0f);\n";
+
+  ss << "}\n";
 
   return ss.str();
 }

@@ -133,6 +133,7 @@ private:
 
   void UpdateVRAMReadTexture(bool drawn, bool written);
   void UpdateDepthBufferFromMaskBit();
+  void CopyAndClearDepthBuffer();
   void ClearDepthBuffer();
   void SetScissor();
   void SetVRAMRenderTarget();
@@ -203,6 +204,7 @@ private:
 
   std::unique_ptr<GPUTexture> m_vram_texture;
   std::unique_ptr<GPUTexture> m_vram_depth_texture;
+  std::unique_ptr<GPUTexture> m_vram_depth_copy_texture;
   std::unique_ptr<GPUTexture> m_vram_read_texture;
   std::unique_ptr<GPUTexture> m_vram_readback_texture;
   std::unique_ptr<GPUDownloadTexture> m_vram_readback_download_texture;
@@ -245,6 +247,7 @@ private:
   bool m_allow_shader_blend : 1 = false;
   bool m_prefer_shader_blend : 1 = false;
   u8 m_texpage_dirty = 0;
+  bool m_depth_was_copied = false;
 
   BatchConfig m_batch;
 
@@ -272,8 +275,10 @@ private:
   std::unique_ptr<GPUPipeline> m_vram_update_depth_pipeline;
   std::unique_ptr<GPUPipeline> m_vram_write_replacement_pipeline;
 
-  std::array<std::unique_ptr<GPUPipeline>, 2> m_vram_extract_pipeline; // [24bit]
+  std::array<std::unique_ptr<GPUPipeline>, 3> m_vram_extract_pipeline; // [24bit, 2=depth]
   std::unique_ptr<GPUTexture> m_vram_extract_texture;
+  std::unique_ptr<GPUTexture> m_vram_extract_depth_texture;
+  std::unique_ptr<GPUPipeline> m_copy_depth_pipeline;
 
   std::unique_ptr<GPUTexture> m_downsample_texture;
   std::unique_ptr<GPUPipeline> m_downsample_first_pass_pipeline;

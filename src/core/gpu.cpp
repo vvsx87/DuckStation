@@ -48,6 +48,9 @@ static void JoinScreenshotThreads();
 static std::deque<std::thread> s_screenshot_threads;
 static std::mutex s_screenshot_threads_mutex;
 
+// Format used for screen-resolution depth buffer copy. This should align with the HW format.
+static constexpr GPUTexture::Format DISPLAY_DEPTH_FORMAT = GPUTexture::Format::R16;
+
 GPU::GPU()
 {
   ResetStatistics();
@@ -1624,42 +1627,62 @@ bool GPU::CompileDisplayPipelines(bool display, bool deinterlace, bool chroma_sm
 
   if (display)
   {
-    plconfig.layout = GPUPipeline::Layout::SingleTextureAndPushConstants;
-    plconfig.SetTargetFormats(g_gpu_device->HasSurface() ? g_gpu_device->GetWindowFormat() : GPUTexture::Format::RGBA8);
+    m_display_pipeline.reset();
+    m_display_depth_pipeline.reset();
 
-    std::string vs = shadergen.GenerateDisplayVertexShader();
-    std::string fs;
-    switch (g_settings.display_scaling)
-    {
-      case DisplayScalingMode::BilinearSharp:
-        fs = shadergen.GenerateDisplaySharpBilinearFragmentShader();
-        break;
-
-      case DisplayScalingMode::BilinearSmooth:
-        fs = shadergen.GenerateDisplayFragmentShader(true);
-        break;
-
-      case DisplayScalingMode::Nearest:
-      case DisplayScalingMode::NearestInteger:
-      default:
-        fs = shadergen.GenerateDisplayFragmentShader(false);
-        break;
-    }
-
-    std::unique_ptr<GPUShader> vso = g_gpu_device->CreateShader(GPUShaderStage::Vertex, vs);
-    std::unique_ptr<GPUShader> fso = g_gpu_device->CreateShader(GPUShaderStage::Fragment, fs);
-    if (!vso || !fso)
+    std::unique_ptr<GPUShader> vso =
+      g_gpu_device->CreateShader(GPUShaderStage::Vertex, shadergen.GenerateDisplayVertexShader());
+    if (!vso)
       return false;
     GL_OBJECT_NAME(vso, "Display Vertex Shader");
-    GL_OBJECT_NAME_FMT(fso, "Display Fragment Shader [{}]",
-                       Settings::GetDisplayScalingName(g_settings.display_scaling));
 
-    plconfig.vertex_shader = vso.get();
-    plconfig.fragment_shader = fso.get();
-    if (!(m_display_pipeline = g_gpu_device->CreatePipeline(plconfig)))
-      return false;
-    GL_OBJECT_NAME_FMT(m_display_pipeline, "Display Pipeline [{}]",
-                       Settings::GetDisplayScalingName(g_settings.display_scaling));
+    for (u32 depth = 0; depth < 2; depth++)
+    {
+      plconfig.layout =
+        depth ? GPUPipeline::Layout::MultiTextureAndPushConstants : GPUPipeline::Layout::SingleTextureAndPushConstants;
+      plconfig.SetTargetFormats(g_gpu_device->HasSurface() ? g_gpu_device->GetWindowFormat() :
+                                                             GPUTexture::Format::RGBA8);
+      if (depth)
+        plconfig.color_formats[1] = DISPLAY_DEPTH_FORMAT;
+
+      std::string fs;
+      switch (g_settings.display_scaling)
+      {
+        case DisplayScalingMode::BilinearSharp:
+          fs = shadergen.GenerateDisplaySharpBilinearFragmentShader(ConvertToBoolUnchecked(depth));
+          break;
+
+        case DisplayScalingMode::BilinearSmooth:
+          fs = shadergen.GenerateDisplayFragmentShader(ConvertToBoolUnchecked(depth), true);
+          break;
+
+        case DisplayScalingMode::Nearest:
+        case DisplayScalingMode::NearestInteger:
+        default:
+          fs = shadergen.GenerateDisplayFragmentShader(ConvertToBoolUnchecked(depth), false);
+          break;
+      }
+
+      std::unique_ptr<GPUShader> fso = g_gpu_device->CreateShader(GPUShaderStage::Fragment, fs);
+      if (!fso)
+        return false;
+      GL_OBJECT_NAME_FMT(fso, "Display Fragment Shader [{}]{}",
+                         Settings::GetDisplayScalingName(g_settings.display_scaling), depth ? "[Depth]" : "");
+
+      plconfig.vertex_shader = vso.get();
+      plconfig.fragment_shader = fso.get();
+
+      std::unique_ptr<GPUPipeline> pipeline = g_gpu_device->CreatePipeline(plconfig);
+      if (!pipeline)
+        return false;
+      GL_OBJECT_NAME_FMT(pipeline, "Display Pipeline [{}]{}",
+                         Settings::GetDisplayScalingName(g_settings.display_scaling), depth ? "[Depth]" : "");
+
+      if (depth)
+        m_display_depth_pipeline = std::move(pipeline);
+      else
+        m_display_pipeline = std::move(pipeline);
+    }
   }
 
   if (deinterlace)
@@ -1796,10 +1819,12 @@ void GPU::ClearDisplayTexture()
   m_display_texture_view_height = 0;
 }
 
-void GPU::SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 view_width, s32 view_height)
+void GPU::SetDisplayTexture(GPUTexture* texture, GPUTexture* depth_buffer, s32 view_x, s32 view_y, s32 view_width,
+                            s32 view_height)
 {
   DebugAssert(texture);
   m_display_texture = texture;
+  m_display_depth_buffer = depth_buffer;
   m_display_texture_view_x = view_x;
   m_display_texture_view_y = view_y;
   m_display_texture_view_width = view_width;
@@ -1880,16 +1905,28 @@ bool GPU::RenderDisplay(GPUTexture* target, const Common::Rectangle<s32>& draw_r
   const GPUTexture::Format hdformat = target ? target->GetFormat() : g_gpu_device->GetWindowFormat();
   const u32 target_width = target ? target->GetWidth() : g_gpu_device->GetWindowWidth();
   const u32 target_height = target ? target->GetHeight() : g_gpu_device->GetWindowHeight();
+  const bool postfx_depth = (PostProcessing::NeedsDepthBuffer() && m_display_depth_buffer);
   const bool really_postfx =
     (postfx && HasDisplayTexture() && PostProcessing::IsActive() && !g_gpu_device->GetWindowInfo().IsSurfaceless() &&
      hdformat != GPUTexture::Format::Unknown && target_width > 0 && target_height > 0 &&
-     PostProcessing::CheckTargets(hdformat, GPUTexture::Format::Unknown, target_width, target_height));
+     PostProcessing::CheckTargets(hdformat, postfx_depth ? DISPLAY_DEPTH_FORMAT : GPUTexture::Format::Unknown,
+                                  target_width, target_height));
   const Common::Rectangle<s32> real_draw_rect =
     g_gpu_device->UsesLowerLeftOrigin() ? GPUDevice::FlipToLowerLeft(draw_rect, target_height) : draw_rect;
   if (really_postfx)
   {
-    g_gpu_device->ClearRenderTarget(PostProcessing::GetInputTexture(), 0);
-    g_gpu_device->SetRenderTarget(PostProcessing::GetInputTexture());
+    if (postfx_depth)
+    {
+      GPUTexture* rts[] = {PostProcessing::GetInputTexture(), PostProcessing::GetInputDepthTexture()};
+      for (GPUTexture* rt : rts)
+        g_gpu_device->ClearRenderTarget(rt, 0);
+      g_gpu_device->SetRenderTargets(rts, static_cast<u32>(std::size(rts)), nullptr);
+    }
+    else
+    {
+      g_gpu_device->ClearRenderTarget(PostProcessing::GetInputTexture(), 0);
+      g_gpu_device->SetRenderTarget(PostProcessing::GetInputTexture());
+    }
   }
   else
   {
@@ -1902,9 +1939,17 @@ bool GPU::RenderDisplay(GPUTexture* target, const Common::Rectangle<s32>& draw_r
   if (!HasDisplayTexture())
     return true;
 
-  g_gpu_device->SetPipeline(m_display_pipeline.get());
   g_gpu_device->SetTextureSampler(
     0, m_display_texture, texture_filter_linear ? g_gpu_device->GetLinearSampler() : g_gpu_device->GetNearestSampler());
+  if (really_postfx && m_display_depth_buffer)
+  {
+    g_gpu_device->SetPipeline(m_display_depth_pipeline.get());
+    g_gpu_device->SetTextureSampler(1, m_display_depth_buffer, g_gpu_device->GetLinearSampler());
+  }
+  else
+  {
+    g_gpu_device->SetPipeline(m_display_pipeline.get());
+  }
 
   // For bilinear, clamp to 0.5/SIZE-0.5 to avoid bleeding from the adjacent texels in VRAM. This is because
   // 1.0 in UV space is not the bottom-right texel, but a mix of the bottom-right and wrapped/next texel.
@@ -1969,7 +2014,7 @@ bool GPU::Deinterlace(u32 field, u32 line_skip)
       if (!DeinterlaceExtractField(0, src, x, y, width, height, line_skip)) [[unlikely]]
         return false;
 
-      SetDisplayTexture(m_deinterlace_buffers[0].get(), 0, 0, width, height);
+      SetDisplayTexture(m_deinterlace_buffers[0].get(), m_display_depth_buffer, 0, 0, width, height);
       return true;
     }
 
@@ -1995,7 +2040,7 @@ bool GPU::Deinterlace(u32 field, u32 line_skip)
       g_gpu_device->Draw(3, 0);
 
       m_deinterlace_texture->MakeReadyForSampling();
-      SetDisplayTexture(m_deinterlace_texture.get(), 0, 0, width, full_height);
+      SetDisplayTexture(m_deinterlace_texture.get(), m_display_depth_buffer, 0, 0, width, full_height);
       return true;
     }
 
@@ -2027,7 +2072,7 @@ bool GPU::Deinterlace(u32 field, u32 line_skip)
       g_gpu_device->Draw(3, 0);
 
       m_deinterlace_texture->MakeReadyForSampling();
-      SetDisplayTexture(m_deinterlace_texture.get(), 0, 0, width, height);
+      SetDisplayTexture(m_deinterlace_texture.get(), m_display_depth_buffer, 0, 0, width, height);
       return true;
     }
 
@@ -2062,7 +2107,7 @@ bool GPU::Deinterlace(u32 field, u32 line_skip)
       g_gpu_device->Draw(3, 0);
 
       m_deinterlace_texture->MakeReadyForSampling();
-      SetDisplayTexture(m_deinterlace_texture.get(), 0, 0, width, full_height);
+      SetDisplayTexture(m_deinterlace_texture.get(), m_display_depth_buffer, 0, 0, width, full_height);
       return true;
     }
 
@@ -2165,7 +2210,7 @@ bool GPU::ApplyChromaSmoothing()
   g_gpu_device->Draw(3, 0);
 
   m_chroma_smoothing_texture->MakeReadyForSampling();
-  SetDisplayTexture(m_chroma_smoothing_texture.get(), 0, 0, width, height);
+  SetDisplayTexture(m_chroma_smoothing_texture.get(), m_display_depth_buffer, 0, 0, width, height);
   return true;
 }
 

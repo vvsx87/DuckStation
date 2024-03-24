@@ -569,7 +569,8 @@ protected:
   u32 m_fifo_size = 128;
 
   void ClearDisplayTexture();
-  void SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 view_width, s32 view_height);
+  void SetDisplayTexture(GPUTexture* texture, GPUTexture* depth_buffer, s32 view_x, s32 view_y, s32 view_width,
+                         s32 view_height);
   void SetDisplayParameters(s32 display_width, s32 display_height, s32 active_left, s32 active_top, s32 active_width,
                             s32 active_height, float display_aspect_ratio);
 
@@ -603,7 +604,9 @@ protected:
   std::unique_ptr<GPUTexture> m_chroma_smoothing_texture;
 
   std::unique_ptr<GPUPipeline> m_display_pipeline;
+  std::unique_ptr<GPUPipeline> m_display_depth_pipeline;
   GPUTexture* m_display_texture = nullptr;
+  GPUTexture* m_display_depth_buffer = nullptr;
   s32 m_display_texture_view_x = 0;
   s32 m_display_texture_view_y = 0;
   s32 m_display_texture_view_width = 0;
