@@ -24,6 +24,7 @@ public:
   ~ReShadeFXShader();
 
   bool IsValid() const override;
+  bool WantsDepthBuffer() const override;
 
   bool LoadFromFile(std::string name, std::string filename, bool only_config, Error* error);
   bool LoadFromString(std::string name, std::string filename, std::string code, bool only_config, Error* error);
@@ -44,6 +45,7 @@ private:
   {
     None,
     Zero,
+    One,
     Timer,
     FrameTime,
     FrameCount,
@@ -118,6 +120,7 @@ private:
   std::vector<SourceOption> m_source_options;
   u32 m_uniforms_size = 0;
   bool m_valid = false;
+  bool m_wants_depth_buffer = false;
 
   Common::Timer m_frame_timer;
   u32 m_frame_count = 0;

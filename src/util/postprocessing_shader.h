@@ -37,6 +37,7 @@ public:
   ALWAYS_INLINE bool HasOptions() const { return !m_options.empty(); }
 
   virtual bool IsValid() const = 0;
+  virtual bool WantsDepthBuffer() const = 0;
 
   std::vector<ShaderOption> TakeOptions();
   void LoadOptions(const SettingsInterface& si, const char* section);

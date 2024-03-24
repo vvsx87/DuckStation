@@ -48,13 +48,18 @@ static void DestroyTextures();
 
 static std::vector<std::unique_ptr<PostProcessing::Shader>> s_stages;
 static bool s_enabled = false;
+static bool s_wants_depth_buffer = false;
+static bool s_needs_depth_buffer = false;
 
 static GPUTexture::Format s_target_format = GPUTexture::Format::Unknown;
+static GPUTexture::Format s_depth_format = GPUTexture::Format::Unknown;
 static u32 s_target_width = 0;
 static u32 s_target_height = 0;
 static Common::Timer s_timer;
 
 static std::unique_ptr<GPUTexture> s_input_texture;
+
+static std::unique_ptr<GPUTexture> s_input_depth_texture;
 
 static std::unique_ptr<GPUTexture> s_output_texture;
 
@@ -460,6 +465,7 @@ void PostProcessing::LoadStages()
   SettingsInterface& si = GetLoadSettingsInterface();
 
   s_enabled = si.GetBoolValue("PostProcessing", "Enabled", false);
+  s_wants_depth_buffer = false;
 
   const u32 stage_count = Config::GetStageCount(si);
   if (stage_count == 0)
@@ -491,23 +497,28 @@ void PostProcessing::LoadStages()
 
     lock.lock();
     shader->LoadOptions(si, GetStageConfigSection(i));
+    s_wants_depth_buffer |= shader->WantsDepthBuffer();
     s_stages.push_back(std::move(shader));
 
     progress.IncrementProgressValue();
   }
 
-  if (stage_count > 0)
-  {
-    s_timer.Reset();
-    Log_DevPrintf("Loaded %u post-processing stages.", stage_count);
-  }
-
   // precompile shaders
   if (g_gpu_device && g_gpu_device->GetWindowFormat() != GPUTexture::Format::Unknown)
   {
-    CheckTargets(g_gpu_device->GetWindowFormat(), g_gpu_device->GetWindowWidth(), g_gpu_device->GetWindowHeight(),
-                 &progress);
+    CheckTargets(g_gpu_device->GetWindowFormat(), GPUTexture::Format::R16, g_gpu_device->GetWindowWidth(),
+                 g_gpu_device->GetWindowHeight(), &progress);
   }
+
+  if (stage_count > 0)
+    Log_DevFmt("Loaded {} post-processing stages.", stage_count);
+
+  // must be down here, because we need to compile first, triggered by CheckTargets()
+  for (std::unique_ptr<Shader>& shader : s_stages)
+    s_wants_depth_buffer |= shader->WantsDepthBuffer();
+  s_needs_depth_buffer = s_enabled && s_wants_depth_buffer;
+  if (s_wants_depth_buffer)
+    Log_DevPrint("Depth buffer is needed.");
 }
 
 void PostProcessing::UpdateSettings()
@@ -532,6 +543,7 @@ void PostProcessing::UpdateSettings()
   progress.SetProgressRange(stage_count);
 
   const GPUTexture::Format prev_format = s_target_format;
+  s_wants_depth_buffer = false;
 
   for (u32 i = 0; i < stage_count; i++)
   {
@@ -569,16 +581,21 @@ void PostProcessing::UpdateSettings()
     }
 
     s_stages[i]->LoadOptions(si, GetStageConfigSection(i));
+    s_wants_depth_buffer |= s_stages[i]->WantsDepthBuffer();
   }
 
   if (prev_format != GPUTexture::Format::Unknown)
-    CheckTargets(prev_format, s_target_width, s_target_height, &progress);
+    CheckTargets(prev_format, s_depth_format, s_target_width, s_target_height, &progress);
 
   if (stage_count > 0)
-  {
-    s_timer.Reset();
-    Log_DevPrintf("Loaded %u post-processing stages.", stage_count);
-  }
+    Log_DevFmt("Loaded {} post-processing stages.", stage_count);
+
+  // must be down here, because we need to compile first, triggered by CheckTargets()
+  for (std::unique_ptr<Shader>& shader : s_stages)
+    s_wants_depth_buffer |= shader->WantsDepthBuffer();
+  s_needs_depth_buffer = s_enabled && s_wants_depth_buffer;
+  if (s_wants_depth_buffer)
+    Log_DevPrint("Depth buffer is needed.");
 }
 
 void PostProcessing::Toggle()
@@ -597,8 +614,14 @@ void PostProcessing::Toggle()
                                         TRANSLATE_STR("OSDMessage", "Post-processing is now disabled."),
                           Host::OSD_QUICK_DURATION);
   s_enabled = new_enabled;
+  s_needs_depth_buffer = new_enabled && s_wants_depth_buffer;
   if (s_enabled)
     s_timer.Reset();
+}
+
+bool PostProcessing::NeedsDepthBuffer()
+{
+  return s_needs_depth_buffer;
 }
 
 bool PostProcessing::ReloadShaders()
@@ -625,6 +648,7 @@ void PostProcessing::Shutdown()
   g_gpu_device->RecycleTexture(std::move(s_dummy_texture));
   s_samplers.clear();
   s_enabled = false;
+  s_needs_depth_buffer = false;
   decltype(s_stages)().swap(s_stages);
   DestroyTextures();
 }
@@ -632,6 +656,11 @@ void PostProcessing::Shutdown()
 GPUTexture* PostProcessing::GetInputTexture()
 {
   return s_input_texture.get();
+}
+
+GPUTexture* PostProcessing::GetInputDepthTexture()
+{
+  return s_input_depth_texture.get();
 }
 
 const Common::Timer& PostProcessing::GetTimer()
@@ -667,51 +696,75 @@ GPUTexture* PostProcessing::GetDummyTexture()
   return s_dummy_texture.get();
 }
 
-bool PostProcessing::CheckTargets(GPUTexture::Format target_format, u32 target_width, u32 target_height,
-                                  ProgressCallback* progress)
+bool PostProcessing::CheckTargets(GPUTexture::Format target_format, GPUTexture::Format depth_format, u32 target_width,
+                                  u32 target_height, ProgressCallback* progress)
 {
-  if (s_target_format == target_format && s_target_width == target_width && s_target_height == target_height)
+  const bool size_changed = (s_target_width != target_width || s_target_height != target_height);
+  if (s_target_format == target_format && s_depth_format == depth_format && !size_changed)
     return true;
 
-  // In case any allocs fail.
-  DestroyTextures();
-
-  if (!(s_input_texture = g_gpu_device->FetchTexture(target_width, target_height, 1, 1, 1,
-                                                     GPUTexture::Type::RenderTarget, target_format)) ||
-      !(s_output_texture = g_gpu_device->FetchTexture(target_width, target_height, 1, 1, 1,
-                                                      GPUTexture::Type::RenderTarget, target_format)))
+  if (s_target_format != target_format || size_changed)
   {
-    DestroyTextures();
-    return false;
-  }
+    g_gpu_device->RecycleTexture(std::move(s_output_texture));
+    g_gpu_device->RecycleTexture(std::move(s_input_texture));
 
-  if (!progress)
-    progress = ProgressCallback::NullProgressCallback;
-
-  progress->SetProgressRange(static_cast<u32>(s_stages.size()));
-  progress->SetProgressValue(0);
-
-  for (size_t i = 0; i < s_stages.size(); i++)
-  {
-    Shader* const shader = s_stages[i].get();
-
-    progress->SetFormattedStatusText("Compiling %s...", shader->GetName().c_str());
-
-    if (!shader->CompilePipeline(target_format, target_width, target_height, progress) ||
-        !shader->ResizeOutput(target_format, target_width, target_height))
+    if (!(s_input_texture = g_gpu_device->FetchTexture(target_width, target_height, 1, 1, 1,
+                                                       GPUTexture::Type::RenderTarget, target_format)) ||
+        !(s_output_texture = g_gpu_device->FetchTexture(target_width, target_height, 1, 1, 1,
+                                                        GPUTexture::Type::RenderTarget, target_format)))
     {
-      Log_ErrorPrintf("Failed to compile one or more post-processing shaders, disabling.");
-      Host::AddIconOSDMessage(
-        "PostProcessLoadFail", ICON_FA_EXCLAMATION_TRIANGLE,
-        fmt::format("Failed to compile post-processing shader '{}'. Disabling post-processing.", shader->GetName()));
-      s_enabled = false;
+      DestroyTextures();
       return false;
     }
+  }
 
-    progress->SetProgressValue(static_cast<u32>(i + 1));
+  if (s_depth_format != depth_format || size_changed)
+  {
+    g_gpu_device->RecycleTexture(std::move(s_input_depth_texture));
+
+    if (depth_format != GPUTexture::Format::Unknown &&
+        (!(s_input_depth_texture = g_gpu_device->CreateTexture(
+             target_width, target_height, 1, 1, 1,
+             GPUTexture::IsDepthFormat(depth_format) ? GPUTexture::Type::DepthStencil : GPUTexture::Type::RenderTarget,
+             depth_format))))
+    {
+      DestroyTextures();
+      return false;
+    }
+  }
+
+  if (s_target_format != target_format || size_changed)
+  {
+    if (!progress)
+      progress = ProgressCallback::NullProgressCallback;
+
+    progress->SetProgressRange(static_cast<u32>(s_stages.size()));
+    progress->SetProgressValue(0);
+
+    for (size_t i = 0; i < s_stages.size(); i++)
+    {
+      Shader* const shader = s_stages[i].get();
+
+      progress->SetFormattedStatusText("Compiling %s...", shader->GetName().c_str());
+
+      if (!shader->CompilePipeline(target_format, target_width, target_height, progress) ||
+          !shader->ResizeOutput(target_format, target_width, target_height))
+      {
+        Log_ErrorPrintf("Failed to compile one or more post-processing shaders, disabling.");
+        Host::AddIconOSDMessage(
+          "PostProcessLoadFail", ICON_FA_EXCLAMATION_TRIANGLE,
+          fmt::format("Failed to compile post-processing shader '{}'. Disabling post-processing.", shader->GetName()));
+        s_enabled = false;
+        DestroyTextures();
+        return false;
+      }
+
+      progress->SetProgressValue(static_cast<u32>(i + 1));
+    }
   }
 
   s_target_format = target_format;
+  s_depth_format = depth_format;
   s_target_width = target_width;
   s_target_height = target_height;
   return true;
@@ -720,21 +773,27 @@ bool PostProcessing::CheckTargets(GPUTexture::Format target_format, u32 target_w
 void PostProcessing::DestroyTextures()
 {
   s_target_format = GPUTexture::Format::Unknown;
+  s_depth_format = GPUTexture::Format::Unknown;
   s_target_width = 0;
   s_target_height = 0;
 
   g_gpu_device->RecycleTexture(std::move(s_output_texture));
+  g_gpu_device->RecycleTexture(std::move(s_input_depth_texture));
   g_gpu_device->RecycleTexture(std::move(s_input_texture));
 }
 
 bool PostProcessing::Apply(GPUTexture* final_target, s32 final_left, s32 final_top, s32 final_width, s32 final_height,
                            s32 orig_width, s32 orig_height)
 {
+  Assert(s_input_texture && s_output_texture);
+
   GL_SCOPE("PostProcessing Apply");
 
   GPUTexture* input = s_input_texture.get();
   GPUTexture* output = s_output_texture.get();
   input->MakeReadyForSampling();
+  if (s_input_depth_texture)
+    s_input_depth_texture->MakeReadyForSampling();
 
   for (const std::unique_ptr<Shader>& stage : s_stages)
   {

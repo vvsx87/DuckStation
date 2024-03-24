@@ -1890,7 +1890,7 @@ bool GPU::RenderDisplay(GPUTexture* target, const Common::Rectangle<s32>& draw_r
   const bool really_postfx =
     (postfx && HasDisplayTexture() && PostProcessing::IsActive() && !g_gpu_device->GetWindowInfo().IsSurfaceless() &&
      hdformat != GPUTexture::Format::Unknown && target_width > 0 && target_height > 0 &&
-     PostProcessing::CheckTargets(hdformat, target_width, target_height));
+     PostProcessing::CheckTargets(hdformat, GPUTexture::Format::Unknown, target_width, target_height));
   const Common::Rectangle<s32> real_draw_rect =
     g_gpu_device->UsesLowerLeftOrigin() ? GPUDevice::FlipToLowerLeft(draw_rect, target_height) : draw_rect;
   if (really_postfx)

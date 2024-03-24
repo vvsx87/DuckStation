@@ -62,6 +62,11 @@ bool PostProcessing::GLSLShader::IsValid() const
   return !m_name.empty() && !m_code.empty();
 }
 
+bool PostProcessing::GLSLShader::WantsDepthBuffer() const
+{
+  return false;
+}
+
 u32 PostProcessing::GLSLShader::GetUniformsSize() const
 {
   // lazy packing. todo improve.

@@ -367,6 +367,11 @@ bool PostProcessing::ReShadeFXShader::IsValid() const
   return m_valid;
 }
 
+bool PostProcessing::ReShadeFXShader::WantsDepthBuffer() const
+{
+  return m_wants_depth_buffer;
+}
+
 bool PostProcessing::ReShadeFXShader::CreateModule(s32 buffer_width, s32 buffer_height, reshadefx::module* mod,
                                                    std::string code, Error* error)
 {
@@ -395,6 +400,11 @@ bool PostProcessing::ReShadeFXShader::CreateModule(s32 buffer_width, s32 buffer_
   pp.add_macro_definition("BUFFER_RCP_WIDTH", std::to_string(1.0f / static_cast<float>(buffer_width)));
   pp.add_macro_definition("BUFFER_RCP_HEIGHT", std::to_string(1.0f / static_cast<float>(buffer_height)));
   pp.add_macro_definition("BUFFER_COLOR_BIT_DEPTH", "32");
+  //pp.add_macro_definition("RESHADE_DEPTH_MULTIPLIER", "7.0");
+  pp.add_macro_definition("RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN", "0");
+  pp.add_macro_definition("RESHADE_DEPTH_INPUT_IS_LOGARITHMIC", "0");
+  pp.add_macro_definition("RESHADE_DEPTH_LINEARIZATION_FAR_PLANE", "1000.0");
+  pp.add_macro_definition("RESHADE_DEPTH_INPUT_IS_REVERSED", "0");
 
   switch (GetRenderAPI())
   {
@@ -434,7 +444,7 @@ bool PostProcessing::ReShadeFXShader::CreateModule(s32 buffer_width, s32 buffer_
 
   cg->write_result(*mod);
 
-  // FileSystem::WriteBinaryFile("D:\\out.txt", mod->code.data(), mod->code.size());
+  FileSystem::WriteBinaryFile("D:\\out.txt", mod->code.data(), mod->code.size());
   return true;
 }
 
@@ -835,9 +845,14 @@ bool PostProcessing::ReShadeFXShader::GetSourceOption(const reshadefx::uniform_i
       *si = (ui.type.base == reshadefx::type::t_float) ? SourceOptionType::RandomF : SourceOptionType::Random;
       return true;
     }
-    else if (source == "overlay_active" || source == "has_depth")
+    else if (source == "overlay_active")
     {
       *si = SourceOptionType::Zero;
+      return true;
+    }
+    else if (source == "has_depth")
+    {
+      *si = SourceOptionType::One;
       return true;
     }
     else if (source == "bufferwidth")
@@ -1028,8 +1043,8 @@ bool PostProcessing::ReShadeFXShader::CreatePasses(GPUTexture::Format backbuffer
             }
             else if (ti.semantic == "DEPTH")
             {
-              Log_WarningFmt("Shader '{}' uses input depth as '{}' which is not supported.", m_name, si.texture_name);
               sampler.texture_id = INPUT_DEPTH_TEXTURE;
+              m_wants_depth_buffer = true;
               break;
             }
             else if (!ti.semantic.empty())
@@ -1106,7 +1121,7 @@ GPUTexture* PostProcessing::ReShadeFXShader::GetTextureByID(TextureID id, GPUTex
     }
     else if (id == INPUT_DEPTH_TEXTURE)
     {
-      return PostProcessing::GetDummyTexture();
+      return PostProcessing::GetInputDepthTexture();
     }
     else if (id == OUTPUT_COLOR_TEXTURE)
     {
@@ -1134,6 +1149,7 @@ bool PostProcessing::ReShadeFXShader::CompilePipeline(GPUTexture::Format format,
   m_valid = false;
   m_textures.clear();
   m_passes.clear();
+  m_wants_depth_buffer = false;
 
   std::string fxcode;
   if (!PreprocessorReadFileCallback(m_filename, fxcode))
@@ -1340,6 +1356,13 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUTexture* final
         case SourceOptionType::Zero:
         {
           const u32 value = 0;
+          std::memcpy(dst, &value, sizeof(value));
+        }
+        break;
+
+        case SourceOptionType::One:
+        {
+          const float value = 1.0f;
           std::memcpy(dst, &value, sizeof(value));
         }
         break;

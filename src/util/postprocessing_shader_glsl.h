@@ -17,6 +17,7 @@ public:
   ALWAYS_INLINE const std::string& GetCode() const { return m_code; }
 
   bool IsValid() const override;
+  bool WantsDepthBuffer() const override;
 
   bool LoadFromFile(std::string name, const char* filename, Error* error);
   bool LoadFromString(std::string name, std::string code, Error* error);

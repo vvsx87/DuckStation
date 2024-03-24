@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2019-2023 Connor McLaughlin <stenzek@gmail.com>
+// SPDX-FileCopyrightText: 2019-2024 Connor McLaughlin <stenzek@gmail.com>
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #pragma once
@@ -117,15 +117,20 @@ void UpdateSettings();
 /// Temporarily toggles post-processing on/off.
 void Toggle();
 
+/// Returns true if depth buffers are needed for the current configuration.
+bool NeedsDepthBuffer();
+
 /// Reloads post processing shaders with the current configuration.
 bool ReloadShaders();
 
 void Shutdown();
 
 GPUTexture* GetInputTexture();
+GPUTexture* GetInputDepthTexture();
 const Common::Timer& GetTimer();
 
-bool CheckTargets(GPUTexture::Format target_format, u32 target_width, u32 target_height, ProgressCallback* progress = nullptr);
+bool CheckTargets(GPUTexture::Format target_format, GPUTexture::Format depth_format, u32 target_width,
+                  u32 target_height, ProgressCallback* progress = nullptr);
 
 bool Apply(GPUTexture* final_target, s32 final_left, s32 final_top, s32 final_width, s32 final_height, s32 orig_width,
            s32 orig_height);
