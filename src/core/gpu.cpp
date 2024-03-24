@@ -1211,6 +1211,7 @@ void GPU::WriteGP1(u32 value)
         SynchronizeCRTC();
         m_crtc_state.regs.display_address_start = new_value;
         UpdateCRTCDisplayParameters();
+        OnBufferSwapped();
       }
     }
     break;
@@ -2701,6 +2702,10 @@ void GPU::DrawDebugStateWindow()
 }
 
 void GPU::DrawRendererStats()
+{
+}
+
+void GPU::OnBufferSwapped()
 {
 }
 

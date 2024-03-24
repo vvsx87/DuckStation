@@ -3251,6 +3251,11 @@ void GPU_HW::UpdateDisplay()
     RestoreDeviceContext();
 }
 
+void GPU_HW::OnBufferSwapped()
+{
+  GL_INS("OnBufferSwapped()");
+}
+
 void GPU_HW::DownsampleFramebuffer(GPUTexture* source, u32 left, u32 top, u32 width, u32 height)
 {
   if (m_downsample_mode == GPUDownsampleMode::Adaptive)

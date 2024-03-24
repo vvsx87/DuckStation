@@ -317,6 +317,7 @@ protected:
   virtual void DispatchRenderCommand();
   virtual void UpdateDisplay();
   virtual void DrawRendererStats();
+  virtual void OnBufferSwapped();
 
   ALWAYS_INLINE void AddDrawTriangleTicks(s32 x1, s32 y1, s32 x2, s32 y2, s32 x3, s32 y3, bool shaded, bool textured,
                                           bool semitransparent)
