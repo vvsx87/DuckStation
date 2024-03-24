@@ -490,14 +490,15 @@ void GPU_SW::UpdateDisplay()
       const u32 line_skip = m_GPUSTAT.vertical_resolution;
       if (CopyOut(vram_offset_x, vram_offset_y, skip_x, read_width, read_height, line_skip, is_24bit))
       {
+        SetDisplayTexture(m_upload_texture.get(), 0, 0, read_width, read_height);
         if (is_24bit && g_settings.gpu_24bit_chroma_smoothing)
         {
-          if (ApplyChromaSmoothing(m_upload_texture.get(), 0, 0, read_width, read_height))
-            Deinterlace(m_display_texture, 0, 0, read_width, read_height, field, 0);
+          if (ApplyChromaSmoothing())
+            Deinterlace(field, 0);
         }
         else
         {
-          Deinterlace(m_upload_texture.get(), 0, 0, read_width, read_height, field, 0);
+          Deinterlace(field, 0);
         }
       }
     }
@@ -505,10 +506,9 @@ void GPU_SW::UpdateDisplay()
     {
       if (CopyOut(vram_offset_x, vram_offset_y, skip_x, read_width, read_height, 0, is_24bit))
       {
+        SetDisplayTexture(m_upload_texture.get(), 0, 0, read_width, read_height);
         if (is_24bit && g_settings.gpu_24bit_chroma_smoothing)
-          ApplyChromaSmoothing(m_upload_texture.get(), 0, 0, read_width, read_height);
-        else
-          SetDisplayTexture(m_upload_texture.get(), 0, 0, read_width, read_height);
+          ApplyChromaSmoothing();
       }
     }
   }

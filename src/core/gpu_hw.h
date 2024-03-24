@@ -197,7 +197,7 @@ private:
   /// Returns the number of mipmap levels used for adaptive smoothing.
   u32 GetAdaptiveDownsamplingMipLevels() const;
 
-  void DownsampleFramebuffer(GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
+  void DownsampleFramebuffer();
   void DownsampleFramebufferAdaptive(GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
   void DownsampleFramebufferBoxFilter(GPUTexture* source, u32 left, u32 top, u32 width, u32 height);
 

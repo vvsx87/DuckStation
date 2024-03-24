@@ -570,7 +570,6 @@ protected:
 
   void ClearDisplayTexture();
   void SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 view_width, s32 view_height);
-  void SetDisplayTextureRect(s32 view_x, s32 view_y, s32 view_width, s32 view_height);
   void SetDisplayParameters(s32 display_width, s32 display_height, s32 active_left, s32 active_top, s32 active_width,
                             s32 active_height, float display_aspect_ratio);
 
@@ -580,11 +579,11 @@ protected:
 
   bool RenderDisplay(GPUTexture* target, const Common::Rectangle<s32>& draw_rect, bool postfx);
 
-  bool Deinterlace(GPUTexture* src, u32 x, u32 y, u32 width, u32 height, u32 field, u32 line_skip);
+  bool Deinterlace(u32 field, u32 line_skip);
   bool DeinterlaceExtractField(u32 dst_bufidx, GPUTexture* src, u32 x, u32 y, u32 width, u32 height, u32 line_skip);
   bool DeinterlaceSetTargetSize(u32 width, u32 height, bool preserve);
   void DestroyDeinterlaceTextures();
-  bool ApplyChromaSmoothing(GPUTexture* src, u32 x, u32 y, u32 width, u32 height);
+  bool ApplyChromaSmoothing();
 
   s32 m_display_width = 0;
   s32 m_display_height = 0;

@@ -1806,14 +1806,6 @@ void GPU::SetDisplayTexture(GPUTexture* texture, s32 view_x, s32 view_y, s32 vie
   m_display_texture_view_height = view_height;
 }
 
-void GPU::SetDisplayTextureRect(s32 view_x, s32 view_y, s32 view_width, s32 view_height)
-{
-  m_display_texture_view_x = view_x;
-  m_display_texture_view_y = view_y;
-  m_display_texture_view_width = view_width;
-  m_display_texture_view_height = view_height;
-}
-
 void GPU::SetDisplayParameters(s32 display_width, s32 display_height, s32 active_left, s32 active_top, s32 active_width,
                                s32 active_height, float display_aspect_ratio)
 {
@@ -1958,17 +1950,20 @@ void GPU::DestroyDeinterlaceTextures()
   m_current_deinterlace_buffer = 0;
 }
 
-bool GPU::Deinterlace(GPUTexture* src, u32 x, u32 y, u32 width, u32 height, u32 field, u32 line_skip)
+bool GPU::Deinterlace(u32 field, u32 line_skip)
 {
+  GPUTexture* src = m_display_texture;
+  const u32 x = m_display_texture_view_x;
+  const u32 y = m_display_texture_view_y;
+  const u32 width = m_display_texture_view_width;
+  const u32 height = m_display_texture_view_height;
+
   switch (g_settings.display_deinterlacing_mode)
   {
     case DisplayDeinterlacingMode::Disabled:
     {
       if (line_skip == 0)
-      {
-        SetDisplayTexture(src, x, y, width, height);
         return true;
-      }
 
       // Still have to extract the field.
       if (!DeinterlaceExtractField(0, src, x, y, width, height, line_skip)) [[unlikely]]
@@ -2138,8 +2133,12 @@ bool GPU::DeinterlaceSetTargetSize(u32 width, u32 height, bool preserve)
   return true;
 }
 
-bool GPU::ApplyChromaSmoothing(GPUTexture* src, u32 x, u32 y, u32 width, u32 height)
+bool GPU::ApplyChromaSmoothing()
 {
+  const u32 x = m_display_texture_view_x;
+  const u32 y = m_display_texture_view_y;
+  const u32 width = m_display_texture_view_width;
+  const u32 height = m_display_texture_view_height;
   if (!m_chroma_smoothing_texture || m_chroma_smoothing_texture->GetWidth() != width ||
       m_chroma_smoothing_texture->GetHeight() != height)
   {
@@ -2155,11 +2154,11 @@ bool GPU::ApplyChromaSmoothing(GPUTexture* src, u32 x, u32 y, u32 width, u32 hei
 
   GL_SCOPE_FMT("ApplyChromaSmoothing({{{},{}}}, {}x{})", x, y, width, height);
 
-  src->MakeReadyForSampling();
+  m_display_texture->MakeReadyForSampling();
   g_gpu_device->InvalidateRenderTarget(m_chroma_smoothing_texture.get());
   g_gpu_device->SetRenderTarget(m_chroma_smoothing_texture.get());
   g_gpu_device->SetPipeline(m_chroma_smoothing_pipeline.get());
-  g_gpu_device->SetTextureSampler(0, src, g_gpu_device->GetNearestSampler());
+  g_gpu_device->SetTextureSampler(0, m_display_texture, g_gpu_device->GetNearestSampler());
   const u32 uniforms[] = {x, y, width - 1, height - 1};
   g_gpu_device->PushUniformBuffer(uniforms, sizeof(uniforms));
   g_gpu_device->SetViewportAndScissor(0, 0, width, height);
