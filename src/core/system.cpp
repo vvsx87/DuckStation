@@ -4816,6 +4816,12 @@ bool System::PresentDisplay(bool allow_skip_present)
       s_accumulated_gpu_time += g_gpu_device->GetAndResetAccumulatedGPUTime();
       s_presents_since_last_update++;
     }
+
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    {
+      ImGui::UpdatePlatformWindows();
+      ImGui::RenderPlatformWindowsDefault();
+    }
   }
   else
   {

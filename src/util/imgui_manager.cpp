@@ -71,6 +71,18 @@ static void CreateSoftwareCursorTextures();
 static void UpdateSoftwareCursorTexture(u32 index);
 static void DestroySoftwareCursorTextures();
 static void DrawSoftwareCursor(const SoftwareCursor& sc, const std::pair<float, float>& pos);
+static bool IsMainViewport(const ImGuiViewport* vp);
+static void PlatformCreateWindow(ImGuiViewport* vp);
+static void PlatformDestroyWindow(ImGuiViewport* vp);
+static void PlatformShowWindow(ImGuiViewport* vp);
+static void PlatformSetWindowPos(ImGuiViewport* vp, ImVec2 pos);
+static ImVec2 PlatformGetWindowPos(ImGuiViewport* vp);
+static void PlatformSetWindowSize(ImGuiViewport* vp, ImVec2 size);
+static ImVec2 PlatformGetWindowSize(ImGuiViewport* vp);
+static void PlatformSetWindowFocus(ImGuiViewport* vp);
+static bool PlatformGetWindowFocus(ImGuiViewport* vp);
+static bool PlatformGetWindowMinimized(ImGuiViewport* vp);
+static void PlatformSetWindowTitle(ImGuiViewport* vp, const char* str);
 
 static float s_global_prescale = 1.0f; // before window scale
 static float s_global_scale = 1.0f;
@@ -109,6 +121,8 @@ static bool s_show_osd_messages = true;
 static bool s_scale_changed = false;
 
 static std::array<ImGuiManager::SoftwareCursor, InputManager::MAX_SOFTWARE_CURSORS> s_software_cursors = {};
+
+static size_t s_main_viewport_dummy_ptr;
 } // namespace ImGuiManager
 
 void ImGuiManager::SetFontPathAndRange(std::string path, std::vector<u16> range)
@@ -173,13 +187,14 @@ bool ImGuiManager::Initialize(float global_scale, bool show_osd_messages, Error*
 
   ImGuiIO& io = ImGui::GetIO();
   io.IniFilename = nullptr;
-  io.BackendFlags |= ImGuiBackendFlags_HasGamepad | ImGuiBackendFlags_RendererHasVtxOffset;
+  io.BackendFlags |= ImGuiBackendFlags_HasGamepad | ImGuiBackendFlags_RendererHasVtxOffset |
+                     ImGuiBackendFlags_PlatformHasViewports | ImGuiBackendFlags_RendererHasViewports;
   io.BackendUsingLegacyKeyArrays = 0;
   io.BackendUsingLegacyNavInputArray = 0;
 #ifndef __ANDROID__
   // Android has no keyboard, nor are we using ImGui for any actual user-interactable windows.
-  io.ConfigFlags |=
-    ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NoMouseCursorChange;
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad |
+                    ImGuiConfigFlags_NoMouseCursorChange | ImGuiConfigFlags_ViewportsEnable;
 #else
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
 #endif
@@ -188,6 +203,30 @@ bool ImGuiManager::Initialize(float global_scale, bool show_osd_messages, Error*
   s_window_height = static_cast<float>(g_gpu_device->GetWindowHeight());
   io.DisplayFramebufferScale = ImVec2(1, 1); // We already scale things ourselves, this would double-apply scaling
   io.DisplaySize = ImVec2(s_window_width, s_window_height);
+
+  if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+  {
+    ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+    pio.Platform_CreateWindow = PlatformCreateWindow;
+    pio.Platform_DestroyWindow = PlatformDestroyWindow;
+    pio.Platform_ShowWindow = PlatformShowWindow;
+    pio.Platform_SetWindowPos = PlatformSetWindowPos;
+    pio.Platform_GetWindowPos = PlatformGetWindowPos;
+    pio.Platform_SetWindowSize = PlatformSetWindowSize;
+    pio.Platform_GetWindowSize = PlatformGetWindowSize;
+    pio.Platform_SetWindowFocus = PlatformSetWindowFocus;
+    pio.Platform_GetWindowFocus = PlatformGetWindowFocus;
+    pio.Platform_GetWindowMinimized = PlatformGetWindowMinimized;
+    pio.Platform_SetWindowTitle = PlatformSetWindowTitle;
+
+    ImGuiPlatformMonitor monitor;
+    monitor.MainSize = ImVec2(3840, 2160);
+    pio.Monitors.push_back(monitor);
+
+    // TODO: This should point to the host render window.
+    pio.Viewports[0]->PlatformHandle = &s_main_viewport_dummy_ptr;
+    pio.Viewports[0]->PlatformUserData = &s_main_viewport_dummy_ptr;
+  }
 
   SetKeyMap();
   SetStyle();
@@ -1120,4 +1159,72 @@ void ImGuiManager::SetSoftwareCursorPosition(u32 index, float pos_x, float pos_y
   SoftwareCursor& sc = s_software_cursors[index];
   sc.pos.first = pos_x;
   sc.pos.second = pos_y;
+}
+
+bool ImGuiManager::IsMainViewport(const ImGuiViewport* vp)
+{
+  return (vp->PlatformHandle == &s_main_viewport_dummy_ptr);
+}
+
+void ImGuiManager::PlatformCreateWindow(ImGuiViewport* vp)
+{
+  Panic("Not implemented");
+}
+
+void ImGuiManager::PlatformDestroyWindow(ImGuiViewport* vp)
+{
+  Panic("Not implemented");
+}
+
+void ImGuiManager::PlatformShowWindow(ImGuiViewport* vp)
+{
+  Panic("Not implemented");
+}
+
+void ImGuiManager::PlatformSetWindowPos(ImGuiViewport* vp, ImVec2 pos)
+{
+  Panic("Not implemented");
+}
+
+ImVec2 ImGuiManager::PlatformGetWindowPos(ImGuiViewport* vp)
+{
+  //Panic("Not implemented");
+  return ImVec2(0, 0);
+}
+
+void ImGuiManager::PlatformSetWindowSize(ImGuiViewport* vp, ImVec2 size)
+{
+  Panic("Not implemented");
+}
+
+ImVec2 ImGuiManager::PlatformGetWindowSize(ImGuiViewport* vp)
+{
+  if (IsMainViewport(vp))
+    return ImGui::GetIO().DisplaySize;
+
+  Panic("Not implemented");
+}
+
+void ImGuiManager::PlatformSetWindowFocus(ImGuiViewport* vp)
+{
+  Panic("Not implemented");
+}
+
+bool ImGuiManager::PlatformGetWindowFocus(ImGuiViewport* vp)
+{
+  if (IsMainViewport(vp))
+    return true;
+
+  Panic("Not implemented");
+}
+
+bool ImGuiManager::PlatformGetWindowMinimized(ImGuiViewport* vp)
+{
+  // Panic("Not implemented");
+  return false;
+}
+
+void ImGuiManager::PlatformSetWindowTitle(ImGuiViewport* vp, const char* str)
+{
+  Panic("Not implemented");
 }
